@@ -1,0 +1,8 @@
+{
+  "name": "Forex Data Warehouse",
+  "description": "A full-stack application for managing and syncing forex historical data from multiple sources.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
