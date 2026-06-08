@@ -1,0 +1,8 @@
+{
+  "name": "Remix: AreYouThere",
+  "description": "A simple check-in app to verify the safety and presence of your friends or family members.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

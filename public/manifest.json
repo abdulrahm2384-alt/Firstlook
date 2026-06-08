@@ -1,0 +1,26 @@
+{
+  "name": "FirstLook Trading Terminal",
+  "short_name": "FirstLook",
+  "description": "Professional real-time strategy backtesting workspace, active trading challenges, side-by-side chart synchronization, and multi-user setups.",
+  "start_url": "/",
+  "id": "/",
+  "display": "standalone",
+  "background_color": "#0c0d12",
+  "theme_color": "#0c0d12",
+  "orientation": "any",
+  "scope": "/",
+  "icons": [
+    {
+      "src": "/logo.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/logo.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}

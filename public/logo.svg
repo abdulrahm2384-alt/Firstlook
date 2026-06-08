@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Solid Premium Dark Background -->
+  <rect width="512" height="512" fill="#0c0d12"/>
+  
+  <g transform="translate(10, 10) scale(0.96)">
+    <!-- The Left 'F' shape -->
+    <path d="M 135,375 
+             L 135,135 
+             L 330,135 
+             L 285,195 
+             L 185,195 
+             L 185,240 
+             L 260,240 
+             L 260,285 
+             L 185,285 
+             L 185,375 Z" 
+          fill="#fafafa"/>
+          
+    <!-- The Right 'Z' (Arrow) shape -->
+    <path d="M 205,375 
+             L 242,325
+             L 295,325
+             L 198,195
+             L 255,195
+             L 325,290
+             L 325,225
+             L 375,255
+             L 375,135
+             L 255,135
+             L 300,195
+             L 375,195
+             L 375,325
+             L 375,375 Z" 
+          fill="#fafafa" 
+          opacity="0.95"/>
+  </g>
+</svg>
