@@ -6146,7 +6146,8 @@ export default function App() {
 
           {/* Floating Backtest/Replay Controls */}
           <AnimatePresence>
-            {(!isMobile || isMobileLandscape) && (
+            {/* Disabled in desktop and landscape to use the unified FavoriteDrawingsToolbar controls, keeping the layout clean and elegant */}
+            {false && (!isMobile || isMobileLandscape) && (
               (!isSimulating && !isReplayMode && !simIsPlaying) ? (
                 <motion.button
                   key={`sim-launcher-${currentMode}`}
@@ -6991,6 +6992,35 @@ export default function App() {
                           onCloseDrawing={handleSyncedCloseDrawing}
                           setups={setups}
                           onCreateQuickTrade={(direction, setupGrade) => handleCreateQuickTrade(direction, setupGrade, 'synced')}
+                          isReplayMode={isReplayMode}
+                          isSimulating={isSimulating}
+                          simIsPlaying={simIsPlaying}
+                          replayIsPlaying={replayIsPlaying}
+                          togglePlayback={togglePlayback}
+                          setSimIsPlaying={setSimIsPlaying}
+                          setReplayIsPlaying={setReplayIsPlaying}
+                          simSpeed={simSpeed}
+                          setSimSpeed={setSimSpeed}
+                          currentSessionKey={currentSessionKey}
+                          backtestSessions={backtestSessions}
+                          setBacktestSessions={setBacktestSessions}
+                          addNotification={addNotification}
+                          subscriptionPlan={subscriptionPlan}
+                          onLockedFeature={(feat: any) => {
+                            setUpgradeModalFeature(feat);
+                            setIsUpgradeModalOpen(true);
+                          }}
+                          setShowSyncInfoModal={setShowSyncInfoModal}
+                          exitReplay={exitReplay}
+                          setIsSimulating={setIsSimulating}
+                          setSimCurrentTime={setSimCurrentTime}
+                          setReplayCurrentTime={setReplayCurrentTime}
+                          getStepSeconds={getStepSeconds}
+                          historicalDataRef={historicalDataRef}
+                          replayTrade={replayTrade}
+                          sessionCurrentTimesRef={sessionCurrentTimesRef}
+                          activePrefix={activePrefix}
+                          selectedSymbol={selectedSymbol}
                         />
                       )}
                     </AnimatePresence>
@@ -7070,6 +7100,35 @@ export default function App() {
                           onCloseDrawing={handleMainCloseDrawing}
                           setups={setups}
                           onCreateQuickTrade={(direction, setupGrade) => handleCreateQuickTrade(direction, setupGrade, 'main')}
+                          isReplayMode={isReplayMode}
+                          isSimulating={isSimulating}
+                          simIsPlaying={simIsPlaying}
+                          replayIsPlaying={replayIsPlaying}
+                          togglePlayback={togglePlayback}
+                          setSimIsPlaying={setSimIsPlaying}
+                          setReplayIsPlaying={setReplayIsPlaying}
+                          simSpeed={simSpeed}
+                          setSimSpeed={setSimSpeed}
+                          currentSessionKey={currentSessionKey}
+                          backtestSessions={backtestSessions}
+                          setBacktestSessions={setBacktestSessions}
+                          addNotification={addNotification}
+                          subscriptionPlan={subscriptionPlan}
+                          onLockedFeature={(feat: any) => {
+                            setUpgradeModalFeature(feat);
+                            setIsUpgradeModalOpen(true);
+                          }}
+                          setShowSyncInfoModal={setShowSyncInfoModal}
+                          exitReplay={exitReplay}
+                          setIsSimulating={setIsSimulating}
+                          setSimCurrentTime={setSimCurrentTime}
+                          setReplayCurrentTime={setReplayCurrentTime}
+                          getStepSeconds={getStepSeconds}
+                          historicalDataRef={historicalDataRef}
+                          replayTrade={replayTrade}
+                          sessionCurrentTimesRef={sessionCurrentTimesRef}
+                          activePrefix={activePrefix}
+                          selectedSymbol={selectedSymbol}
                         />
                       )}
                     </AnimatePresence>

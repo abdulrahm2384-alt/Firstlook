@@ -21,7 +21,12 @@ import {
   Navigation,
   AlignJustify,
   Layers,
-  Type
+  Type,
+  Play,
+  Pause,
+  SkipForward,
+  ChevronUp,
+  Info
 } from 'lucide-react';
 import { DrawingType, Drawing } from '../types/drawing';
 import { useState, useRef, useEffect, memo, RefObject } from 'react';
@@ -68,6 +73,34 @@ interface FavoriteDrawingsToolbarProps {
   // New hooks for quick buying/selling
   setups?: any[];
   onCreateQuickTrade?: (direction: 'buy' | 'sell', setupGrade?: string) => void;
+
+  // Playback & Simulation Integration Props
+  isReplayMode?: boolean;
+  isSimulating?: boolean;
+  simIsPlaying?: boolean;
+  replayIsPlaying?: boolean;
+  togglePlayback?: () => void;
+  setSimIsPlaying?: (playing: boolean) => void;
+  setReplayIsPlaying?: (playing: boolean) => void;
+  simSpeed?: number;
+  setSimSpeed?: (speed: number) => void;
+  currentSessionKey?: string | null;
+  backtestSessions?: any;
+  setBacktestSessions?: (sessions: any) => void;
+  addNotification?: (msg: string, type: string) => void;
+  subscriptionPlan?: string;
+  onLockedFeature?: (feat: string) => void;
+  setShowSyncInfoModal?: (show: boolean) => void;
+  exitReplay?: () => void;
+  setIsSimulating?: (sim: boolean) => void;
+  setSimCurrentTime?: any;
+  setReplayCurrentTime?: any;
+  getStepSeconds?: () => number;
+  historicalDataRef?: any;
+  replayTrade?: any;
+  sessionCurrentTimesRef?: any;
+  activePrefix?: string;
+  selectedSymbol?: string;
 }
 
 export const FavoriteDrawingsToolbar = memo(function FavoriteDrawingsToolbar({ 
@@ -84,14 +117,57 @@ export const FavoriteDrawingsToolbar = memo(function FavoriteDrawingsToolbar({
   onDeleteDrawing,
   onCloseDrawing,
   setups,
-  onCreateQuickTrade
+  onCreateQuickTrade,
+
+  // Playback integration props
+  isReplayMode,
+  isSimulating,
+  simIsPlaying,
+  replayIsPlaying,
+  togglePlayback,
+  setSimIsPlaying,
+  setReplayIsPlaying,
+  simSpeed,
+  setSimSpeed,
+  currentSessionKey,
+  backtestSessions,
+  setBacktestSessions,
+  addNotification,
+  subscriptionPlan,
+  onLockedFeature,
+  setShowSyncInfoModal,
+  exitReplay,
+  setIsSimulating,
+  setSimCurrentTime,
+  setReplayCurrentTime,
+  getStepSeconds,
+  historicalDataRef,
+  replayTrade,
+  sessionCurrentTimesRef,
+  activePrefix,
+  selectedSymbol
 }: FavoriteDrawingsToolbarProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
+  const [isSpeedOpen, setIsSpeedOpen] = useState(false);
   const [showWidthPicker, setShowWidthPicker] = useState(false);
   const [showStylePicker, setShowStylePicker] = useState(false);
   const [showLabelSettings, setShowLabelSettings] = useState(false);
   const [pendingTradeType, setPendingTradeType] = useState<'buy' | 'sell' | null>(null);
+
+  const setFavoritesExpanded = (val: boolean) => {
+    setIsExpanded(val);
+    if (val) {
+      setIsSpeedOpen(false);
+    }
+  };
+
+  const setSpeedDropdownOpen = (val: boolean) => {
+    setIsSpeedOpen(val);
+    if (val) {
+      setIsExpanded(false);
+    }
+  };
 
   const containerRef = useRef<HTMLDivElement>(null);
   const labelSettingsRef = useRef<HTMLDivElement>(null);
@@ -115,6 +191,7 @@ export const FavoriteDrawingsToolbar = memo(function FavoriteDrawingsToolbar({
       if (containerRef.current && !containerRef.current.contains(targetNode)) {
         if (!selectedDrawing) {
           setIsExpanded(false);
+          setIsSpeedOpen(false);
         } else {
           setShowWidthPicker(false);
           setShowStylePicker(false);
@@ -123,7 +200,7 @@ export const FavoriteDrawingsToolbar = memo(function FavoriteDrawingsToolbar({
         setPendingTradeType(null);
       }
     };
-    if (isExpanded || selectedDrawing || pendingTradeType) {
+    if (isExpanded || isSpeedOpen || selectedDrawing || pendingTradeType) {
       document.addEventListener('pointerdown', handleClickOutside, { capture: true, passive: true });
       document.addEventListener('mousedown', handleClickOutside, { capture: true, passive: true });
       document.addEventListener('touchstart', handleClickOutside, { capture: true, passive: true });
@@ -133,7 +210,7 @@ export const FavoriteDrawingsToolbar = memo(function FavoriteDrawingsToolbar({
       document.removeEventListener('mousedown', handleClickOutside, { capture: true });
       document.removeEventListener('touchstart', handleClickOutside, { capture: true });
     };
-  }, [isExpanded, selectedDrawing, pendingTradeType]);
+  }, [isExpanded, isSpeedOpen, selectedDrawing, pendingTradeType]);
 
   // Check state categories for the active selected drawing
   const isForecasting = selectedDrawing && (selectedDrawing.type === DrawingType.LONG_POSITION || selectedDrawing.type === DrawingType.SHORT_POSITION);
@@ -142,6 +219,10 @@ export const FavoriteDrawingsToolbar = memo(function FavoriteDrawingsToolbar({
 
   // Let's decide if we are in morph mode (settings)
   const isMorphActive = !!selectedDrawing && !isClosedTrade;
+
+  const sessionData = currentSessionKey ? backtestSessions?.[currentSessionKey] : null;
+  const timeSyncEnabled = sessionData?.timeSyncEnabled || false;
+  const activeTimeSyncSpeed = sessionData?.timeSyncSpeed || 60;
 
   if (favorites.length === 0 && !isMorphActive && !onCreateQuickTrade) return null;
 
@@ -635,7 +716,7 @@ export const FavoriteDrawingsToolbar = memo(function FavoriteDrawingsToolbar({
                       if (activeTool) {
                         onSelectTool(null);
                       } else {
-                        setIsExpanded(true);
+                        setFavoritesExpanded(true);
                       }
                     }
                   }}
@@ -679,7 +760,7 @@ export const FavoriteDrawingsToolbar = memo(function FavoriteDrawingsToolbar({
                           onClick={() => {
                             if (!isDragging) {
                               onSelectTool(activeTool === toolId ? null : toolId);
-                              setIsExpanded(false); // Auto-collapse to float favorite so they can draw on screen!
+                              setFavoritesExpanded(false); // Auto-collapse to float favorite so they can draw on screen!
                             }
                           }}
                           className={`${isMobileLandscape ? 'p-[1.5vh]' : isPortrait ? 'p-1' : 'p-1 mx-0.5'} rounded-xl transition-all shrink-0 ${activeTool === toolId ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' : 'text-slate-600 hover:bg-slate-50'}`}
@@ -691,6 +772,250 @@ export const FavoriteDrawingsToolbar = memo(function FavoriteDrawingsToolbar({
                     })}
                   </div>
                 </motion.div>
+              )}
+
+              {/* Play Segment (Combined with the toolbar in desktop/landscape view) */}
+              {(!isMobile || isMobileLandscape) && (
+                <>
+                  <div className="w-px h-5 bg-slate-200/80 mx-1 shrink-0" />
+                  {(!isSimulating && !isReplayMode && !simIsPlaying) ? (
+                    /* Play button launcher when not active */
+                    <button
+                      onClick={() => setIsSimulating?.(true)}
+                      className="h-7 w-7 flex items-center justify-center rounded-full bg-slate-900 hover:bg-slate-800 text-white shadow-md active:scale-95 transition-all cursor-pointer shrink-0 ml-1"
+                      title="Start Simulation"
+                    >
+                      <Play size={10} fill="currentColor" />
+                    </button>
+                  ) : (
+                    /* Active playback controls segment in one bar */
+                    <div className="flex items-center gap-1">
+                      {/* Play/Pause Button */}
+                      <button
+                        onClick={togglePlayback}
+                        className={`w-7 h-7 flex items-center justify-center rounded-full transition-all ${(isReplayMode ? replayIsPlaying : simIsPlaying) ? 'bg-indigo-50 text-indigo-600' : 'bg-slate-900 text-white shadow-md'}`}
+                        title={(isReplayMode ? replayIsPlaying : simIsPlaying) ? "Pause" : "Play"}
+                      >
+                        {(isReplayMode ? replayIsPlaying : simIsPlaying) ? <Pause size={10} fill="currentColor" /> : <Play size={10} fill="currentColor" />}
+                      </button>
+
+                      {/* Step Forward Button */}
+                      <button
+                        onClick={() => {
+                          if (isReplayMode) {
+                            setReplayCurrentTime?.((prev: number) => {
+                              const current = prev || (replayTrade ? replayTrade.entryTime : 0);
+                              const currentData = historicalDataRef?.current;
+                              const nextCandle = currentData?.find((c: any) => c.time > current);
+                              return nextCandle ? nextCandle.time : current + (getStepSeconds?.() || 60);
+                            });
+                          } else {
+                            const sessionKey = currentSessionKey || '';
+                            const session = sessionKey ? (backtestSessions?.[sessionKey] || (selectedSymbol ? backtestSessions?.[activePrefix ? `${selectedSymbol}_${activePrefix}` : selectedSymbol] : null)) : null;
+                            
+                            if (!session) {
+                              addNotification?.('No backtest session found', 'error');
+                              return;
+                            }
+
+                            const current = sessionCurrentTimesRef?.current?.[sessionKey] || session.currentTime || session.startTime;
+                            const currentData = historicalDataRef?.current;
+                            const nextCandle = currentData?.find((c: any) => c.time > current);
+                            const next = nextCandle ? nextCandle.time : current + (getStepSeconds?.() || 60);
+                            
+                            if (session.endTime && next > session.endTime) {
+                              addNotification?.('Cannot move beyond session end date', 'warning');
+                              return;
+                            }
+
+                            if (sessionCurrentTimesRef?.current) {
+                              sessionCurrentTimesRef.current[sessionKey] = next;
+                            }
+                            setSimCurrentTime?.(next);
+                          }
+                        }}
+                        className="w-7 h-7 flex items-center justify-center text-slate-400 hover:text-slate-900 hover:bg-slate-50 rounded-full transition-all"
+                        title="Step Forward"
+                      >
+                        <SkipForward size={10} />
+                      </button>
+
+                      {/* Speed Controller display */}
+                      <div className="relative font-bold text-slate-650">
+                        <button
+                          onClick={() => setSpeedDropdownOpen(!isSpeedOpen)}
+                          className={`h-7 px-2 flex items-center justify-center gap-0.5 rounded-full transition-all ${isSpeedOpen ? 'bg-slate-900 text-white' : 'hover:bg-slate-50 text-slate-400 hover:text-slate-900'}`}
+                          title="Play Speed"
+                        >
+                          <span className="text-[9px] font-black leading-none">
+                            {timeSyncEnabled ? 'Sync' : `${simSpeed}x`}
+                          </span>
+                          <ChevronUp size={7} strokeWidth={4} className={`transition-transform duration-300 ${isSpeedOpen ? 'rotate-180' : 'opacity-40'}`} />
+                        </button>
+
+                        <AnimatePresence>
+                          {isSpeedOpen && (
+                            <motion.div
+                              initial={{ opacity: 0, y: 10 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              exit={{ opacity: 0, y: 10 }}
+                              className="absolute bottom-full right-0 translate-x-1/4 mb-2 bg-white border border-slate-150 rounded-2xl shadow-xl p-2.5 w-48 overflow-hidden z-[110] flex flex-col gap-2"
+                              onMouseDown={(e) => e.stopPropagation()}
+                              onPointerDown={(e) => e.stopPropagation()}
+                            >
+                              {/* Header */}
+                              <div className="flex items-center justify-between border-b border-slate-50 pb-1">
+                                <span className="text-[8px] font-extrabold uppercase tracking-wider text-slate-400">Play Speed</span>
+                                {timeSyncEnabled && (
+                                  <span className="text-[7.5px] bg-green-50 text-green-600 font-bold px-1 py-0.5 rounded animate-pulse">Sync Active</span>
+                                )}
+                              </div>
+
+                              {/* speed list triggers */}
+                              <div className="flex flex-col gap-1 text-left">
+                                <span className="text-[7.5px] font-bold text-slate-400">Normal Speed</span>
+                                <div className="grid grid-cols-4 gap-1">
+                                  {[1, 2, 3, 4].map(s => {
+                                    const active = !timeSyncEnabled && simSpeed === s;
+                                    return (
+                                      <button
+                                        key={s}
+                                        onClick={() => {
+                                          setSimSpeed?.(s);
+                                          if (currentSessionKey && sessionData) {
+                                            setBacktestSessions?.((prev: any) => ({
+                                              ...prev,
+                                              [currentSessionKey]: {
+                                                ...prev[currentSessionKey],
+                                                timeSyncEnabled: false,
+                                                timeSyncLastTimestamp: undefined
+                                              }
+                                            }));
+                                          }
+                                          setSpeedDropdownOpen(false);
+                                        }}
+                                        className={`py-1 text-[8px] font-black rounded transition-all ${active ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100 bg-slate-50'}`}
+                                      >
+                                        {s}x
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+
+                              <div className="h-px bg-slate-100/60" />
+
+                              {/* Time Sync Toggle */}
+                              <div className="flex items-center justify-between">
+                                <div className="flex flex-col text-left">
+                                  <div className="flex items-center gap-1">
+                                    <span className="text-[8px] font-extrabold text-slate-800 flex items-center gap-0.5">
+                                      {subscriptionPlan === 'basic' && <Lock size={7} className="text-slate-400 stroke-[2.5]" />}
+                                      Time Sync
+                                    </span>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setShowSyncInfoModal?.(true);
+                                      }}
+                                      className="text-slate-400 hover:text-indigo-600 transition-colors p-0.5 rounded flex items-center justify-center font-bold"
+                                      title="What is Time Sync?"
+                                    >
+                                      <span className="text-[7px]">?</span>
+                                    </button>
+                                  </div>
+                                  <span className="text-[6.5px] text-slate-400 leading-none">Real-time intervals</span>
+                                </div>
+                                <button
+                                  onClick={() => {
+                                    if (!currentSessionKey) {
+                                      addNotification?.("Please select an active backtest session", 'warning');
+                                      return;
+                                    }
+                                    if (subscriptionPlan === 'basic') {
+                                      onLockedFeature?.('timesync');
+                                      return;
+                                    }
+                                    const nextEnabled = !timeSyncEnabled;
+                                    setBacktestSessions?.((prev: any) => ({
+                                      ...prev,
+                                      [currentSessionKey]: {
+                                        ...prev[currentSessionKey],
+                                        timeSyncEnabled: nextEnabled,
+                                        timeSyncSpeed: activeTimeSyncSpeed,
+                                        timeSyncLastTimestamp: nextEnabled ? Date.now() : undefined
+                                      }
+                                    }));
+                                  }}
+                                  className={`w-7 h-3.5 rounded-full p-0.5 transition-colors duration-200 outline-none ${timeSyncEnabled ? 'bg-indigo-600' : 'bg-slate-200'} ${subscriptionPlan === 'basic' ? 'bg-slate-200/85 saturate-50 cursor-not-allowed' : ''}`}
+                                >
+                                  <div className={`w-2.5 h-2.5 bg-white rounded-full shadow-sm transition-transform duration-200 ${timeSyncEnabled ? 'translate-x-3.5' : 'translate-x-0'}`} />
+                                </button>
+                              </div>
+
+                              {timeSyncEnabled && (
+                                <div className="flex flex-col gap-1 border-t border-slate-50 pt-1 text-left">
+                                  <span className="text-[7.5px] font-bold text-slate-400">Time Sync Rate</span>
+                                  <div className="flex flex-col gap-0.5 max-h-[100px] overflow-y-auto pr-0.5 scrollbar-none">
+                                    {[
+                                      { label: "1m candle = 60s", value: 60 },
+                                      { label: "1m candle = 30s", value: 30 },
+                                      { label: "1m candle = 15s", value: 15 },
+                                      { label: "1m candle = 10s", value: 10 },
+                                      { label: "1m candle = 5s", value: 5 },
+                                      { label: "1m candle = 2.5s", value: 2.5 }
+                                    ].map(opt => (
+                                      <button
+                                        key={opt.value}
+                                        onClick={() => {
+                                          if (subscriptionPlan === 'basic') {
+                                            onLockedFeature?.('timesync');
+                                            return;
+                                          }
+                                          if (currentSessionKey) {
+                                            setBacktestSessions?.((prev: any) => ({
+                                              ...prev,
+                                              [currentSessionKey]: {
+                                                ...prev[currentSessionKey],
+                                                timeSyncEnabled: true,
+                                                timeSyncSpeed: opt.value,
+                                                timeSyncLastTimestamp: Date.now()
+                                              }
+                                            }));
+                                          }
+                                        }}
+                                        className={`w-full text-left px-1 py-0.5 text-[7.5px] font-bold rounded flex items-center justify-between ${activeTimeSyncSpeed === opt.value ? 'bg-indigo-50 text-indigo-700 font-extrabold' : 'text-slate-600 hover:bg-slate-50'}`}
+                                      >
+                                        <span>{opt.label}</span>
+                                        {activeTimeSyncSpeed === opt.value && <div className="w-1 h-1 rounded-full bg-indigo-600" />}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                      </div>
+
+                      {/* Exit / Stop Button */}
+                      <button
+                        onClick={() => {
+                          if (isReplayMode) {
+                            exitReplay?.();
+                          } else {
+                            setIsSimulating?.(false);
+                            setSimIsPlaying?.(false);
+                          }
+                        }}
+                        className="w-7 h-7 flex items-center justify-center text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-full transition-all"
+                        title="Close Simulation"
+                      >
+                        <X size={10} strokeWidth={2.8} />
+                      </button>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           )}
