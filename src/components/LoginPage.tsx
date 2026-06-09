@@ -214,7 +214,7 @@ export function LoginPage() {
             setError(null);
             setSuccessMessage(null);
           }}
-          className="flex items-center gap-2 cursor-pointer active:scale-95 transition-transform"
+          className="flex items-center gap-2.5 cursor-pointer active:scale-95 transition-transform"
           title="FirstLook Home"
         >
           <img 
@@ -222,6 +222,7 @@ export function LoginPage() {
             alt="FirstLook Logo" 
             className="w-7 h-7 rounded-lg object-contain bg-slate-950 p-0.5 border border-white/10" 
           />
+          <span className="font-sans text-[15px] font-black tracking-tight text-white">FirstLook</span>
         </div>
 
         <div className="flex items-center gap-2 text-[10.5px] font-black tracking-[0.16em] uppercase font-mono">
@@ -304,9 +305,9 @@ export function LoginPage() {
                 
                 {/* 1. PLATFORM OVERVIEW */}
                 <motion.div 
-                  initial={{ opacity: 0, y: 30 }}
-                  whileInView={{ opacity: 1, y: 0 }}
-                  viewport={{ once: true, margin: "-100px" }}
+                  initial={{ opacity: 0, y: 15 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.4 }}
                   className="bg-white text-slate-900 rounded-none sm:rounded-xl p-3.5 sm:p-5 md:p-6 shadow-sm sm:shadow-[0_15px_30px_rgba(0,0,0,0.25)] border-y border-x-0 sm:border border-slate-150 relative overflow-hidden text-left"
                 >
                   <div className="border-b border-slate-100 pb-3">
@@ -327,9 +328,9 @@ export function LoginPage() {
 
                 {/* 2. CORE FEATURES */}
                 <motion.div 
-                  initial={{ opacity: 0, y: 30 }}
-                  whileInView={{ opacity: 1, y: 0 }}
-                  viewport={{ once: true, margin: "-100px" }}
+                  initial={{ opacity: 0, y: 15 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.4, delay: 0.05 }}
                   className="bg-white text-slate-900 rounded-none sm:rounded-xl p-3.5 sm:p-5 md:p-6 shadow-sm sm:shadow-[0_15px_30px_rgba(0,0,0,0.25)] border-y border-x-0 sm:border border-slate-150 relative overflow-hidden text-left"
                 >
                   <div className="space-y-3">
@@ -441,9 +442,9 @@ export function LoginPage() {
 
                 {/* 3. WHY TRADERS USE FIRSTLOOK */}
                 <motion.div 
-                  initial={{ opacity: 0, y: 30 }}
-                  whileInView={{ opacity: 1, y: 0 }}
-                  viewport={{ once: true, margin: "-100px" }}
+                  initial={{ opacity: 0, y: 15 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.4, delay: 0.1 }}
                   className="bg-white text-slate-900 rounded-none sm:rounded-xl p-3.5 sm:p-5 md:p-6 shadow-sm sm:shadow-[0_15px_30px_rgba(0,0,0,0.25)] border-y border-x-0 sm:border border-slate-150 relative overflow-hidden text-left"
                 >
                   <div className="pb-1.5">
@@ -463,9 +464,9 @@ export function LoginPage() {
 
                 {/* 4. HOW THE PLATFORM WORKS */}
                 <motion.div 
-                  initial={{ opacity: 0, y: 30 }}
-                  whileInView={{ opacity: 1, y: 0 }}
-                  viewport={{ once: true, margin: "-100px" }}
+                  initial={{ opacity: 0, y: 15 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.4, delay: 0.15 }}
                   className="bg-white text-slate-900 rounded-none sm:rounded-xl p-3.5 sm:p-5 md:p-6 shadow-sm sm:shadow-[0_15px_30px_rgba(0,0,0,0.25)] border-y border-x-0 sm:border border-slate-150 relative overflow-hidden text-left"
                 >
                   <div>
@@ -526,9 +527,9 @@ export function LoginPage() {
 
                 {/* 5. FREQUENTLY ASKED QUESTIONS */}
                 <motion.div 
-                  initial={{ opacity: 0, y: 30 }}
-                  whileInView={{ opacity: 1, y: 0 }}
-                  viewport={{ once: true, margin: "-100px" }}
+                  initial={{ opacity: 0, y: 15 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.4, delay: 0.2 }}
                   className="bg-white text-slate-900 rounded-none sm:rounded-xl p-3.5 sm:p-5 md:p-6 shadow-sm sm:shadow-[0_15px_30px_rgba(0,0,0,0.25)] border-y border-x-0 sm:border border-slate-150 relative overflow-hidden text-left"
                 >
                   <div>
@@ -575,9 +576,9 @@ export function LoginPage() {
 
                 {/* 6. ABOUT FIRSTLOOK */}
                 <motion.div 
-                  initial={{ opacity: 0, y: 30 }}
-                  whileInView={{ opacity: 1, y: 0 }}
-                  viewport={{ once: true, margin: "-100px" }}
+                  initial={{ opacity: 0, y: 15 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.4, delay: 0.25 }}
                   className="bg-white text-slate-900 rounded-none sm:rounded-xl p-3.5 sm:p-5 md:p-6 shadow-sm sm:shadow-[0_15px_30px_rgba(0,0,0,0.25)] border-y border-x-0 sm:border border-slate-150 relative overflow-hidden text-left"
                 >
                   <div className="pb-1.5">

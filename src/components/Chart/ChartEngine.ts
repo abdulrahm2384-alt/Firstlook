@@ -4121,8 +4121,21 @@ export class ChartEngine {
                 ctx.font = '500 11px sans-serif';
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
-                const badgeTitle = `${status === 'active' ? 'Position' : (status === 'won' ? 'Closed' : 'Stopped')} P&L: ${currentPnl.toFixed(1)}`;
-                const badgeSub = `Risk/Reward Ratio: ${rr.toFixed(2)}`;
+                
+                const setupRRVal = pDiff / (lDiff || 0.00000001);
+                
+                let badgeTitle = '';
+                if (!hasTriggered) {
+                    badgeTitle = `Setup (Pending)`;
+                } else {
+                    badgeTitle = `${status === 'active' ? 'Position' : (status === 'won' ? 'Closed' : 'Stopped')} P&L: ${currentPnl.toFixed(1)}`;
+                }
+
+                let badgeSub = `Risk/Reward Ratio: ${setupRRVal.toFixed(2)}`;
+                if (hasTriggered) {
+                    badgeSub += ` (Cur: ${rr > 0 ? '+' : ''}${rr.toFixed(2)}R)`;
+                }
+
                 const bw = Math.max(ctx.measureText(badgeTitle).width, ctx.measureText(badgeSub).width) + 30;
                 const bh = 40;
                 const bx = midX - bw/2;
