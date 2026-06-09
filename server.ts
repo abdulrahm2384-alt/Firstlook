@@ -1576,10 +1576,13 @@ async function startServer() {
               const user = await db.getUserById(userId);
               const email = user?.email || result.data?.customer?.email || "guest@firstlook.com";
               const fullName = user?.full_name || `${result.data?.customer?.first_name || ""} ${result.data?.customer?.last_name || ""}`.trim() || user?.username || "Trader";
-              const country = user?.country || result.data?.ip_address_country || "US";
-              const localAmount = result.data?.amount ? (result.data.amount / 100) : (plan === "premium" ? 22000 : 5500);
-              const amountUsd = plan === "premium" ? 20.00 : 5.00;
-              const currency = result.data?.currency || "NGN";
+              const country = user?.country || result.data?.ip_address_country || "United States";
+              
+              const cycle = billingCycle || 'monthly';
+              const currencyInfo = getCurrencyForCountry(country);
+              const amountUsd = plan === "premium" ? (cycle === "yearly" ? 201.60 : 20.00) : (cycle === "yearly" ? 50.40 : 5.00);
+              const localAmount = result.data?.amount ? (result.data.amount / 100) : parseFloat((amountUsd * currencyInfo.rate).toFixed(2));
+              const currency = result.data?.currency || (isMock ? currencyInfo.code : currencyInfo.paystackCurrency);
 
               await db.logPayment(
                 userId,
@@ -1653,10 +1656,13 @@ async function startServer() {
             const user = await db.getUserById(userId);
             const email = user?.email || result.data?.customer?.email || "guest@firstlook.com";
             const fullName = user?.full_name || `${result.data?.customer?.first_name || ""} ${result.data?.customer?.last_name || ""}`.trim() || user?.username || "Trader";
-            const country = user?.country || result.data?.ip_address_country || "US";
-            const localAmount = result.data?.amount ? (result.data.amount / 100) : (plan === "premium" ? 22000 : 5500);
-            const amountUsd = plan === "premium" ? 20.00 : 5.00;
-            const currency = result.data?.currency || "NGN";
+            const country = user?.country || result.data?.ip_address_country || "United States";
+            
+            const cycle = billingCycle || 'monthly';
+            const currencyInfo = getCurrencyForCountry(country);
+            const amountUsd = plan === "premium" ? (cycle === "yearly" ? 201.60 : 20.00) : (cycle === "yearly" ? 50.40 : 5.00);
+            const localAmount = result.data?.amount ? (result.data.amount / 100) : parseFloat((amountUsd * currencyInfo.rate).toFixed(2));
+            const currency = result.data?.currency || (isMock ? currencyInfo.code : currencyInfo.paystackCurrency);
 
             await db.logPayment(
               userId,
@@ -1723,10 +1729,15 @@ async function startServer() {
         const user = await db.getUserById(userId);
         const email = user?.email || "guest@firstlook.com";
         const fullName = user?.full_name || user?.username || "Trader Mock";
-        const country = user?.country || "US";
-        const amountUsd = plan === "premium" ? 20.00 : 5.00;
-        const amountLocal = amountUsd * 1100; // default simulation conversion rate
+        const country = user?.country || "United States";
+        
+        const currencyInfo = getCurrencyForCountry(country);
+        const amountUsd = plan === "premium" ? (cycle === "yearly" ? 201.60 : 20.00) : (cycle === "yearly" ? 50.40 : 5.00);
+        const amountLocal = parseFloat((amountUsd * currencyInfo.rate).toFixed(2));
         const refStr = reference || `FL-PAY-${crypto.randomUUID()}`;
+        
+        // In simulation, we charge in the user's direct local currency code for realistic billing
+        const currencyCode = currencyInfo.code;
 
         await db.logPayment(
           userId,
@@ -1734,7 +1745,7 @@ async function startServer() {
           fullName,
           amountUsd,
           amountLocal,
-          "NGN",
+          currencyCode,
           plan,
           country,
           refStr
@@ -1799,10 +1810,13 @@ async function startServer() {
             const user = await db.getUserById(userId);
             const email = user?.email || event.data?.customer?.email || "guest@firstlook.com";
             const fullName = user?.full_name || `${event.data?.customer?.first_name || ""} ${event.data?.customer?.last_name || ""}`.trim() || user?.username || "Trader";
-            const country = user?.country || event.data?.customer?.metadata?.country || "US";
-            const localAmount = event.data?.amount ? (event.data.amount / 100) : (plan === "premium" ? 22000 : 5500);
-            const amountUsd = plan === "premium" ? 20.00 : 5.00;
-            const currency = event.data?.currency || "NGN";
+            const country = user?.country || event.data?.customer?.metadata?.country || "United States";
+            
+            const cycle = billingCycle || 'monthly';
+            const currencyInfo = getCurrencyForCountry(country);
+            const amountUsd = plan === "premium" ? (cycle === "yearly" ? 201.60 : 20.00) : (cycle === "yearly" ? 50.40 : 5.00);
+            const localAmount = event.data?.amount ? (event.data.amount / 100) : parseFloat((amountUsd * currencyInfo.rate).toFixed(2));
+            const currency = event.data?.currency || (getProjectMode() === "test" ? currencyInfo.code : currencyInfo.paystackCurrency);
             const ref = event.data?.reference || `FL-PAY-W-${crypto.randomUUID()}`;
 
             await db.logPayment(
@@ -2836,12 +2850,18 @@ async function startServer() {
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const mainVite = await createViteServer({
-      server: { middlewareMode: true },
+      server: { 
+        middlewareMode: true,
+        hmr: process.env.DISABLE_HMR === 'true' ? false : undefined
+      },
       appType: "spa",
     });
 
     const journalVite = await createViteServer({
-      server: { middlewareMode: true },
+      server: { 
+        middlewareMode: true,
+        hmr: process.env.DISABLE_HMR === 'true' ? false : undefined
+      },
       appType: "spa",
       root: path.resolve(process.cwd(), "journal-page")
     });

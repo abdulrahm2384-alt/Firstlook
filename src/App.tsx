@@ -1100,11 +1100,13 @@ export default function App() {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  const [showFavoritesByMode, setShowFavoritesByMode] = useState<Record<string, boolean>>({
+  const showFavoritesByMode: Record<string, boolean> = {
     desktop: true,
     mobilePortrait: true,
     mobileLandscape: true
-  });
+  };
+  const setShowFavoritesByMode = (val: any) => {};
+
   const [showToolbarByMode, setShowToolbarByMode] = useState<Record<string, boolean>>({
     desktop: true,
     mobilePortrait: true,
@@ -1112,15 +1114,8 @@ export default function App() {
   });
 
 
-  const showFavorites = showFavoritesByMode[currentMode];
-  const setShowFavorites = (val: boolean) => setShowFavoritesByMode(prev => ({
-    ...prev,
-    [currentMode]: val,
-    ...(currentMode === 'mobilePortrait' || currentMode === 'mobileLandscape' ? {
-      mobilePortrait: val,
-      mobileLandscape: val
-    } : {})
-  }));
+  const showFavorites = true;
+  const setShowFavorites = (val: boolean) => {};
   
   const showDrawingToolbar = showToolbarByMode[currentMode];
   const setShowDrawingToolbar = (val: boolean) => setShowToolbarByMode(prev => ({
@@ -6942,9 +6937,12 @@ export default function App() {
                       setups={setups}
                       source={syncedDataSource || 'binance'}
                       onUpgradeClick={() => {
-                        setSubscriptionBackTarget('watchlist');
+                        setSavedSymbolBeforeSubscription(selectedSymbol);
+                        setSubscriptionBackTarget('chart-room');
+                        setSelectedSymbol(null);
                         setActiveTab('subscription');
                       }}
+                      userPlan={subscriptionPlan}
                     />
 
                     {/* Bottom Left controls: Cancel/Close and Star Button */}
@@ -7084,9 +7082,12 @@ export default function App() {
                       setups={setups}
                       source={mainRawSource}
                       onUpgradeClick={() => {
-                        setSubscriptionBackTarget('watchlist');
+                        setSavedSymbolBeforeSubscription(selectedSymbol);
+                        setSubscriptionBackTarget('chart-room');
+                        setSelectedSymbol(null);
                         setActiveTab('subscription');
                       }}
+                      userPlan={subscriptionPlan}
                     />
 
                     {/* Main Floating Favorites Toolbar inside mainPanel during split screen comparison */}
@@ -8262,17 +8263,17 @@ export default function App() {
                       </button>
                     </div>
 
-                    <div className="p-4 bg-slate-50/50 border border-slate-100 rounded-2xl flex items-center justify-between group hover:border-slate-200 transition-colors">
+                    <div className="p-4 bg-slate-50/50 border border-slate-100 rounded-2xl flex items-center justify-between opacity-90">
                       <div className="flex flex-col">
-                        <span className="text-[10px] font-bold text-slate-800 uppercase">Favorites Bar</span>
-                        <span className="text-[9px] text-slate-400 mt-0.5">Floating shortcut menu</span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[10px] font-bold text-slate-800 uppercase">Favorites Bar</span>
+                          <span className="text-[7.5px] bg-slate-200 text-slate-700 px-1 py-0.5 rounded font-black uppercase tracking-wider">LOCKED ON</span>
+                        </div>
+                        <span className="text-[9px] text-slate-400 mt-0.5">Always active for rapid strategy & backtesting flow</span>
                       </div>
-                      <button 
-                        onClick={() => setShowFavorites(!showFavorites)}
-                        className={`w-9 h-5 rounded-full transition-all relative ${showFavorites ? 'bg-slate-900' : 'bg-slate-200'}`}
-                      >
-                        <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all shadow-sm ${showFavorites ? 'left-5' : 'left-1'}`} />
-                      </button>
+                      <div className="w-9 h-5 rounded-full bg-slate-900 relative">
+                        <div className="absolute top-1 w-3 h-3 bg-white rounded-full left-5 shadow-sm" />
+                      </div>
                     </div>
                     
                     <div className="p-4 bg-slate-50/50 border border-slate-100 rounded-2xl flex items-center justify-between group hover:border-slate-200 transition-colors">

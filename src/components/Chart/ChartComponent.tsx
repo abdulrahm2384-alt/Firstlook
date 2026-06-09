@@ -41,6 +41,7 @@ interface ChartProps {
   setups?: any[];
   source?: string;
   onUpgradeClick?: () => void;
+  userPlan?: 'basic' | 'plus' | 'premium';
 }
 
 export const ChartComponent = forwardRef<ChartEngine | null, ChartProps>(({ 
@@ -73,7 +74,8 @@ export const ChartComponent = forwardRef<ChartEngine | null, ChartProps>(({
   isNewsStreamEnabled = true,
   setups = [],
   source,
-  onUpgradeClick
+  onUpgradeClick,
+  userPlan
 }, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -97,6 +99,11 @@ export const ChartComponent = forwardRef<ChartEngine | null, ChartProps>(({
   }, []);
 
   const handleChartInteraction = () => {
+    // Only show premium promo popups to basic/free plan users
+    if (userPlan && userPlan !== 'basic') {
+      return;
+    }
+
     try {
       // If we have already shown it in this current tab session, don't trigger again
       if (sessionStorage.getItem('firstlook_promo_shown') === 'true') {

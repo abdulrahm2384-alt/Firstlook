@@ -76,6 +76,7 @@ export function SubscriptionPage({
   const [faqSearchQuery, setFaqSearchQuery] = useState('');
   const [faqSelectedCategory, setFaqSelectedCategory] = useState<'all' | 'billing' | 'limits' | 'charting' | 'performance'>('all');
   const [billingCycle, setBillingCycle] = useState<'monthly' | 'yearly'>('monthly');
+  const [isHistoryCollapsed, setIsHistoryCollapsed] = useState(true);
 
   // Auto-detected state using the real life strategy currency converter based on user registration country
   const userCountry = user?.country || 'United States';
@@ -1077,104 +1078,129 @@ export function SubscriptionPage({
         </div>
 
         {/* PERSONAL TRANSACTION HISTORY SECTION */}
-        <div id="personal-transaction-history" className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-6 animate-fade-in">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
+        <div id="personal-transaction-history" className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-4 animate-fade-in">
+          <div 
+            onClick={() => setIsHistoryCollapsed(!isHistoryCollapsed)}
+            className="flex flex-row items-center justify-between gap-3 cursor-pointer select-none border-b border-slate-100 pb-3"
+          >
             <div className="flex items-center gap-2">
               <CreditCard size={15} className="text-[#3bca84]" />
               <h3 className="text-xs font-black uppercase tracking-widest text-[#011b33]">Your Transaction & Invoice History</h3>
-            </div>
-            <button
-              onClick={fetchPaymentHistory}
-              disabled={loadingHistory}
-              className="text-[9px] font-black uppercase tracking-wider text-indigo-600 hover:text-indigo-800 disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
-            >
-              {loadingHistory ? (
-                <>
-                  <Loader2 size={10} className="animate-spin" />
-                  Refreshing...
-                </>
-              ) : (
-                "Refresh History"
+              {paymentHistory.length > 0 && (
+                <span className="text-[9px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded-full font-bold">
+                  {paymentHistory.length}
+                </span>
               )}
-            </button>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  fetchPaymentHistory();
+                }}
+                disabled={loadingHistory}
+                className="text-[9px] font-black uppercase tracking-wider text-indigo-600 hover:text-indigo-800 disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
+              >
+                {loadingHistory ? (
+                  <>
+                    <Loader2 size={10} className="animate-spin" />
+                    Refreshing...
+                  </>
+                ) : (
+                  "Refresh History"
+                )}
+              </button>
+              <div className={`text-slate-400 transition-transform duration-200 ${!isHistoryCollapsed ? 'rotate-180 text-indigo-650' : ''}`}>
+                <ChevronDown size={14} />
+              </div>
+            </div>
           </div>
 
-          {paymentHistory.length > 0 ? (
-            <div className="space-y-4">
-              {/* Highlight card for the last paid amount */}
-              <div className="p-4 bg-emerald-50/50 border border-emerald-100 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                <div className="space-y-1">
-                  <span className="text-[8.5px] font-black uppercase tracking-widest text-[#2fb071] block">Last Payment Success</span>
-                  <div className="text-lg font-black text-slate-900">
-                    {paymentHistory[0].currency} {parseFloat(paymentHistory[0].amount_local).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                    <span className="text-[10px] font-semibold text-slate-400 ml-1.5">
-                      ({paymentHistory[0].currency === 'USD' ? '' : `~$${parseFloat(paymentHistory[0].amount_usd).toFixed(2)} `}USD)
-                    </span>
+          <motion.div
+            initial={false}
+            animate={{ height: !isHistoryCollapsed ? "auto" : 0, opacity: !isHistoryCollapsed ? 1 : 0 }}
+            transition={{ duration: 0.25, ease: "easeInOut" }}
+            className="overflow-hidden"
+          >
+            <div className="pt-2 space-y-4">
+              {paymentHistory.length > 0 ? (
+                <div className="space-y-4">
+                  {/* Highlight card for the last paid amount */}
+                  <div className="p-4 bg-emerald-50/50 border border-emerald-100 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                    <div className="space-y-1">
+                      <span className="text-[8.5px] font-black uppercase tracking-widest text-[#2fb071] block">Last Payment Success</span>
+                      <div className="text-lg font-black text-slate-900">
+                        {paymentHistory[0].currency} {parseFloat(paymentHistory[0].amount_local).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        <span className="text-[10px] font-semibold text-slate-400 ml-1.5">
+                          ({paymentHistory[0].currency === 'USD' ? '' : `~$${parseFloat(paymentHistory[0].amount_usd).toFixed(2)} `}USD)
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-slate-500 font-semibold leading-relaxed">
+                        Upgraded workspace to <strong className="uppercase bg-indigo-50 text-indigo-700 px-1.5 py-0.5 border border-indigo-100/50 rounded">{paymentHistory[0].plan}</strong> via reference: <span className="font-mono text-indigo-900 bg-indigo-50/50 px-1 py-0.5 rounded text-[9.5px] font-bold select-all">{paymentHistory[0].reference}</span>
+                      </div>
+                    </div>
+                    <div className="text-left sm:text-right shrink-0">
+                      <div className="text-[10.5px] font-extrabold text-slate-800">
+                        {new Date(paymentHistory[0].created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                      </div>
+                      <span className="inline-flex px-2 py-0.5 mt-1 bg-emerald-100 text-emerald-800 border border-emerald-200/50 text-[7.5px] font-black uppercase tracking-widest rounded-lg">
+                        SUCCESSFULLY BILLED
+                      </span>
+                    </div>
                   </div>
-                  <div className="text-[10px] text-slate-500 font-semibold leading-relaxed">
-                    Upgraded workspace to <strong className="uppercase bg-indigo-50 text-indigo-700 px-1.5 py-0.5 border border-indigo-100/50 rounded">{paymentHistory[0].plan}</strong> via reference: <span className="font-mono text-indigo-900 bg-indigo-50/50 px-1 py-0.5 rounded text-[9.5px] font-bold select-all">{paymentHistory[0].reference}</span>
-                  </div>
-                </div>
-                <div className="text-left sm:text-right shrink-0">
-                  <div className="text-[10.5px] font-extrabold text-slate-800">
-                    {new Date(paymentHistory[0].created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                  </div>
-                  <span className="inline-flex px-2 py-0.5 mt-1 bg-emerald-100 text-emerald-800 border border-emerald-200/50 text-[7.5px] font-black uppercase tracking-widest rounded-lg">
-                    SUCCESSFULLY BILLED
-                  </span>
-                </div>
-              </div>
 
-              {/* Paginated / scrollable detailed history */}
-              <div className="overflow-x-auto border border-slate-100 rounded-2xl">
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="bg-slate-50 border-b border-slate-100">
-                      <th className="p-3 text-[8.5px] font-black uppercase tracking-widest text-slate-400">Date/Time</th>
-                      <th className="p-3 text-[8.5px] font-black uppercase tracking-widest text-slate-400">Plan Purchased</th>
-                      <th className="p-3 text-[8.5px] font-black uppercase tracking-widest text-slate-400">Total Billed</th>
-                      <th className="p-3 text-[8.5px] font-black uppercase tracking-widest text-slate-400">Payment Reference</th>
-                      <th className="p-3 text-[8.5px] font-black uppercase tracking-widest text-slate-400">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {paymentHistory.map((pmt: any) => (
-                      <tr key={pmt.id || pmt.reference} className="hover:bg-slate-50/50 transition-colors">
-                        <td className="p-3 text-[10px] font-semibold text-slate-600">
-                          {new Date(pmt.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                        </td>
-                        <td className="p-3">
-                          <span className="px-2 py-0.5 bg-indigo-50 border border-indigo-100 text-indigo-700 text-[8.5px] font-black uppercase rounded">
-                            {pmt.plan}
-                          </span>
-                        </td>
-                        <td className="p-3">
-                          <div className="text-[10.5px] font-bold text-slate-900">
-                            {pmt.currency} {parseFloat(pmt.amount_local).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                          </div>
-                          <span className="text-[8.5px] font-semibold text-slate-400 block">
-                            (${parseFloat(pmt.amount_usd).toFixed(2)} USD)
-                          </span>
-                        </td>
-                        <td className="p-3 text-[9.5px] font-mono text-slate-500 font-semibold select-all">
-                          {pmt.reference}
-                        </td>
-                        <td className="p-3">
-                          <span className="px-1.5 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200/50 text-[7.5px] font-black uppercase rounded">
-                            SUCCESS
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                  {/* Paginated / scrollable detailed history */}
+                  <div className="overflow-x-auto border border-slate-100 rounded-2xl">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="bg-slate-50 border-b border-slate-100">
+                          <th className="p-3 text-[8.5px] font-black uppercase tracking-widest text-slate-400">Date/Time</th>
+                          <th className="p-3 text-[8.5px] font-black uppercase tracking-widest text-slate-400">Plan Purchased</th>
+                          <th className="p-3 text-[8.5px] font-black uppercase tracking-widest text-slate-400">Total Billed</th>
+                          <th className="p-3 text-[8.5px] font-black uppercase tracking-widest text-slate-400">Payment Reference</th>
+                          <th className="p-3 text-[8.5px] font-black uppercase tracking-widest text-slate-400">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {paymentHistory.map((pmt: any) => (
+                          <tr key={pmt.id || pmt.reference} className="hover:bg-slate-50/50 transition-colors">
+                            <td className="p-3 text-[10px] font-semibold text-slate-600">
+                              {new Date(pmt.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                            </td>
+                            <td className="p-3">
+                              <span className="px-2 py-0.5 bg-indigo-50 border border-indigo-100 text-indigo-700 text-[8.5px] font-black uppercase rounded">
+                                {pmt.plan}
+                              </span>
+                            </td>
+                            <td className="p-3">
+                              <div className="text-[10.5px] font-bold text-slate-900">
+                                {pmt.currency} {parseFloat(pmt.amount_local).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                              </div>
+                              <span className="text-[8.5px] font-semibold text-slate-400 block">
+                                (${parseFloat(pmt.amount_usd).toFixed(2)} USD)
+                              </span>
+                            </td>
+                            <td className="p-3 text-[9.5px] font-mono text-slate-500 font-semibold select-all">
+                              {pmt.reference}
+                            </td>
+                            <td className="p-3">
+                              <span className="px-1.5 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200/50 text-[7.5px] font-black uppercase rounded">
+                                SUCCESS
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : (
+                <div className="py-8 border border-dashed border-slate-200 text-center rounded-2xl bg-slate-50/40">
+                  <p className="text-[10px] uppercase font-bold text-slate-400 italic">No historical subscription payments found on your profile.</p>
+                </div>
+              )}
             </div>
-          ) : (
-            <div className="py-8 border border-dashed border-slate-200 text-center rounded-2xl bg-slate-50/40">
-              <p className="text-[10px] uppercase font-bold text-slate-400 italic">No historical subscription payments found on your profile.</p>
-            </div>
-          )}
+          </motion.div>
         </div>
       </div>
 
