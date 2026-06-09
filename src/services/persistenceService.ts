@@ -194,7 +194,7 @@ export const persistenceService = {
         throw new Error('Failed to save trade to backend database');
       }
     } catch (err) {
-      console.error('[PersistenceService] saveTrade error:', err);
+      console.warn('[PersistenceService] saveTrade error:', err);
     }
   },
 
@@ -234,7 +234,7 @@ export const persistenceService = {
         };
       });
     } catch (err) {
-      console.error('[PersistenceService] getTrades error:', err);
+      console.warn('[PersistenceService] getTrades error:', err);
       return [];
     }
   },
@@ -252,7 +252,7 @@ export const persistenceService = {
         throw new Error('Drawing autosave failed');
       }
     } catch (err) {
-      console.error('[PersistenceService] saveDrawings error:', err);
+      console.warn('[PersistenceService] saveDrawings error:', err);
     }
   },
 
@@ -264,7 +264,7 @@ export const persistenceService = {
       const raw = data.drawings || [];
       return raw.map(decompressDrawing);
     } catch (err) {
-      console.error('[PersistenceService] getDrawings error:', err);
+      console.warn('[PersistenceService] getDrawings error:', err);
       return [];
     }
   },
@@ -281,7 +281,7 @@ export const persistenceService = {
         throw new Error('Preferences sync failed');
       }
     } catch (err) {
-      console.error('[PersistenceService] savePreferences error:', err);
+      console.warn('[PersistenceService] savePreferences error:', err);
     }
   },
 
@@ -292,7 +292,7 @@ export const persistenceService = {
       const data = await response.json();
       return data.preferences || null;
     } catch (err) {
-      console.error('[PersistenceService] getPreferences error:', err);
+      console.warn('[PersistenceService] getPreferences error:', err);
       return null;
     }
   },
@@ -309,7 +309,7 @@ export const persistenceService = {
         throw new Error('Watchlist sync failed');
       }
     } catch (err) {
-      console.error('[PersistenceService] saveWatchlist error:', err);
+      console.warn('[PersistenceService] saveWatchlist error:', err);
     }
   },
 
@@ -320,7 +320,7 @@ export const persistenceService = {
       const data = await response.json();
       return data.items || [];
     } catch (err) {
-      console.error('[PersistenceService] getWatchlist error:', err);
+      console.warn('[PersistenceService] getWatchlist error:', err);
       return [];
     }
   },
@@ -376,7 +376,7 @@ export const persistenceService = {
       if (err instanceof TypeError && err.message === 'Failed to fetch') {
         console.warn('[PersistenceService] Active session update postponed: Browser connection busy or page reloading.');
       } else {
-        console.error('[PersistenceService] updateActiveSession error:', err);
+        console.warn('[PersistenceService] updateActiveSession error:', err);
       }
     }
   },
@@ -413,7 +413,7 @@ export const persistenceService = {
         throw new Error('Failed to save trade setup rules');
       }
     } catch (err) {
-      console.error('[PersistenceService] saveSetup error:', err);
+      console.warn('[PersistenceService] saveSetup error:', err);
     }
   },
 
@@ -432,7 +432,7 @@ export const persistenceService = {
         updated_at: s.updated_at
       }));
     } catch (err) {
-      console.error('[PersistenceService] getSetups error:', err);
+      console.warn('[PersistenceService] getSetups error:', err);
       return [];
     }
   },
@@ -445,7 +445,7 @@ export const persistenceService = {
         body: JSON.stringify({ userId, watchlistId })
       });
     } catch (err) {
-      console.error('[PersistenceService] deleteTradesByWatchlistId error:', err);
+      console.warn('[PersistenceService] deleteTradesByWatchlistId error:', err);
     }
   },
 
@@ -457,7 +457,7 @@ export const persistenceService = {
         body: JSON.stringify({ userId, symbol, prefix, watchlistId })
       });
     } catch (err) {
-      console.error('[PersistenceService] deleteTradesForSymbol error:', err);
+      console.warn('[PersistenceService] deleteTradesForSymbol error:', err);
     }
   },
 
@@ -529,12 +529,12 @@ export const persistenceService = {
               resolve(null);
             }
           } catch (err) {
-            console.error('[PersistenceService] uploadSetupImage fail, falling back to local memory string representation', err);
+            console.warn('[PersistenceService] uploadSetupImage fail, falling back to local memory string representation', err);
             resolve(base64String); // Best fallback - return the local base64 so it still renders in the browser immediately!
           }
         })
         .catch((err) => {
-          console.error('[PersistenceService] image compression failure, reading backup raw stream:', err);
+          console.warn('[PersistenceService] image compression failure, reading backup raw stream:', err);
           const reader = new FileReader();
           reader.onloadend = async () => {
             const base64String = reader.result as string;

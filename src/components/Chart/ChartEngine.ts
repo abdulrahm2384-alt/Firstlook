@@ -388,6 +388,7 @@ export class ChartEngine {
   private mouseX: number = -1;
   private mouseY: number = -1;
   private isCrosshairActive: boolean = false;
+  private isCrosshairRelativeMode: boolean = false;
   private longPressTimer: any = null;
   private indicatorLevels: Array<{ price: number, color: string }> = [];
   private pointers: Map<number, PointerEvent> = new Map();
@@ -632,19 +633,31 @@ export class ChartEngine {
       this.pointers.set(e.pointerId, e);
       this.canvas.setPointerCapture(e.pointerId);
       
+      // Reset relative crosshair dragging on new interaction press
+      this.isCrosshairRelativeMode = false;
+      
       // Long press for Crosshair activation (TradingView style)
       if (!this.isSidebarDragging && this.pointers.size === 1) {
         if (this.longPressTimer) clearTimeout(this.longPressTimer);
         this.longPressTimer = setTimeout(() => {
           this.longPressTimer = null; // Important: set to null so move logic knows it finished
+          const wasActive = this.isCrosshairActive;
           this.isCrosshairActive = true;
-          const isTouch = e.pointerType === 'touch';
-          const touchOffset = isTouch ? 60 : 0; 
+          this.isCrosshairRelativeMode = true;
+          this.lastAimerPointer = { x: e.clientX, y: e.clientY };
           
-          this.mouseX = x;
-          this.mouseY = y - touchOffset;
+          if (!wasActive) {
+            // Center the crosshair in the visible chart viewport
+            const w = this.lastWidth || this.canvas.width / (window.devicePixelRatio || 1);
+            const h = this.lastHeight || this.canvas.height / (window.devicePixelRatio || 1);
+            const centerX = Math.max(20, (w - this.sidebarWidth) / 2);
+            const centerY = Math.max(20, h / 2);
+            this.mouseX = centerX;
+            this.mouseY = centerY;
+          }
           
           if ('vibrate' in navigator) navigator.vibrate(12);
+          this.draw();
         }, 500); // 500ms for pro feel
       }
 
@@ -669,6 +682,11 @@ export class ChartEngine {
       if (this.pendingSelectedId) {
         // If it was a tap (not a significant drag), perform selection/deselection
         if (this.dragDistance < 10) {
+          // Tap dismisses the active non-dragging crosshair (TradingView style)
+          if (this.isCrosshairActive && !this.isCrosshairRelativeMode) {
+            this.isCrosshairActive = false;
+            this.draw();
+          }
           // Check for news click first
           const clickedIcon = this.getNewsIconAtCoords(clickX, clickY);
           if (clickedIcon) {
@@ -841,7 +859,14 @@ export class ChartEngine {
         clearTimeout(this.longPressTimer);
         this.longPressTimer = null;
       }
-      this.isCrosshairActive = false;
+      
+      const wasRelativeDrag = this.isCrosshairRelativeMode;
+      this.isCrosshairRelativeMode = false;
+      
+      if (!wasRelativeDrag) {
+        this.isCrosshairActive = false;
+      }
+      
       this.pointers.delete(e.pointerId);
       this.canvas.style.cursor = 'default';
       if (this.pointers.size < 2) {
@@ -1227,11 +1252,22 @@ export class ChartEngine {
         }
 
         if (this.isCrosshairActive) {
-          // If in crosshair mode, only update crosshair position (with touch offset), don't pan
-          const isTouch = e.pointerType === 'touch';
-          const touchOffset = isTouch ? 60 : 0;
-          this.mouseX = x;
-          this.mouseY = y - touchOffset;
+          if (this.isCrosshairRelativeMode && this.lastAimerPointer) {
+            const dx = e.clientX - this.lastAimerPointer.x;
+            const dy = e.clientY - this.lastAimerPointer.y;
+            
+            this.mouseX += dx;
+            this.mouseY += dy;
+            
+            // Clamp crosshair to chart viewport area (excluding sidebar)
+            this.mouseX = Math.max(2, Math.min(this.canvasWidth - this.sidebarWidth - 2, this.mouseX));
+            this.mouseY = Math.max(2, Math.min(this.canvasHeight - 2, this.mouseY));
+            
+            this.lastAimerPointer = { x: e.clientX, y: e.clientY };
+          } else if (e.pointerType === 'mouse') {
+            this.mouseX = x;
+            this.mouseY = y;
+          }
           return;
         }
 

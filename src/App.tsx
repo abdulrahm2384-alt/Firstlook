@@ -2040,7 +2040,7 @@ export default function App() {
           const tfS = isReplayMode 
             ? (TIMEFRAMES.find(tf => tf.id.toLowerCase() === replayTrade?.timeframe.toLowerCase() || tf.label.toLowerCase() === replayTrade?.timeframe.toLowerCase())?.seconds || 60) 
             : selectedTimeframe.seconds;
-          const tT = Math.max(30, Math.floor(tfS / 2));
+          const tT = Math.max(1, Math.floor(tfS / 2));
           const ticking = getTickingCandleState(curCandle, savedTickIndex, tT);
           setNonPlayingTickPrice(ticking.close);
           setSimCurrentPrice(ticking.close);
@@ -2065,7 +2065,7 @@ export default function App() {
         if (isReplayMode) {
           if (replayTrade) {
             const timeframeSeconds = TIMEFRAMES.find(tf => tf.id.toLowerCase() === replayTrade.timeframe.toLowerCase() || tf.label.toLowerCase() === replayTrade.timeframe.toLowerCase())?.seconds || 60;
-            const totalTicks = Math.max(30, Math.floor(timeframeSeconds / 2));
+            const totalTicks = Math.max(1, Math.floor(timeframeSeconds / 2));
             const current = replayCurrentTimeRef.current || replayTrade.entryTime;
             // Find the exact candle time
             const currentData = historicalDataRef.current;
@@ -2079,7 +2079,7 @@ export default function App() {
           }
         } else if (isSimulating || currentSessionKey) {
           const timeframeSeconds = selectedTimeframeRef.current?.seconds || 60;
-          const totalTicks = Math.max(30, Math.floor(timeframeSeconds / 2));
+          const totalTicks = Math.max(1, Math.floor(timeframeSeconds / 2));
           const sessionKey = simTimeSessionKeyRef.current || '';
           const session = sessionKey ? (backtestSessionsRef.current[sessionKey] || (selectedSymbolRef.current ? backtestSessionsRef.current[activePrefix ? `${selectedSymbolRef.current}_${activePrefix}` : selectedSymbolRef.current] : null)) : null;
           if (session) {
@@ -2127,7 +2127,7 @@ export default function App() {
 
     const intervalId = setInterval(() => {
       const timeframeSeconds = selectedTimeframe?.seconds || 60;
-      const totalTicks = Math.max(30, Math.floor(timeframeSeconds / 2));
+      const totalTicks = Math.max(1, Math.floor(timeframeSeconds / 2));
 
       setNonPlayingTickIndex((prevTickIdx) => {
         const nextTickIndex = prevTickIdx + 1;
@@ -4790,7 +4790,16 @@ export default function App() {
           }
 
           const currentPos = candleIdx + progress;
-          const addedIndices = (deltaMs / 1000) * (simSpeed / 1.5);
+          const getCandleDurationForSpeed = (speed: number) => {
+            if (speed === 1) return 5;
+            if (speed === 2) return 4;
+            if (speed === 3) return 3;
+            if (speed === 4) return 2;
+            if (speed < 1) return 5 / (speed || 1);
+            return Math.max(0.5, 6 - speed);
+          };
+          const playDuration = getCandleDurationForSpeed(simSpeed);
+          const addedIndices = (deltaMs / 1000) / playDuration;
           let nextPos = currentPos + addedIndices;
 
           let endIdx = currentData.length - 1;
@@ -4817,7 +4826,7 @@ export default function App() {
             nextProgress = 0.999;
           }
 
-          const tT = Math.max(30, Math.floor(timeframeSeconds / 2));
+          const tT = Math.max(1, Math.floor(timeframeSeconds / 2));
           lastActiveTickIndexRef.current = Math.floor(nextProgress * tT);
 
           const nextGapSeconds = (nextCandleIdx + 1 < currentData.length) ? (currentData[nextCandleIdx + 1].time - currentData[nextCandleIdx].time) : timeframeSeconds;
@@ -4845,7 +4854,16 @@ export default function App() {
           setReplayCurrentTime(nextTime);
           setSimCurrentPrice(stepPrice);
         } else {
-          const nextTime = current + (deltaMs / 1000) * (simSpeed * timeframeSeconds / 1.5);
+          const getCandleDurationForSpeed = (speed: number) => {
+            if (speed === 1) return 5;
+            if (speed === 2) return 4;
+            if (speed === 3) return 3;
+            if (speed === 4) return 2;
+            if (speed < 1) return 5 / (speed || 1);
+            return Math.max(0.5, 6 - speed);
+          };
+          const playDuration = getCandleDurationForSpeed(simSpeed);
+          const nextTime = current + (deltaMs / 1000) * (timeframeSeconds / playDuration);
           replayCurrentTimeRef.current = nextTime;
           setReplayCurrentTime(nextTime);
         }
@@ -4892,9 +4910,18 @@ export default function App() {
 
           const currentPos = candleIdx + progress;
           const isTimeSync = session && session.timeSyncEnabled;
+          const getCandleDurationForSpeed = (speed: number) => {
+            if (speed === 1) return 5;
+            if (speed === 2) return 4;
+            if (speed === 3) return 3;
+            if (speed === 4) return 2;
+            if (speed < 1) return 5 / (speed || 1);
+            return Math.max(0.5, 6 - speed);
+          };
+          const playDuration = getCandleDurationForSpeed(simSpeed);
           const addedIndices = isTimeSync 
             ? (deltaMs / 1000) * 60 / (timeframeSeconds * (session.timeSyncSpeed || 60))
-            : (deltaMs / 1000) * (simSpeed / 1.5);
+            : (deltaMs / 1000) / playDuration;
           let nextPos = currentPos + addedIndices;
 
           let endIdx = currentData.length - 1;
@@ -4930,7 +4957,7 @@ export default function App() {
             nextProgress = 0.999;
           }
 
-          const tT = Math.max(30, Math.floor(timeframeSeconds / 2));
+          const tT = Math.max(1, Math.floor(timeframeSeconds / 2));
           lastActiveTickIndexRef.current = Math.floor(nextProgress * tT);
 
           const nextGapSeconds = (nextCandleIdx + 1 < currentData.length) ? (currentData[nextCandleIdx + 1].time - currentData[nextCandleIdx].time) : timeframeSeconds;
@@ -4962,9 +4989,18 @@ export default function App() {
           setSimCurrentPrice(stepPrice);
         } else {
           const isTimeSync = session && session.timeSyncEnabled;
+          const getCandleDurationForSpeed = (speed: number) => {
+            if (speed === 1) return 5;
+            if (speed === 2) return 4;
+            if (speed === 3) return 3;
+            if (speed === 4) return 2;
+            if (speed < 1) return 5 / (speed || 1);
+            return Math.max(0.5, 6 - speed);
+          };
+          const playDuration = getCandleDurationForSpeed(simSpeed);
           const nextTime = isTimeSync
             ? current + (deltaMs / 1000) * (60 / (session.timeSyncSpeed || 60))
-            : current + (deltaMs / 1000) * (simSpeed * timeframeSeconds / 1.5);
+            : current + (deltaMs / 1000) * (timeframeSeconds / playDuration);
           simCurrentTimeRef.current = nextTime;
           if (sessionCurrentTimesRef.current) {
             sessionCurrentTimesRef.current[sessionKey] = nextTime;
@@ -5018,7 +5054,7 @@ export default function App() {
 
     if (mainCandle) {
       const timeframeSeconds = renderedTimeframe.seconds;
-      const totalTicks = Math.max(30, Math.floor(timeframeSeconds / 2));
+      const totalTicks = Math.max(1, Math.floor(timeframeSeconds / 2));
       const p_main = Math.max(0, Math.min(1.0, nonPlayingTickIndex / (totalTicks - 1 || 1)));
       return mainCandle.time + p_main * timeframeSeconds;
     }
@@ -5048,7 +5084,7 @@ export default function App() {
       const lastIndex = copy.length - 1;
       const lastCandle = copy[lastIndex];
       const timeframeSeconds = renderedTimeframe.seconds;
-      const totalTicks = Math.max(30, Math.floor(timeframeSeconds / 2));
+      const totalTicks = Math.max(1, Math.floor(timeframeSeconds / 2));
       
       if (theme.tickingEnabled !== false) {
         const ticking = getTickingCandleState(lastCandle, nonPlayingTickIndex, totalTicks);
@@ -5079,7 +5115,7 @@ export default function App() {
         const lastIndex = filtered.length - 1;
         const lastCandle = filtered[lastIndex];
         const timeframeSeconds = renderedTimeframe.seconds;
-        const totalTicks = Math.max(30, Math.floor(timeframeSeconds / 2));
+        const totalTicks = Math.max(1, Math.floor(timeframeSeconds / 2));
         
         const progress = Math.max(0, Math.min(1.0, (targetTime - lastCandle.time) / timeframeSeconds));
         const tickIdx = Math.floor(progress * (totalTicks - 1));
@@ -5194,7 +5230,7 @@ export default function App() {
       const lastIndex = copy.length - 1;
       const lastCandle = copy[lastIndex];
       const timeframeSeconds = renderedSyncedTimeframe?.seconds || 60;
-      const totalTicks = Math.max(30, Math.floor(timeframeSeconds / 2));
+      const totalTicks = Math.max(1, Math.floor(timeframeSeconds / 2));
       
       if (theme.tickingEnabled !== false) {
         const ticking = getTickingCandleState(lastCandle, nonPlayingTickIndex, totalTicks);
@@ -5225,7 +5261,7 @@ export default function App() {
         const lastIndex = filtered.length - 1;
         const lastCandle = filtered[lastIndex];
         const timeframeSeconds = renderedSyncedTimeframe?.seconds || 60;
-        const totalTicks = Math.max(30, Math.floor(timeframeSeconds / 2));
+        const totalTicks = Math.max(1, Math.floor(timeframeSeconds / 2));
         
         const progress = Math.max(0, Math.min(1.0, (targetTime - lastCandle.time) / timeframeSeconds));
         const tickIdx = Math.floor(progress * (totalTicks - 1));
