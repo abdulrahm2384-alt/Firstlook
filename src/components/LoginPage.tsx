@@ -29,35 +29,35 @@ import { clearAllLocalChartCaches } from '../services/chartCacheService';
 const FAQS_DATA = [
   {
     q: "What is FirstLook?",
-    a: "An integrated charting, replay, journaling, and analytics sandbox to backtest strategies without financial risk."
+    a: "A lightweight strategy backtesting platform designed for traders to test trading strategies on historical market data before risking real money."
   },
   {
     q: "Is FirstLook suitable for beginners?",
-    a: "Yes, it provides a safe, real-data environment for beginners to build chart execution routines and psychological discipline."
+    a: "Yes, it provides a safe, historical-data environment for beginners to test strategies, learn pattern recognition, and build realistic trading consistency."
   },
   {
     q: "Can I test trading strategies?",
-    a: "Yes, you can step charts forward bar-by-bar, log setups, and review automatically generated metrics like win rates."
+    a: "Yes, you can step charts forward bar-by-bar, simulate execution, log setups, and analyze automatically generated performance metrics."
   },
   {
     q: "Does FirstLook include trade journaling?",
-    a: "Yes, log custom confluences, sizes, and mental notes directly on the sidebar chart mapped next to your setups."
+    a: "Yes, log confluences, position rules, and notes directly on the chart to maintain a realistic strategy test record."
   },
   {
-    q: "What markets can be analyzed?",
-    a: "FirstLook supports cross-market technical analysis of major forex pairs, global indices, commodities, and leading crypto assets."
+    q: "What markets can be tested?",
+    a: "FirstLook supports strategy testing across major historical forex pairs, global indices, commodities, and crypto assets."
   },
   {
     q: "Can I use FirstLook on mobile devices?",
-    a: "Yes, we supply custom resizable interface views developed specifically for mobile touch devices both in portrait and landscape."
+    a: "Yes, the entire backtesting experience is designed to run smoothly on low-end laptops, tablets, and smartphones alike."
   },
   {
-    q: "How does performance tracking work?",
-    a: "The analytics dashboard calculates your metrics, drawdowns, equity growth curves, and weekday performance heatmaps."
+    q: "How does strategy simulation work?",
+    a: "Use historical replay to run strategies bar-by-bar, placing mock positions on real past data to discover what works before risking real capital."
   },
   {
     q: "Is my data securely stored?",
-    a: "Yes, your setups, watchlists, and journals are hosted securely and remain completely private to your profile."
+    a: "Yes, your test setups, backtest journals, and watchlists are stored securely and remain private to your profile."
   }
 ];
 
@@ -269,15 +269,15 @@ export function LoginPage() {
                   transition={{ duration: 0.6 }}
                   className="flex flex-col items-center"
                 >
-                  <h1 className="text-2xl sm:text-3xl md:text-5xl font-black tracking-tight leading-tight uppercase font-mono text-white mb-4">
-                    Verify the Depth <br />
-                    <span className="text-transparent bg-clip-text bg-gradient-to-r from-gray-100 via-indigo-400 to-gray-350">
-                      Before You Take the Leap
+                  <h1 className="text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-black tracking-tight leading-tight uppercase font-mono text-white mb-4">
+                    Verify the depth <br />
+                    <span className="text-transparent bg-clip-text bg-gradient-to-r from-gray-150 via-indigo-400 to-gray-350">
+                      before you take the leap
                     </span>
                   </h1>
 
-                  <p className="text-[11px] sm:text-xs md:text-base text-slate-400 font-medium leading-relaxed mb-10 max-w-lg tracking-wide">
-                    Test your trading strategy and understand success before going live.
+                  <p className="text-[11.5px] sm:text-xs md:text-sm lg:text-base text-slate-300 font-medium leading-relaxed mb-10 max-w-2xl tracking-wide">
+                    Test your trading strategy and understand your success before implementing it to live.
                   </p>
 
                   <div className="flex flex-col items-center gap-4">
@@ -305,7 +305,7 @@ export function LoginPage() {
                 
                 {/* 1. PLATFORM OVERVIEW */}
                 <motion.div 
-                  initial={{ opacity: 0, y: 15 }}
+                   initial={{ opacity: 0, y: 15 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.4 }}
                   className="bg-white text-slate-900 rounded-none sm:rounded-xl p-3.5 sm:p-5 md:p-6 shadow-sm sm:shadow-[0_15px_30px_rgba(0,0,0,0.25)] border-y border-x-0 sm:border border-slate-150 relative overflow-hidden text-left"
@@ -315,12 +315,12 @@ export function LoginPage() {
                       Platform Overview
                     </div>
                     <h2 className="text-base sm:text-xl font-black text-slate-900 tracking-tight uppercase font-mono mb-2 leading-tight">
-                      Professional Trading Analysis <br />
-                      <span className="text-indigo-600">Without Guesswork</span>
+                      Lightweight Strategy Backtesting <br />
+                      <span className="text-indigo-600">Built for Action</span>
                     </h2>
                     <div className="text-slate-600 text-[10px] sm:text-[10.5px] leading-relaxed font-normal">
                       <p>
-                        FirstLook is a professional trading workspace to test and optimize strategies. We isolate execution habits and track performance metrics using historical data, helping you build genuine consistency before risking real capital.
+                        FirstlookLabs is a lightweight backtesting environment to test and validate your trading strategy. By stepping charts forward bar-by-bar and placing simulated positions on real historical prices, you can build solid validation before taking any real financial risk.
                       </p>
                     </div>
                   </div>
@@ -328,7 +328,7 @@ export function LoginPage() {
 
                 {/* 2. CORE FEATURES */}
                 <motion.div 
-                  initial={{ opacity: 0, y: 15 }}
+                   initial={{ opacity: 0, y: 15 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.4, delay: 0.05 }}
                   className="bg-white text-slate-900 rounded-none sm:rounded-xl p-3.5 sm:p-5 md:p-6 shadow-sm sm:shadow-[0_15px_30px_rgba(0,0,0,0.25)] border-y border-x-0 sm:border border-slate-150 relative overflow-hidden text-left"
@@ -339,10 +339,10 @@ export function LoginPage() {
                         Core Features
                       </div>
                       <h2 className="text-base sm:text-xl font-black text-slate-900 tracking-tight uppercase font-mono">
-                        Engineered for Deep Analysis
+                        Designed for Realistic Backtesting
                       </h2>
                       <p className="text-slate-500 text-[10px] sm:text-[10.5px] font-medium mt-1 max-w-xl">
-                        A robust, integrated suite of technical utilities delivering precise analytical feedback.
+                        A simple, lightweight suite of simulation tools to practice strategies and improve execution workflows.
                       </p>
                     </div>
 

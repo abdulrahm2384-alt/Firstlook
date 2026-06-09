@@ -6941,6 +6941,10 @@ export default function App() {
                       onNewsClick={(newsItems, isFuture) => setSelectedNewsGroup({ newsItems, isFuture })}
                       setups={setups}
                       source={syncedDataSource || 'binance'}
+                      onUpgradeClick={() => {
+                        setSubscriptionBackTarget('watchlist');
+                        setActiveTab('subscription');
+                      }}
                     />
 
                     {/* Bottom Left controls: Cancel/Close and Star Button */}
@@ -7079,6 +7083,10 @@ export default function App() {
                       onNewsClick={(newsItems, isFuture) => setSelectedNewsGroup({ newsItems, isFuture })}
                       setups={setups}
                       source={mainRawSource}
+                      onUpgradeClick={() => {
+                        setSubscriptionBackTarget('watchlist');
+                        setActiveTab('subscription');
+                      }}
                     />
 
                     {/* Main Floating Favorites Toolbar inside mainPanel during split screen comparison */}

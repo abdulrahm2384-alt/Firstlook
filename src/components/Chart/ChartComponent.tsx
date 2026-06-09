@@ -40,6 +40,7 @@ interface ChartProps {
   isNewsStreamEnabled?: boolean;
   setups?: any[];
   source?: string;
+  onUpgradeClick?: () => void;
 }
 
 export const ChartComponent = forwardRef<ChartEngine | null, ChartProps>(({ 
@@ -71,7 +72,8 @@ export const ChartComponent = forwardRef<ChartEngine | null, ChartProps>(({
   historicalData = [],
   isNewsStreamEnabled = true,
   setups = [],
-  source
+  source,
+  onUpgradeClick
 }, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -82,6 +84,37 @@ export const ChartComponent = forwardRef<ChartEngine | null, ChartProps>(({
 
   const [dismissedDrawingIds, setDismissedDrawingIds] = useState<string[]>([]);
   const [showSetupDropdown, setShowSetupDropdown] = useState<string | null>(null);
+
+  const [showPromoPopup, setShowPromoPopup] = useState(false);
+  const promoTimeoutRef = useRef<any>(null);
+
+  useEffect(() => {
+    return () => {
+      if (promoTimeoutRef.current) {
+        clearTimeout(promoTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const handleChartInteraction = () => {
+    try {
+      // If we have already shown it in this current tab session, don't trigger again
+      if (sessionStorage.getItem('firstlook_promo_shown') === 'true') {
+        return;
+      }
+    } catch (e) {}
+
+    if (!showPromoPopup && !promoTimeoutRef.current) {
+      // Wait for at least 5 seconds of interaction before showing the popup
+      promoTimeoutRef.current = setTimeout(() => {
+        setShowPromoPopup(true);
+        try {
+          sessionStorage.setItem('firstlook_promo_shown', 'true');
+        } catch (e) {}
+        promoTimeoutRef.current = null;
+      }, 5000);
+    }
+  };
 
   const lastCandle = data && data.length > 0 ? data[data.length - 1] : null;
 
@@ -451,7 +484,7 @@ export const ChartComponent = forwardRef<ChartEngine | null, ChartProps>(({
   const isDarkTheme = theme?.bg ? !['#ffffff', '#fff', '#f8fafc', '#f1f5f9'].includes(theme.bg.toLowerCase().trim()) : false;
 
   return (
-    <div ref={containerRef} className="w-full h-full relative overflow-hidden flex-1" style={{ backgroundColor: theme?.bg || '#ffffff' }}>
+    <div ref={containerRef} onPointerDownCapture={handleChartInteraction} className="w-full h-full relative overflow-hidden flex-1" style={{ backgroundColor: theme?.bg || '#ffffff' }}>
       <canvas ref={canvasRef} className="block w-full h-full touch-none" />
 
       {/* Small drop-down news overlay dropping from the news icon itself */}
@@ -702,6 +735,96 @@ export const ChartComponent = forwardRef<ChartEngine | null, ChartProps>(({
                 title="Dismiss details"
               >
                 <X size={11} className="stroke-[2.5px]" />
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Promo Upgrade Subscription Popup */}
+      <AnimatePresence>
+        {showPromoPopup && (
+          <motion.div
+            initial={{ opacity: 0, x: -60, scale: 0.95 }}
+            animate={{ opacity: 1, x: 0, scale: 1 }}
+            exit={{ opacity: 0, x: -60, scale: 0.95 }}
+            transition={{ type: "spring", stiffness: 380, damping: 28 }}
+            onPointerDown={(e) => e.stopPropagation()}
+            style={{
+              textRendering: 'optimizeLegibility',
+              WebkitFontSmoothing: 'antialiased',
+            }}
+            className="absolute bottom-6 left-6 z-[1000] w-[320px] sm:w-[350px] p-4.5 rounded-2xl bg-slate-950/95 border border-amber-500/20 shadow-[0_20px_50px_rgba(0,0,0,0.55)] text-white backdrop-blur-lg flex flex-col gap-3.5 overflow-hidden select-none"
+          >
+            {/* Ambient Premium Glow Effects */}
+            <div className="absolute -top-12 -left-12 w-28 h-28 bg-amber-500/15 rounded-full blur-2xl pointer-events-none" />
+            <div className="absolute -bottom-12 -right-12 w-28 h-28 bg-indigo-500/15 rounded-full blur-2xl pointer-events-none" />
+
+            {/* Header section */}
+            <div className="relative z-10 flex items-start justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8.5 h-8.5 rounded-xl flex items-center justify-center bg-gradient-to-br from-amber-400 to-amber-600 text-slate-950 shadow-[0_4px_10px_rgba(245,158,11,0.25)]">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="w-4.5 h-4.5 stroke-[2.5px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="font-sans text-[12px] font-black uppercase tracking-wider text-amber-400">FirstLook Premium</h3>
+                  <p className="text-[8.5px] text-slate-400 font-mono tracking-widest leading-none mt-0.5">EXCLUSIVE PLUS PASS</p>
+                </div>
+              </div>
+
+              {/* Candlestick X close button */}
+              <div 
+                className="relative flex flex-col items-center justify-center h-11 w-6 group cursor-pointer" 
+                onClick={(e) => { 
+                  e.stopPropagation(); 
+                  setShowPromoPopup(false); 
+                }} 
+                title="Dismiss Offer"
+              >
+                {/* Candle Upper Wick */}
+                <div className="w-0.5 h-1.5 bg-rose-450/70 group-hover:bg-rose-400 transition-colors" />
+                {/* Candle Body */}
+                <div className="w-4 h-5 bg-rose-500 rounded-sm flex items-center justify-center text-[10px] font-bold text-white shadow-[0_2px_8px_rgba(239,68,68,0.35)] border border-rose-600 group-hover:scale-105 transition-transform">
+                  <X size={8} className="stroke-[4px]" />
+                </div>
+                {/* Candle Lower Wick */}
+                <div className="w-0.5 h-1.5 bg-rose-450/70 group-hover:bg-rose-400 transition-colors" />
+              </div>
+            </div>
+
+            {/* Content text */}
+            <div className="relative z-10">
+              <p className="text-slate-300 font-sans text-[11.5px] sm:text-xs font-medium leading-relaxed">
+                Unlock the full potential of <span className="font-black text-amber-300">FirstLook</span> by upgrading to Plus or Premium for better experience
+              </p>
+            </div>
+
+            {/* Actions CTA buttons */}
+            <div className="relative z-10 flex items-center gap-3 justify-end mt-0.5">
+              <button 
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowPromoPopup(false);
+                }}
+                className="px-3 py-1 rounded-full text-[10.5px] font-bold text-slate-400 hover:text-white transition-colors cursor-pointer"
+              >
+                Maybe Later
+              </button>
+              <button 
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowPromoPopup(false);
+                  if (onUpgradeClick) onUpgradeClick();
+                }}
+                className="px-4 py-1.5 rounded-full bg-gradient-to-r from-amber-400 via-amber-500 to-amber-600 text-slate-950 text-[11px] font-extrabold shadow-[0_4px_12px_rgba(245,158,11,0.3)] hover:shadow-[0_4px_16px_rgba(245,158,11,0.45)] active:scale-95 transition-all cursor-pointer flex items-center gap-1.5"
+              >
+                <span>Try Now</span>
+                <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3 stroke-[3px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="5" y1="12" x2="19" y2="12"></line>
+                  <polyline points="12 5 19 12 12 19"></polyline>
+                </svg>
               </button>
             </div>
           </motion.div>
