@@ -124,6 +124,20 @@ export async function saveChartStateToCache(
   replayCurrentTime: number | null,
   indicators: IndicatorInstance[]
 ): Promise<void> {
+  // Defensive Guard: Prevent saving/overwriting cache with empty, short, or invalid candle arrays due to poor network
+  if (!candles || candles.length < 50) {
+    console.warn(`[CacheDB] saveChartStateToCache ignored: candles array is empty or too short (${candles?.length || 0} candles) to establish complete timeframe integrity.`);
+    return;
+  }
+
+  // Ensure first and last candles are not corrupted with NaN values
+  const firstC = candles[0];
+  const lastC = candles[candles.length - 1];
+  if (!firstC || isNaN(firstC.time) || isNaN(firstC.close) || !lastC || isNaN(lastC.time) || isNaN(lastC.close)) {
+    console.warn(`[CacheDB] saveChartStateToCache ignored: candles array contains corrupt or NaN elements.`);
+    return;
+  }
+
   const key = getCacheKey(symbol, timeframeId, prefix);
   
   // Prune candles before saving to prevent storage growth
@@ -152,7 +166,12 @@ export function getChartStateFromCacheSync(
   prefix?: string
 ): ChartStateCache | null {
   const key = getCacheKey(symbol, timeframeId, prefix);
-  return inMemoryCache.get(key) || null;
+  const cached = inMemoryCache.get(key) || null;
+  // Dynamic Self-Healing: Discard sync cache if it does not meet integrity checks (< 50 candles)
+  if (cached && (!cached.candles || cached.candles.length < 50)) {
+    return null;
+  }
+  return cached;
 }
 
 export async function getChartStateFromCache(
@@ -164,15 +183,33 @@ export async function getChartStateFromCache(
 
   // Layer 1: In-memory
   if (inMemoryCache.has(key)) {
-    return inMemoryCache.get(key) || null;
+    const cached = inMemoryCache.get(key) || null;
+    if (cached && cached.candles && cached.candles.length >= 50) {
+      return cached;
+    }
+    // Remove if corrupt
+    inMemoryCache.delete(key);
   }
 
   // Layer 2: IndexedDB
   const dbData = await dbInstance.get(key);
   if (dbData) {
-    // Populate in-memory for subsequent loads
-    inMemoryCache.set(key, dbData);
-    return dbData;
+    if (dbData.candles && dbData.candles.length >= 50) {
+      // Populate in-memory for subsequent loads
+      inMemoryCache.set(key, dbData);
+      return dbData;
+    } else {
+      // Self-Healing: Delete corrupted/incomplete cache records permanently from IndexedDB
+      console.warn(`[CacheDB] Automatically healing corrupt/short cached record for key: ${key}`);
+      try {
+        const db = await dbInstance.init();
+        const transaction = db.transaction('candles_v3', 'readwrite');
+        const store = transaction.objectStore('candles_v3');
+        store.delete(key);
+      } catch (err) {
+        console.error('[CacheDB] Self-healing failure during entry delete:', err);
+      }
+    }
   }
 
   return null;

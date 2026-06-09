@@ -1135,7 +1135,12 @@ export function ProfilePage({
 
             <div className="flex items-center justify-between mt-6 pt-4 border-t border-neutral-100/60 text-[8.5px] font-bold text-neutral-400 uppercase tracking-widest font-mono">
               <span>© {new Date().getFullYear()} FirstLook Terminal</span>
-              <span className="text-indigo-600 hover:underline cursor-pointer">Terms & Security</span>
+              <span 
+                onClick={() => window.history.pushState(null, '', '/terms')}
+                className="text-indigo-600 hover:underline cursor-pointer"
+              >
+                Terms & Security
+              </span>
             </div>
           </div>
         </section>

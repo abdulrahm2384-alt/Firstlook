@@ -627,9 +627,10 @@ export function LoginPage() {
                   <div className="space-y-2 font-mono">
                     <h4 className="text-[9px] uppercase font-black tracking-widest text-white">Support & Legal</h4>
                     <div className="flex flex-col space-y-1.5 text-[10px] uppercase tracking-wider text-slate-400">
-                      <span className="hover:text-indigo-400 transition-colors cursor-pointer font-bold" onClick={() => alert("FirstLook Support Node can be requested via credentials support@firstlook.trading")}>Technical Support</span>
-                      <span className="hover:text-indigo-400 transition-colors cursor-pointer font-bold" onClick={() => alert("Privacy Policies active under FirstLook Cloud Server parameters.")}>Privacy Policy</span>
-                      <span className="hover:text-indigo-400 transition-colors cursor-pointer font-bold" onClick={() => alert("Terms of Service bound to deliberate practice software simulation.")}>Terms of Service</span>
+                      <span className="hover:text-indigo-400 transition-colors cursor-pointer font-bold" onClick={() => window.history.pushState(null, '', '/about')}>About FirstLook</span>
+                      <span className="hover:text-indigo-400 transition-colors cursor-pointer font-bold" onClick={() => window.history.pushState(null, '', '/contact')}>Technical Support / Contact</span>
+                      <span className="hover:text-indigo-400 transition-colors cursor-pointer font-bold" onClick={() => window.history.pushState(null, '', '/privacy-policy')}>Privacy Policy</span>
+                      <span className="hover:text-indigo-400 transition-colors cursor-pointer font-bold" onClick={() => window.history.pushState(null, '', '/terms')}>Terms of Service</span>
                     </div>
                   </div>
                 </div>

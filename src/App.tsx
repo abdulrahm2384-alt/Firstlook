@@ -112,6 +112,7 @@ import {
 import { WatchlistItem } from './types/watchlist';
 import { POPULAR_SYMBOLS } from './constants/symbols';
 import { InstallPrompt } from './components/InstallPrompt';
+import { LegalAndSpecsPages, LegalTabType } from './components/LegalAndSpecsPages';
 
 const EMPTY_TRADES_ARRAY: any[] = [];
 
@@ -795,6 +796,33 @@ export default function App() {
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
   const [subscriptionBackTarget, setSubscriptionBackTarget] = useState<'profile' | 'watchlist' | 'chart-room'>('profile');
   const [savedSymbolBeforeSubscription, setSavedSymbolBeforeSubscription] = useState<string | null>(null);
+
+  // Path-based informational routes (/about, /contact, /privacy-policy, /terms)
+  const [currentUrlPath, setCurrentUrlPath] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      return window.location.pathname;
+    }
+    return '/';
+  });
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleLocationChange = () => {
+      setCurrentUrlPath(window.location.pathname);
+    };
+    window.addEventListener('popstate', handleLocationChange);
+    
+    const originalPushState = window.history.pushState;
+    window.history.pushState = function(...args) {
+      originalPushState.apply(this, args);
+      handleLocationChange();
+    };
+    
+    return () => {
+      window.removeEventListener('popstate', handleLocationChange);
+      window.history.pushState = originalPushState;
+    };
+  }, []);
   
   // PWA states and hooks detection
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
@@ -1810,6 +1838,7 @@ export default function App() {
   const playbackTimerRef = useRef<number>(performance.now());
   const playbackAnimationRef = useRef<number | null>(null);
   const lastRequestedSymbolRef = useRef<string | null>(null);
+  const lastRequestedTimeframeRef = useRef<string | null>(null);
   const lastTriedFutureStartTimeRef = useRef<number | null>(null);
 
   // Exit Replay Mode
@@ -3887,6 +3916,7 @@ export default function App() {
   const loadMarketData = async (symbol: string, timeframeId: string, initialEndTime?: number, sourceOverride?: string, marketTypeOverride?: MarketType, forceTimeSnap?: boolean) => {
     if (!symbol) return;
     lastRequestedSymbolRef.current = symbol;
+    lastRequestedTimeframeRef.current = timeframeId;
 
     // Use explicit source/marketType if provided, otherwise find in watchlist
     let activeItem = watchlist.find(i => i.id === activeWatchlistItemId);
@@ -4044,7 +4074,7 @@ export default function App() {
           combinedCandles = Array.from(uniqueMap.values()).sort((a, b) => a.time - b.time);
         }
 
-        if (lastRequestedSymbolRef.current === symbol) {
+        if (lastRequestedSymbolRef.current === symbol && lastRequestedTimeframeRef.current === timeframeId) {
           if (fetchedNew || !hasShownInstantCache) {
             setHistoricalData(combinedCandles);
             setRenderedTimeframeId(timeframeId);
@@ -4161,7 +4191,7 @@ export default function App() {
           addNotification(`No candle data found for ${symbol} on ${timeframeId}`, 'info');
         }
 
-        if (lastRequestedSymbolRef.current === symbol) {
+        if (lastRequestedSymbolRef.current === symbol && lastRequestedTimeframeRef.current === timeframeId) {
           if (combined.length > 0) {
             setHistoricalData(combined);
             setRenderedTimeframeId(timeframeId);
@@ -4222,7 +4252,7 @@ export default function App() {
       } else {
         console.error('Failed to load market data:', err);
       }
-      if (lastRequestedSymbolRef.current === symbol) {
+      if (lastRequestedSymbolRef.current === symbol && lastRequestedTimeframeRef.current === timeframeId) {
         setHistoricalData([]);
         loadedSymbolRef.current = null;
         loadedTimeframeRef.current = null;
@@ -5396,6 +5426,32 @@ export default function App() {
       }
     }
   }, [visibleData, selectedSymbol, activeWatchlistItemId, activePrefix, session?.user?.id]);
+
+  const isAboutPath = currentUrlPath === '/about';
+  const isContactPath = currentUrlPath === '/contact';
+  const isPrivacyPath = currentUrlPath === '/privacy-policy' || currentUrlPath === '/privacy';
+  const isTermsPath = currentUrlPath === '/terms' || currentUrlPath === '/terms-of-service';
+
+  if (isAboutPath || isContactPath || isPrivacyPath || isTermsPath) {
+    const activeTabVal: LegalTabType = isAboutPath 
+      ? 'about' 
+      : isContactPath 
+        ? 'contact' 
+        : isPrivacyPath 
+          ? 'privacy' 
+          : 'terms';
+
+    return (
+      <LegalAndSpecsPages
+        initialTab={activeTabVal}
+        isLoggedIn={!!session}
+        userEmail={session?.user?.email || ''}
+        onBack={() => {
+          window.history.pushState(null, '', '/');
+        }}
+      />
+    );
+  }
 
   if (isAuthLoading) {
     return (

@@ -67,7 +67,9 @@ export async function fetchMarketData(symbol: string, timeframeId: string, limit
       result = await fetchWarehouseData(symbol, timeframeId, limit, endTime, startTime, normSource);
     }
     
-    dataCache.set(cacheKey, { data: result, timestamp: Date.now() });
+    if (result && result.length >= 50) {
+      dataCache.set(cacheKey, { data: result, timestamp: Date.now() });
+    }
 
     // Timeframe-independent news injection!
     if (result && result.length > 0 && timeframeId !== '1h') {
