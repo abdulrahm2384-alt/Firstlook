@@ -389,6 +389,7 @@ export class ChartEngine {
   private mouseY: number = -1;
   private isCrosshairActive: boolean = false;
   private isCrosshairRelativeMode: boolean = false;
+  private isCrosshairJustActivated: boolean = false;
   private longPressTimer: any = null;
   private indicatorLevels: Array<{ price: number, color: string }> = [];
   private pointers: Map<number, PointerEvent> = new Map();
@@ -546,7 +547,8 @@ export class ChartEngine {
       }
 
       // 2. Hit detection for existing drawings/points (with perfect support for overlap layer-cycling)
-      const hits = this.getHitInfoAll(x, y);
+      // Skip hit detection for drawings on touch devices if crosshair is already active, to prioritize dragging crosshair
+      const hits = (this.isCrosshairActive && e.pointerType !== 'mouse') ? [] : this.getHitInfoAll(x, y);
       this.dragStartPx = { x, y };
       this.dragDistance = 0;
       this.pendingSelectedId = null;
@@ -634,26 +636,29 @@ export class ChartEngine {
       this.canvas.setPointerCapture(e.pointerId);
       
       // Reset relative crosshair dragging on new interaction press
-      this.isCrosshairRelativeMode = false;
+      this.isCrosshairJustActivated = false;
+      if (this.isCrosshairActive && e.pointerType !== 'mouse' && !this.isSidebarDragging) {
+        this.isCrosshairRelativeMode = true;
+        this.lastAimerPointer = { x: e.clientX, y: e.clientY };
+      } else {
+        this.isCrosshairRelativeMode = false;
+      }
       
       // Long press for Crosshair activation (TradingView style)
-      if (!this.isSidebarDragging && this.pointers.size === 1) {
+      if (!this.isSidebarDragging && this.pointers.size === 1 && !this.isCrosshairActive) {
         if (this.longPressTimer) clearTimeout(this.longPressTimer);
         this.longPressTimer = setTimeout(() => {
           this.longPressTimer = null; // Important: set to null so move logic knows it finished
           const wasActive = this.isCrosshairActive;
           this.isCrosshairActive = true;
           this.isCrosshairRelativeMode = true;
+          this.isCrosshairJustActivated = true;
           this.lastAimerPointer = { x: e.clientX, y: e.clientY };
           
           if (!wasActive) {
-            // Center the crosshair in the visible chart viewport
-            const w = this.lastWidth || this.canvas.width / (window.devicePixelRatio || 1);
-            const h = this.lastHeight || this.canvas.height / (window.devicePixelRatio || 1);
-            const centerX = Math.max(20, (w - this.sidebarWidth) / 2);
-            const centerY = Math.max(20, h / 2);
-            this.mouseX = centerX;
-            this.mouseY = centerY;
+            // Appear EXACTLY where the user clicked, not the center anymore!
+            this.mouseX = x;
+            this.mouseY = y;
           }
           
           if ('vibrate' in navigator) navigator.vibrate(12);
@@ -663,6 +668,8 @@ export class ChartEngine {
 
       if (this.pointers.size >= 2) {
         this.isSidebarDragging = false; 
+        this.isCrosshairActive = false;
+        this.isCrosshairRelativeMode = false;
         this.lastPinchDistance = this.getPinchDistance();
         const center = this.getPointerCenter();
         this.lastX = center.x + this.canvasRect!.left;
@@ -863,7 +870,13 @@ export class ChartEngine {
       const wasRelativeDrag = this.isCrosshairRelativeMode;
       this.isCrosshairRelativeMode = false;
       
-      if (!wasRelativeDrag) {
+      const isTap = this.dragDistance < 10;
+      
+      if (isTap && this.isCrosshairActive && !this.isCrosshairJustActivated) {
+        // A single tap always dismisses the active crosshair
+        this.isCrosshairActive = false;
+        this.draw();
+      } else if (!wasRelativeDrag) {
         this.isCrosshairActive = false;
       }
       
@@ -898,9 +911,12 @@ export class ChartEngine {
       const x = e.clientX - this.canvasRect!.left;
       const y = e.clientY - this.canvasRect!.top;
 
-      // Update crosshair pos
-      this.mouseX = x;
-      this.mouseY = y;
+      // Update crosshair pos (protect precision relative aimer on touch from resetting to raw touch location)
+      const isRelativeAimer = this.isCrosshairActive && this.isCrosshairRelativeMode && e.pointerType !== 'mouse';
+      if (!isRelativeAimer) {
+        this.mouseX = x;
+        this.mouseY = y;
+      }
 
       // Case 0: Precision Aimer movement (Relative Drag)
       if (this.isAimerDragging && this.lastAimerPointer && this.aimerPx) {
@@ -1214,8 +1230,10 @@ export class ChartEngine {
         }
       }
       
-      this.mouseX = x;
-      this.mouseY = y;
+      if (!isRelativeAimer) {
+        this.mouseX = x;
+        this.mouseY = y;
+      }
 
       // Desktop: show crosshair on hover
       if (!this.isDragging && e.pointerType === 'mouse' && !this.isAimerDragging) {
@@ -1251,7 +1269,7 @@ export class ChartEngine {
           return;
         }
 
-        if (this.isCrosshairActive) {
+        if (this.isCrosshairActive && this.pointers.size < 2) {
           if (this.isCrosshairRelativeMode && this.lastAimerPointer) {
             const dx = e.clientX - this.lastAimerPointer.x;
             const dy = e.clientY - this.lastAimerPointer.y;
@@ -1344,9 +1362,11 @@ export class ChartEngine {
       }
     });
 
-    this.canvas.addEventListener('pointerleave', () => {
-        this.mouseX = -1;
-        this.mouseY = -1;
+    this.canvas.addEventListener('pointerleave', (e) => {
+        if (e.pointerType === 'mouse') {
+            this.mouseX = -1;
+            this.mouseY = -1;
+        }
     });
 
     this.canvas.addEventListener('click', (e) => {
