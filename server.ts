@@ -2323,9 +2323,8 @@ async function startServer() {
       const forexApiSecret = process.env.FOREX_API_SECRET;
       
       if (!forexApiSecret) {
-        console.warn("[Forex Proxy] FOREX_API_SECRET is missing. Generating high-quality fallback candles.");
-        const fallbackData = generateWarehouseFallbackContent(String(symbol || "EURUSD"), String(timeframe || "1h"), Number(limit || 200), startTime ? String(startTime) : undefined, endTime ? String(endTime) : undefined);
-        return res.json(fallbackData);
+        console.warn("[Forex Proxy] FOREX_API_SECRET is missing.");
+        return res.status(401).json({ error: "FOREX_API_SECRET is missing on the server configuration. Please declare it in setting panel." });
       }
 
       // Format parameters according to specification
@@ -2355,31 +2354,37 @@ async function startServer() {
             const data = await response.json();
             return res.json(data);
           } catch (jsonErr: any) {
-            console.error(`[Proxy] Expected JSON, failed to parse. Generating high-quality fallback candles.`);
-            const fallbackData = generateWarehouseFallbackContent(String(symbol || "EURUSD"), String(timeframe || "1h"), Number(limit || 200), startTime ? String(startTime) : undefined, endTime ? String(endTime) : undefined);
-            return res.json(fallbackData);
+            console.error(`[Proxy] Expected JSON, failed to parse:`, jsonErr);
+            return res.status(502).json({ error: "Forex API returned malformed JSON content", details: jsonErr.message });
           }
         } else {
-          console.warn(`[Proxy] Response was OK but Content-Type is ${contentType}. Generating high-quality fallback candles.`);
-          const fallbackData = generateWarehouseFallbackContent(String(symbol || "EURUSD"), String(timeframe || "1h"), Number(limit || 200), startTime ? String(startTime) : undefined, endTime ? String(endTime) : undefined);
-          return res.json(fallbackData);
+          console.warn(`[Proxy] Response was OK but Content-Type is ${contentType || 'missing'}.`);
+          return res.status(502).json({ error: "Forex API returned non-JSON response", contentType });
         }
       } else {
         const errorText = await response.text().catch(() => "N/A");
-        console.error(`[Proxy] Forex Warehouse API error ${response.status}: ${errorText.substring(0, 150)}. Generating high-quality fallback candles.`);
-        const fallbackData = generateWarehouseFallbackContent(String(symbol || "EURUSD"), String(timeframe || "1h"), Number(limit || 200), startTime ? String(startTime) : undefined, endTime ? String(endTime) : undefined);
-        return res.json(fallbackData);
+        console.error(`[Proxy] Forex Warehouse API error ${response.status}: ${errorText.substring(0, 150)}.`);
+        return res.status(response.status).json({ error: "Forex Warehouse API error", status: response.status, details: errorText.substring(0, 300) });
       }
     } catch (error: any) {
       console.error("[Proxy] Forex Warehouse exception:", error);
-      try {
-        console.log(`[Proxy] Exception fallback: Generating high-quality fallback candles.`);
-        const fallbackData = generateWarehouseFallbackContent(String(symbol || "EURUSD"), String(timeframe || "1h"), Number(limit || 200), startTime ? String(startTime) : undefined, endTime ? String(endTime) : undefined);
-        return res.json(fallbackData);
-      } catch (fallbackError) {
-        return res.status(500).json({ error: "Failed to fetch from Forex Datawarehouse API", details: error.message });
-      }
+      return res.status(504).json({ error: "Gateway Timeout: Forex API is unreachable or timed out.", details: error.message });
     }
+  });
+
+  app.get("/api/system/banner", (req, res) => {
+    return res.json({
+      "status": "success",
+      "banner": {
+        "enabled": true,
+        "type": "warning",
+        "title": "FirstLook Update In Progress",
+        "message": "We're currently deploying improvements to the Invite API. Some features may experience temporary delays.",
+        "start_time": "2026-06-10T09:00:00Z",
+        "end_time": "2026-06-10T18:00:00Z",
+        "dismissible": true
+      }
+    });
   });
 
   app.get("/api/sources", async (req, res) => {

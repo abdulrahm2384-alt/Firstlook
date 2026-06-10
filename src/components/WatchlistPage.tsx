@@ -18,6 +18,7 @@ import {
   Layers,
   Database,
   AlertCircle,
+  AlertTriangle,
   GripVertical,
   Server,
   TrendingUp,
@@ -470,6 +471,25 @@ export function WatchlistPage({
   onNavigateToCompetitions
 }: WatchlistPageProps) {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [systemBanner, setSystemBanner] = useState<any>(null);
+  const [isBannerDismissed, setIsBannerDismissed] = useState<boolean>(false);
+
+  useEffect(() => {
+    fetch('/api/system/banner')
+      .then(res => {
+        if (res.ok) return res.json();
+        throw new Error('Failed to fetch banner');
+      })
+      .then(data => {
+        if (data && data.status === 'success' && data.banner) {
+          setSystemBanner(data.banner);
+        }
+      })
+      .catch(err => {
+        console.error('[WatchlistPage] Error fetching system banner:', err);
+      });
+  }, []);
+
   const adsenseClient = (import.meta as any).env?.VITE_ADSENSE_CLIENT || '';
   const adsenseSlot = (import.meta as any).env?.VITE_ADSENSE_SLOT || '';
   const [selectedAssetForSource, setSelectedAssetForSource] = useState<MarketSymbol | null>(null);
@@ -995,6 +1015,95 @@ export function WatchlistPage({
 
   return (
     <div className="flex flex-col h-full bg-white text-slate-900 relative overflow-hidden antialiased">
+      {/* System Alert Banner */}
+      <AnimatePresence>
+        {systemBanner && systemBanner.enabled && !isBannerDismissed && (
+          <motion.div 
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ type: 'spring', stiffness: 260, damping: 25 }}
+            className={`w-full shrink-0 border-b overflow-hidden relative ${
+              systemBanner.type === 'error' 
+                ? 'bg-gradient-to-r from-red-50/70 to-white border-red-100 text-red-950' 
+                : systemBanner.type === 'success'
+                  ? 'bg-gradient-to-r from-emerald-50/70 to-white border-emerald-100 text-emerald-950'
+                  : 'bg-gradient-to-r from-amber-50/70 via-amber-50/30 to-white border-amber-100/80 text-amber-950'
+            }`}
+          >
+            {/* Glow / Accent strip on the left margin */}
+            <div className={`absolute top-0 left-0 bottom-0 w-[3px] ${
+              systemBanner.type === 'error' 
+                ? 'bg-red-500' 
+                : systemBanner.type === 'success'
+                  ? 'bg-emerald-500'
+                  : 'bg-amber-500'
+            }`} />
+
+            <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3.5 flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3.5 min-w-0">
+                {/* Advanced icon with live pulse shell */}
+                <div className="relative shrink-0 flex items-center justify-center">
+                  <span className={`absolute inline-flex h-6 w-6 rounded-full opacity-15 animate-ping ${
+                    systemBanner.type === 'error' 
+                      ? 'bg-red-400' 
+                      : systemBanner.type === 'success'
+                        ? 'bg-emerald-400'
+                        : 'bg-amber-400'
+                  }`} />
+                  <div className={`relative flex items-center justify-center h-8 w-8 rounded-xl ${
+                    systemBanner.type === 'error' 
+                      ? 'bg-red-100/80 text-red-600' 
+                      : systemBanner.type === 'success'
+                        ? 'bg-emerald-100/80 text-emerald-600'
+                        : 'bg-amber-100/95 text-amber-600'
+                  } border border-white/20 shadow-sm shadow-black/5`}>
+                    {systemBanner.type === 'error' ? (
+                      <AlertCircle size={14} strokeWidth={2.5} />
+                    ) : systemBanner.type === 'success' ? (
+                      <CheckCircle2 size={14} strokeWidth={2.5} />
+                    ) : (
+                      <AlertTriangle size={13} strokeWidth={2.5} />
+                    )}
+                  </div>
+                </div>
+
+                <div className="min-w-0 flex flex-col">
+                  {/* Category Pill + Title */}
+                  <div className="flex items-center gap-2">
+                    <span className={`text-[7.5px] font-black uppercase tracking-[0.15em] px-1.5 py-0.5 rounded-md ${
+                      systemBanner.type === 'error' 
+                        ? 'bg-red-200/50 text-red-800' 
+                        : systemBanner.type === 'success'
+                          ? 'bg-emerald-200/50 text-emerald-800'
+                          : 'bg-amber-200/75 text-amber-800'
+                    }`}>
+                      {systemBanner.type || 'system'}
+                    </span>
+                    <h4 className="text-[10px] sm:text-[10.5px] font-bold text-slate-800 tracking-tight truncate">
+                      {systemBanner.title}
+                    </h4>
+                  </div>
+                  <p className="text-[9.5px] sm:text-[10px] font-medium text-slate-500 mt-1 leading-normal max-w-3xl">
+                    {systemBanner.message}
+                  </p>
+                </div>
+              </div>
+
+              {systemBanner.dismissible && (
+                <button 
+                  onClick={() => setIsBannerDismissed(true)}
+                  className="p-1.5 hover:bg-black/[0.04] active:bg-black/[0.08] rounded-full transition-all shrink-0 border border-transparent hover:border-slate-100 self-center"
+                  title="Dismiss alert"
+                >
+                  <X size={12} strokeWidth={2.5} className="text-slate-400 hover:text-slate-700" />
+                </button>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Header */}
       <div className="w-full shrink-0 border-b border-slate-50 bg-white">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 pt-4 pb-3 flex items-center justify-between">

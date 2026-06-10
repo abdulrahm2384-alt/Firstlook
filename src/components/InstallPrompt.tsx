@@ -10,7 +10,13 @@ export const InstallPrompt: React.FC = () => {
   const [isInstalled, setIsInstalled] = useState(false);
 
   useEffect(() => {
-    // 1. Check if already installed
+    if (typeof window === 'undefined') return;
+
+    // PWA installation is not supported inside iframes (e.g. sandboxed workspace iframe)
+    if (window.self !== window.top) {
+      return;
+    }
+
     const isStandalone = window.matchMedia('(display-mode: standalone)').matches 
       || (window.navigator as any).standalone 
       || document.referrer.includes('android-app://');
@@ -20,16 +26,21 @@ export const InstallPrompt: React.FC = () => {
       return;
     }
 
-    // 2. Check if user dismissed the prompt previously
+    // Check if user dismissed the prompt previously
     // Using a fresh key 'pwa_prompt_v6_light' to override previous dismissal actions during design iteration
     const isDismissed = localStorage.getItem('pwa_prompt_v6_light') === 'true';
     if (isDismissed) {
       return;
     }
 
-    // 3. Detect Platform
+    // Detect Platform and general support
     const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
-    
+    const hasPromptSupport = 'beforeinstallprompt' in window || 'BeforeInstallPromptEvent' in window;
+
+    if (!isIOS && !hasPromptSupport) {
+      return;
+    }
+
     // Smooth delay after loading the applet so it has time to breathe
     const timer = setTimeout(() => {
       if (isIOS) {

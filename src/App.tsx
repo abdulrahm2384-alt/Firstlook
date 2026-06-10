@@ -92,7 +92,7 @@ import { TriggerSetupModal } from './components/TriggerSetupModal';
 import { ProfilePage } from './components/ProfilePage';
 import { SubscriptionPage } from './components/SubscriptionPage';
 import { DrawingType, Drawing } from './types/drawing';
-import { fetchMarketData as fetchCandleData } from './services/marketDataService';
+import { fetchMarketData as fetchCandleData, clearMarketDataCache } from './services/marketDataService';
 import { runBacktest } from './services/backtestEngine';
 import { StrategyParams, BacktestResult, Candle, ChartTheme, IndicatorInstance, JournalTrade, BacktestSession, MarketType, MarketSymbol } from './types';
 import { calculatePips, normalizeSymbol, getPipMultiplier } from './lib/marketUtils';
@@ -154,9 +154,7 @@ function getAssetDatedFromLabel(symbol: string, source: string): string {
 }
 
 function getMinSelectableStartDate(symbol: string, source: string): Date {
-  const datedFrom = getAssetDatedFromDate(symbol, source);
-  const year = datedFrom.getFullYear();
-  return new Date(`${year + 1}-01-01`);
+  return getAssetDatedFromDate(symbol, source);
 }
 
 
@@ -881,7 +879,16 @@ export default function App() {
     }
   };
 
-  const shouldShowInstallButton = !isPwaInstalled;
+  const isPwaSupported = useMemo(() => {
+    if (typeof window === 'undefined') return false;
+    // Hide if inside an iframe (such as sandboxed AI Studio space)
+    if (window.self !== window.top) return false;
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
+    const hasPromptSupport = 'beforeinstallprompt' in window || 'BeforeInstallPromptEvent' in window;
+    return isIOS || hasPromptSupport;
+  }, []);
+
+  const shouldShowInstallButton = !isPwaInstalled && isPwaSupported;
 
   
   const [streakCount, setStreakCount] = useState<number>(0);
@@ -1173,6 +1180,10 @@ export default function App() {
     }));
 
   const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
+  const watchlistRef = useRef<WatchlistItem[]>([]);
+  useEffect(() => {
+    watchlistRef.current = watchlist;
+  }, [watchlist]);
   const [isWatchlistLoading, setIsWatchlistLoading] = useState(true);
   const [isDataInitialized, setIsDataInitialized] = useState(false);
   const [notifications, setNotifications] = useState<{ id: string; message: string; type: 'success' | 'error' | 'info' }[]>([]);
@@ -1193,7 +1204,36 @@ export default function App() {
   const [feedback, setFeedback] = useState('');
   const [rateLimitError, setRateLimitError] = useState(false);
 
-  const [backtestSessions, setBacktestSessions] = useState<Record<string, BacktestSession>>({});
+  const [backtestSessions, rawSetBacktestSessions] = useState<Record<string, BacktestSession>>({});
+  const setBacktestSessions = useCallback((updater: any) => {
+    rawSetBacktestSessions(prev => {
+      let next = typeof updater === 'function' ? updater(prev) : updater;
+      if (!next) return prev;
+      const updated = { ...next };
+      watchlistRef.current.forEach(item => {
+        if (!item.id) return;
+        const fallbackKey = item.prefix ? `${item.symbol}_${item.prefix}` : item.symbol;
+        
+        const hasId = !!updated[item.id];
+        const hasFallback = !!updated[fallbackKey];
+        
+        if (hasId) {
+          updated[fallbackKey] = {
+            ...updated[item.id],
+            prefix: item.prefix || undefined,
+            symbol: item.symbol
+          };
+        } else if (hasFallback) {
+          updated[item.id] = {
+            ...updated[fallbackKey],
+            prefix: item.prefix || undefined,
+            symbol: item.symbol
+          };
+        }
+      });
+      return updated;
+    });
+  }, []);
   const [journalTrades, setJournalTrades] = useState<JournalTrade[]>([]);
   const [showBacktestSetup, setShowBacktestSetup] = useState<{ symbol: string, source?: string, marketType?: MarketType } | null>(null);
   const [isNewsStreamEnabled, setIsNewsStreamEnabled] = useState(true);
@@ -1610,11 +1650,6 @@ export default function App() {
     return watchlist.find(i => i.id === activeWatchlistItemId);
   }, [watchlist, activeWatchlistItemId]);
 
-  const watchlistRef = useRef(watchlist);
-  useEffect(() => {
-    watchlistRef.current = watchlist;
-  }, [watchlist]);
-
   const backtestSessionsRef = useRef(backtestSessions);
   useEffect(() => {
     backtestSessionsRef.current = backtestSessions;
@@ -1646,10 +1681,12 @@ export default function App() {
         });
 
         setWatchlist(prev => {
-          const targetItem = prev.find(item => 
-            item.id === currentSessionKey || 
-            (item.symbol === selectedSymbol && (item.prefix || '') === (activePrefix || ''))
-          );
+          const targetItem = prev.find(item => {
+            if (currentSessionKey && currentSessionKey.startsWith('wl_')) {
+              return item.id === currentSessionKey;
+            }
+            return item.id === currentSessionKey || (item.symbol === selectedSymbol && (item.prefix || '') === (activePrefix || ''));
+          });
           if (!targetItem) return prev;
           
           const updatedItem = {
@@ -1701,19 +1738,21 @@ export default function App() {
     const handleFocus = () => {
       if (!currentSessionKey) return;
       const sessionData = backtestSessionsRef.current[currentSessionKey];
-      const matchingWatchlistItem = watchlistRef.current.find(item => 
-        item.id === currentSessionKey ||
-        (item.symbol === selectedSymbolRef.current && (item.prefix || '') === (activePrefixRef.current || ''))
-      );
+      const matchingWatchlistItem = watchlistRef.current.find(item => {
+        if (currentSessionKey && currentSessionKey.startsWith('wl_')) {
+          return item.id === currentSessionKey;
+        }
+        return item.id === currentSessionKey || (item.symbol === selectedSymbolRef.current && (item.prefix || '') === (activePrefixRef.current || ''));
+      });
 
       const isTSEnabled = sessionData?.timeSyncEnabled || matchingWatchlistItem?.timeSync;
       const lastPlayAt = sessionData?.timeSyncLastTimestamp || matchingWatchlistItem?.lastCandlePlayAt;
       const lastSimTime = sessionData?.currentTime || matchingWatchlistItem?.lastSimulationTime || sessionData?.startTime;
       const speedRate = sessionData?.timeSyncSpeed || matchingWatchlistItem?.timeSyncSpeed || 60;
 
-      if (isTSEnabled && lastPlayAt) {
+      if (isTSEnabled && lastPlayAt && sessionData?.isPlaying) {
         const elapsedMs = Date.now() - lastPlayAt;
-        if (elapsedMs > 5000) { // only trigger if away for more than 5 seconds to prevent jitter
+        if (elapsedMs > 5000 && elapsedMs <= 15000) { // only trigger if away for more than 5 seconds but less than 15 seconds to prevent huge jumping
           const ratio = 60 / speedRate;
           const chartAdvanceSecs = (elapsedMs / 1000) * ratio;
           
@@ -1744,7 +1783,11 @@ export default function App() {
 
           setWatchlist(prev => {
             const updated = prev.map(item => {
-              if (item.id === matchingWatchlistItem?.id || (item.symbol === selectedSymbolRef.current && (item.prefix || '') === (activePrefixRef.current || ''))) {
+              const matchesId = matchingWatchlistItem && item.id === matchingWatchlistItem.id;
+              const matchesLegacy = (!matchingWatchlistItem || !matchingWatchlistItem.id || !matchingWatchlistItem.id.startsWith('wl_')) &&
+                (!currentSessionKey || !currentSessionKey.startsWith('wl_')) &&
+                item.symbol === selectedSymbolRef.current && (item.prefix || '') === (activePrefixRef.current || '');
+              if (matchesId || matchesLegacy) {
                 return {
                   ...item,
                   timeSync: true,
@@ -1782,9 +1825,23 @@ export default function App() {
             setSimIsPlaying(true);
           }
         }
-      } else if (sessionData && sessionData.isPlaying && !simIsPlaying) {
-        // If the session is flagged as playing, sync the visual state on focus
-        setSimIsPlaying(true);
+      } else {
+        // If not playing or if we were away for more than 15 seconds, reset the sync timestamp to now
+        if (isTSEnabled && currentSessionKey) {
+          setBacktestSessions(prev => {
+            if (prev[currentSessionKey]) {
+              return {
+                ...prev[currentSessionKey],
+                timeSyncLastTimestamp: Date.now()
+              };
+            }
+            return prev;
+          });
+        }
+        if (sessionData && sessionData.isPlaying && !simIsPlaying) {
+          // If the session is flagged as playing, sync the visual state on focus
+          setSimIsPlaying(true);
+        }
       }
     };
     
@@ -2124,6 +2181,10 @@ export default function App() {
     if (isPlaying) {
       return;
     }
+    // For backtesting or replay modes, prevent the background ticker from running so the chart is completely frozen when paused (no time drifts)
+    if (isReplayMode || isSimulating || currentSessionKey) {
+      return;
+    }
 
     const intervalId = setInterval(() => {
       const timeframeSeconds = selectedTimeframe?.seconds || 60;
@@ -2307,7 +2368,7 @@ export default function App() {
       saveChartStateToCache(
         selectedSymbol,
         selectedTimeframe.id,
-        activePrefix || undefined,
+        activeWatchlistItemId || activePrefix || undefined,
         historicalData,
         simCurrentTime,
         replayCurrentTime,
@@ -2433,10 +2494,12 @@ export default function App() {
       // Automatically move to completed watchlist if reached target date
       if (isCompleted) {
         setWatchlist(prev => {
-          const itemToUpdate = prev.find(item => 
-            item.id === timeSessionKey || 
-            (item.symbol === sessionData.symbol && (item.prefix || '') === (sessionData.prefix || '') && item.status !== 'completed')
-          );
+          const itemToUpdate = prev.find(item => {
+            if (timeSessionKey && timeSessionKey.startsWith('wl_')) {
+              return item.id === timeSessionKey;
+            }
+            return item.id === timeSessionKey || (item.symbol === sessionData.symbol && (item.prefix || '') === (sessionData.prefix || '') && item.status !== 'completed');
+          });
           if (!itemToUpdate || itemToUpdate.status === 'completed') return prev;
 
           const updated = prev.map(item => 
@@ -2660,7 +2723,7 @@ export default function App() {
         saveChartStateToCache(
           selectedSymbol,
           selectedTimeframe.id,
-          activePrefix || undefined,
+          activeWatchlistItemId || activePrefix || undefined,
           historicalDataRef.current,
           curSimTime,
           curReplayTime,
@@ -3140,7 +3203,7 @@ export default function App() {
       saveChartStateToCache(
         selectedSymbol,
         selectedTimeframe.id,
-        activePrefix || undefined,
+        activeWatchlistItemId || activePrefix || undefined,
         historicalData,
         simCurrentTimeRef.current,
         replayCurrentTimeRef.current,
@@ -3162,7 +3225,7 @@ export default function App() {
       saveChartStateToCache(
         selectedSymbol,
         selectedTimeframe.id,
-        activePrefix || undefined,
+        activeWatchlistItemId || activePrefix || undefined,
         historicalData,
         simCurrentTimeRef.current,
         replayCurrentTimeRef.current,
@@ -3519,41 +3582,36 @@ export default function App() {
             let finalLastTimestamp = val.timeSyncLastTimestamp;
 
             // Look up matching watchlist item that was already caught up
-            const matchingWatchlistItem = processedWatchlist.find((item: any) => 
-              item.id === key || 
-              (item.symbol === val.symbol && (item.prefix || '') === (val.prefix || ''))
-            );
+            const matchingWatchlistItem = processedWatchlist.find((item: any) => {
+              if (key && key.startsWith('wl_')) {
+                return item.id === key;
+              }
+              return item.id === key || (item.symbol === val.symbol && (item.prefix || '') === (val.prefix || ''));
+            });
 
             const isTSEnabled = val.timeSyncEnabled || matchingWatchlistItem?.timeSync;
             const lastPlayAt = val.timeSyncLastTimestamp || matchingWatchlistItem?.lastCandlePlayAt;
             const lastSimTime = finalCurrentTime || matchingWatchlistItem?.lastSimulationTime || val.currentTime || val.startTime;
             const speedRate = val.timeSyncSpeed || matchingWatchlistItem?.timeSyncSpeed || 60;
 
-            if (isTSEnabled && lastPlayAt) {
-              const elapsedMs = Date.now() - lastPlayAt;
-              if (elapsedMs > 0) {
-                const ratio = 60 / speedRate;
-                const chartAdvanceSecs = (elapsedMs / 1000) * ratio;
-                
-                let advancedTime = lastSimTime + chartAdvanceSecs;
-                if (val.endTime && advancedTime > val.endTime) {
-                  advancedTime = val.endTime;
-                }
-                finalCurrentTime = Math.floor(advancedTime);
-                finalLastTimestamp = Date.now();
-              }
+            if (isTSEnabled) {
+              finalLastTimestamp = Date.now();
             }
 
-            acc[key] = {
+            const sessionObj = {
               ...val,
               startTime: finalStartTime,
               currentTime: finalCurrentTime,
               timeSyncLastTimestamp: finalLastTimestamp,
               timeSyncEnabled: isTSEnabled || val.timeSyncEnabled,
               timeSyncSpeed: speedRate,
-              isPlaying: isTSEnabled ? true : !!val.isPlaying,
+              isPlaying: !!val.isPlaying, // Do not force playing on startup, respect user's actual play/pause state
               createdAt: val.createdAt || Date.now()
             };
+            acc[key] = sessionObj;
+            if (matchingWatchlistItem && matchingWatchlistItem.id && matchingWatchlistItem.id !== key) {
+              acc[matchingWatchlistItem.id] = sessionObj;
+            }
           }
           return acc;
         }, {} as Record<string, any>);
@@ -3932,7 +3990,7 @@ export default function App() {
     // Check if we already have this data to avoid flicker
     // We should reload if the symbol, timeframe OR source/item changed
     let hasShownInstantCache = false;
-    const syncCachedState = getChartStateFromCacheSync(symbol, timeframeId, activePrefix || undefined);
+    const syncCachedState = getChartStateFromCacheSync(symbol, timeframeId, activeItem?.id || activePrefix || undefined);
     
     const needFutureCheck = isSimulating || isReplayMode || !!currentSessionKey;
     const missingRanges = syncCachedState 
@@ -3953,7 +4011,7 @@ export default function App() {
       if (isReplayMode) {
         // Replay Mode priority hierarchy (Sync Cache layer):
         // 1. Current active replay ref (if switching within same symbol/trade)
-        if (replayCurrentTimeRef.current !== null && loadedSymbolRef.current === symbol) {
+        if (replayCurrentTimeRef.current !== null && loadedSymbolRef.current === symbol && lastLoadedSessionKeyRef.current === currentSessionKey && (!replayTrade || lastLoadedReplayTradeIdRef.current === replayTrade.id)) {
           replayToSet = replayCurrentTimeRef.current;
         }
         // 2. Database symbol-level playhead (shared across all devices & timeframes)
@@ -3979,7 +4037,7 @@ export default function App() {
       } else {
         // Simulation Playhead priority hierarchy (Sync Cache layer):
         // 1. Current active simulation ref (if switching within same session/symbol)
-        if (simCurrentTimeRef.current !== null && loadedSymbolRef.current === symbol) {
+        if (simCurrentTimeRef.current !== null && loadedSymbolRef.current === symbol && lastLoadedSessionKeyRef.current === currentSessionKey) {
           simToSet = simCurrentTimeRef.current;
         }
         // 2. Database symbol-level playhead (synchronized 100% across all devices / timeframes)
@@ -4024,6 +4082,10 @@ export default function App() {
       setHistoricalData([]);
       loadedSymbolRef.current = null;
       loadedTimeframeRef.current = null;
+      simCurrentTimeRef.current = null;
+      setSimCurrentTime(null);
+      replayCurrentTimeRef.current = null;
+      setReplayCurrentTime(null);
     }
     
     if (!initialEndTime) {
@@ -4034,7 +4096,7 @@ export default function App() {
     setRateLimitError(false);
     try {
       // 1. Check priority caching stores (In-memory -> IndexedDB)
-      const cachedState = await getChartStateFromCache(symbol, timeframeId, activePrefix || undefined);
+      const cachedState = await getChartStateFromCache(symbol, timeframeId, activeItem?.id || activePrefix || undefined);
 
       if (cachedState) {
         const needFutureCheck = isSimulating || isReplayMode || !!currentSessionKey;
@@ -4089,7 +4151,7 @@ export default function App() {
             if (isReplayMode) {
               // Replay Mode priority hierarchy (Async layer):
               // 1. Current active replay ref (if switching within same symbol/trade)
-              if (replayCurrentTimeRef.current !== null && loadedSymbolRef.current === symbol) {
+              if (replayCurrentTimeRef.current !== null && loadedSymbolRef.current === symbol && lastLoadedSessionKeyRef.current === currentSessionKey && (!replayTrade || lastLoadedReplayTradeIdRef.current === replayTrade.id)) {
                 replayToSet = replayCurrentTimeRef.current;
               }
               // 2. Database symbol-level playhead (shared across all devices & timeframes)
@@ -4115,7 +4177,7 @@ export default function App() {
             } else {
               // Simulation Playhead priority hierarchy (Async layer):
               // 1. Current active simulation ref (if switching within same session/symbol)
-              if (simCurrentTimeRef.current !== null && loadedSymbolRef.current === symbol) {
+              if (simCurrentTimeRef.current !== null && loadedSymbolRef.current === symbol && lastLoadedSessionKeyRef.current === currentSessionKey) {
                 simToSet = simCurrentTimeRef.current;
               }
               // 2. Database symbol-level playhead (synchronized 100% across all devices / timeframes)
@@ -4157,7 +4219,7 @@ export default function App() {
           saveChartStateToCache(
             symbol,
             timeframeId,
-            activePrefix || undefined,
+            activeItem?.id || activePrefix || undefined,
             combinedCandles,
             simCurrentTimeRef.current,
             replayCurrentTimeRef.current,
@@ -4228,7 +4290,7 @@ export default function App() {
           saveChartStateToCache(
             symbol,
             timeframeId,
-            activePrefix || undefined,
+            activeItem?.id || activePrefix || undefined,
             combined,
             simCurrentTimeRef.current,
             replayCurrentTimeRef.current,
@@ -4277,66 +4339,46 @@ export default function App() {
         let baseTime = sessionData.currentTime || sessionData.startTime;
         
         // Find matching watchlist item
-        const matchingWatchlistItem = watchlist.find(item => 
-          item.id === currentSessionKey ||
-          (item.symbol === selectedSymbol && (item.prefix || '') === (activePrefix || ''))
-        );
+        const matchingWatchlistItem = watchlist.find(item => {
+          if (currentSessionKey && currentSessionKey.startsWith('wl_')) {
+            return item.id === currentSessionKey;
+          }
+          return item.id === currentSessionKey || (item.symbol === selectedSymbol && (item.prefix || '') === (activePrefix || ''));
+        });
 
         const isTSEnabled = sessionData.timeSyncEnabled || matchingWatchlistItem?.timeSync;
-        const lastPlayAt = sessionData.timeSyncLastTimestamp || matchingWatchlistItem?.lastCandlePlayAt;
-        const lastSimTime = baseTime || matchingWatchlistItem?.lastSimulationTime;
-        const speedRate = sessionData.timeSyncSpeed || matchingWatchlistItem?.timeSyncSpeed || 60;
 
-        if (isTSEnabled && lastPlayAt) {
-          const elapsedMs = Date.now() - lastPlayAt;
-          if (elapsedMs > 0) {
-            const ratio = 60 / speedRate;
-            const chartAdvanceSecs = (elapsedMs / 1000) * ratio;
-            
-            let advancedTime = lastSimTime + chartAdvanceSecs;
-            if (sessionData.endTime && advancedTime > sessionData.endTime) {
-              advancedTime = sessionData.endTime;
+        if (isTSEnabled) {
+          // Sync watchlist timestamp and refresh sync timestamps without advancing playhead time
+          sessionData.timeSyncLastTimestamp = Date.now();
+
+          setBacktestSessions(prev => ({
+            ...prev,
+            [currentSessionKey]: {
+              ...prev[currentSessionKey],
+              timeSyncLastTimestamp: Date.now()
             }
-            baseTime = Math.floor(advancedTime);
-            
-            // Persist the updated time
-            sessionData.currentTime = baseTime;
-            sessionData.timeSyncLastTimestamp = Date.now();
-            sessionData.isPlaying = true;
+          }));
 
-            setBacktestSessions(prev => ({
-              ...prev,
-              [currentSessionKey]: {
-                ...prev[currentSessionKey],
-                currentTime: baseTime,
-                isPlaying: true,
-                timeSyncEnabled: true,
-                timeSyncSpeed: speedRate,
-                timeSyncLastTimestamp: Date.now()
+          setWatchlist(prev => {
+            const updated = prev.map(item => {
+              const matchesId = matchingWatchlistItem && item.id === matchingWatchlistItem.id;
+              const matchesLegacy = (!matchingWatchlistItem || !matchingWatchlistItem.id || !matchingWatchlistItem.id.startsWith('wl_')) &&
+                (!currentSessionKey || !currentSessionKey.startsWith('wl_')) &&
+                item.symbol === selectedSymbol && (item.prefix || '') === (activePrefix || '');
+              if (matchesId || matchesLegacy) {
+                return {
+                  ...item,
+                  lastCandlePlayAt: Date.now()
+                };
               }
-            }));
-
-            // Sync watchlist immediately
-            setWatchlist(prev => {
-              const updated = prev.map(item => {
-                if (item.id === matchingWatchlistItem?.id || (item.symbol === selectedSymbol && (item.prefix || '') === (activePrefix || ''))) {
-                  return {
-                    ...item,
-                    timeSync: true,
-                    timeFrame: selectedTimeframe.id,
-                    timeSyncSpeed: speedRate,
-                    lastSimulationTime: baseTime,
-                    lastCandlePlayAt: Date.now()
-                  };
-                }
-                return item;
-              });
-              if (session?.user?.id) {
-                persistenceService.saveWatchlist(session.user.id, updated).catch(() => {});
-              }
-              return updated;
+              return item;
             });
-          }
+            if (session?.user?.id) {
+              persistenceService.saveWatchlist(session.user.id, updated).catch(() => {});
+            }
+            return updated;
+          });
         }
         
         timeToLoad = baseTime;
@@ -4348,8 +4390,8 @@ export default function App() {
         simTimeSessionKeyRef.current = currentSessionKey;
         setSimCurrentTime(timeToLoad);
 
-        // Restore play state from persisted session (force play if Timesync is enabled)
-        setSimIsPlaying(isTSEnabled ? true : !!sessionData.isPlaying);
+        // Restore play state from persisted session
+        setSimIsPlaying(!!sessionData.isPlaying);
       } else {
         // Same session/pair (e.g. changing chart timeframe)
         // Load around the active playhead using the up-to-date ref to avoid stale closures
@@ -4396,6 +4438,12 @@ export default function App() {
   const loadMorePast = async () => {
     if (isLoadingPast || isLoadingMorePast || historicalData.length === 0 || !selectedSymbol) return;
     
+    // SAFETY CHECK: Ensure current memory has updated to the selected pair first
+    if (loadedSymbolRef.current !== selectedSymbol || loadedTimeframeRef.current !== selectedTimeframe.id) {
+      console.warn('[loadMorePast] Loaded data symbol/timeframe mismatch. Aborting past prefetch.');
+      return;
+    }
+    
     setIsLoadingMorePast(true);
     try {
       const activeItem = watchlist.find(i => i.id === activeWatchlistItemId);
@@ -4430,6 +4478,12 @@ export default function App() {
 
   const loadMoreFuture = async () => {
     if (isLoadingPast || isLoadingMoreFuture || historicalDataRef.current.length === 0 || !selectedSymbol) return;
+    
+    // SAFETY CHECK: Ensure current memory has updated to the selected pair first
+    if (loadedSymbolRef.current !== selectedSymbol || loadedTimeframeRef.current !== selectedTimeframe.id) {
+      console.warn('[loadMoreFuture] Loaded data symbol/timeframe mismatch. Aborting future prefetch.');
+      return;
+    }
     
     const latestCandle = historicalDataRef.current[historicalDataRef.current.length - 1];
     if (!latestCandle) return;
@@ -4495,24 +4549,46 @@ export default function App() {
   }, [simCurrentTime, replayCurrentTime, isReplayMode, historicalData, selectedTimeframe, isLoadingMoreFuture, isLoadingPast]);
 
   const handleSelectSymbol = (symbol: string, prefix?: string, id?: string, source?: string, marketType?: MarketType) => {
-    // Save current active symbol timeframe state before switching symbols
-    if (selectedSymbol && selectedTimeframe) {
-      saveChartStateToCache(
-        selectedSymbol,
-        selectedTimeframe.id,
-        activePrefix || undefined,
-        historicalData,
-        simCurrentTimeRef.current,
-        replayCurrentTimeRef.current,
-        indicators
-      ).catch(() => {});
+    const clickedItem = id ? watchlist.find(i => i.id === id) : watchlist.find(i => i.symbol === symbol && (i.prefix || null) === (prefix || null));
+    const clickedWatchlistItemId = clickedItem?.id || null;
+    const currentChartId = activeWatchlistItemId;
+    const isDifferentPair = clickedWatchlistItemId && currentChartId && clickedWatchlistItemId !== currentChartId;
 
-      updateSymbolViewStateTimeframe(
-        selectedTimeframe.id,
-        simCurrentTimeRef.current,
-        replayCurrentTimeRef.current,
-        indicators
-      );
+    if (isDifferentPair) {
+      // 1. Completely clear all previous chart cache (IndexedDB and memory cache)
+      clearAllLocalChartCaches().catch(() => {});
+
+      // 2. Completely clear candle data query cache
+      clearMarketDataCache();
+
+      // Clear the previously selected watchlist pair's active states and timeline refs
+      setHistoricalData([]);
+      loadedSymbolRef.current = null;
+      loadedTimeframeRef.current = null;
+      simCurrentTimeRef.current = null;
+      setSimCurrentTime(null);
+      replayCurrentTimeRef.current = null;
+      setReplayCurrentTime(null);
+    } else {
+      // Save current active symbol timeframe state only if we are reusing/refreshing within the same pair
+      if (selectedSymbol && selectedTimeframe) {
+        saveChartStateToCache(
+          selectedSymbol,
+          selectedTimeframe.id,
+          activeWatchlistItemId || activePrefix || undefined,
+          historicalData,
+          simCurrentTimeRef.current,
+          replayCurrentTimeRef.current,
+          indicators
+        ).catch(() => {});
+
+        updateSymbolViewStateTimeframe(
+          selectedTimeframe.id,
+          simCurrentTimeRef.current,
+          replayCurrentTimeRef.current,
+          indicators
+        );
+      }
     }
 
     const sessionKey = id || (prefix ? `${symbol}_${prefix}` : symbol);
@@ -4520,6 +4596,8 @@ export default function App() {
     if (backtestSessions[sessionKey] || backtestSessions[fallbackKey]) {
       setActivePrefix(prefix || null);
       setSelectedSymbol(symbol);
+      setSimIsPlaying(false);
+      setReplayIsPlaying(false);
       if (id) {
         setActiveWatchlistItemId(id);
       } else {
@@ -5813,7 +5891,7 @@ export default function App() {
                                  return getMinSelectableStartDate(showBacktestSetup.symbol || '', currentUiSource).toISOString().split('T')[0];
                               })()}
                               max={maxEndVal}
-                              defaultValue="2024-01-01"
+                              defaultValue=""
                               className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-3 pl-10 pr-2 text-[10px] font-bold text-slate-900 focus:outline-none focus:ring-4 focus:ring-indigo-600/5 transition-all"
                             />
                           </div>
@@ -5855,7 +5933,7 @@ export default function App() {
                       const dateInput = document.getElementById('backtest-start-date') as HTMLInputElement;
                       const endDateInput = document.getElementById('backtest-end-date') as HTMLInputElement;
                       
-                      if (dateInput.value) {
+                      if (dateInput && dateInput.value) {
                         startBacktestSession(
                           showBacktestSetup.symbol || '', 
                           dateInput.value, 
@@ -5866,6 +5944,8 @@ export default function App() {
                           showBacktestSetup.marketType || 'spot',
                           endDateInput.value
                         );
+                      } else {
+                        addNotification("Please select a Start Date to launch your backtest session.", "error");
                       }
                     }}
                     className="w-full bg-slate-900 text-white rounded-[2rem] py-5 font-black uppercase tracking-widest text-[10px] hover:bg-slate-800 transition-all shadow-2xl shadow-slate-900/20 active:scale-[0.98] flex items-center justify-center gap-3"
@@ -6540,10 +6620,12 @@ export default function App() {
                                   }));
 
                                   setWatchlist(prev => {
-                                    const matchingItem = prev.find(item => 
-                                      item.id === currentSessionKey ||
-                                      (item.symbol === selectedSymbol && (item.prefix || '') === (activePrefix || ''))
-                                    );
+                                    const matchingItem = prev.find(item => {
+                                      if (currentSessionKey && currentSessionKey.startsWith('wl_')) {
+                                        return item.id === currentSessionKey;
+                                      }
+                                      return item.id === currentSessionKey || (item.symbol === selectedSymbol && (item.prefix || '') === (activePrefix || ''));
+                                    });
                                     if (!matchingItem) return prev;
                                     const updatedWatchlist = prev.map(item => item.id === matchingItem.id ? {
                                       ...item,
@@ -6613,10 +6695,12 @@ export default function App() {
                           }));
 
                           setWatchlist(prev => {
-                            const matchingItem = prev.find(item => 
-                              item.id === currentSessionKey ||
-                              (item.symbol === selectedSymbol && (item.prefix || '') === (activePrefix || ''))
-                            );
+                            const matchingItem = prev.find(item => {
+                              if (currentSessionKey && currentSessionKey.startsWith('wl_')) {
+                                  return item.id === currentSessionKey;
+                              }
+                              return item.id === currentSessionKey || (item.symbol === selectedSymbol && (item.prefix || '') === (activePrefix || ''));
+                            });
                             if (!matchingItem) return prev;
                             const updatedWatchlist = prev.map(item => item.id === matchingItem.id ? {
                               ...item,
@@ -6681,10 +6765,12 @@ export default function App() {
                                   }));
 
                                   setWatchlist(prev => {
-                                    const matchingItem = prev.find(item => 
-                                      item.id === currentSessionKey ||
-                                      (item.symbol === selectedSymbol && (item.prefix || '') === (activePrefix || ''))
-                                    );
+                                    const matchingItem = prev.find(item => {
+                                      if (currentSessionKey && currentSessionKey.startsWith('wl_')) {
+                                        return item.id === currentSessionKey;
+                                      }
+                                      return item.id === currentSessionKey || (item.symbol === selectedSymbol && (item.prefix || '') === (activePrefix || ''));
+                                    });
                                     if (!matchingItem) return prev;
                                     const updatedWatchlist = prev.map(item => item.id === matchingItem.id ? {
                                       ...item,
@@ -6976,7 +7062,8 @@ export default function App() {
                 const mainFullName = POPULAR_SYMBOLS.find(s => s.symbol === selectedSymbol)?.name || selectedSymbol;
                 const activeViewStateKey = activeWatchlistItemId || (selectedSymbol ? (activePrefix ? `${selectedSymbol}_${activePrefix}` : selectedSymbol) : '');
 
-                const mainItem = watchlist.find((i: any) => i.symbol === selectedSymbol && (i.prefix || null) === (activePrefix || null));
+                const mainItem = watchlist.find((i: any) => i.id === activeWatchlistItemId) || 
+                                 watchlist.find((i: any) => i.symbol === selectedSymbol && (i.prefix || null) === (activePrefix || null));
                 const mainRawSource = mainItem?.dataSource || (mainCategory === 'Crypto' ? 'bybit' : 'axiory');
                 let mainDisplaySource = mainRawSource.toUpperCase() === 'AXIORY' ? 'AXIORY' : mainRawSource.toUpperCase() === 'BINANCE' ? 'BINANCE' : mainRawSource.toUpperCase() === 'BYBIT' ? 'BYBIT' : mainRawSource.toUpperCase() === 'OKX' ? 'OKX' : mainRawSource.toUpperCase();
 

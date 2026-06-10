@@ -11,6 +11,10 @@ import { normalizeTimestampToMs, normalizeTimestampToSeconds, getPipMultiplier }
 const dataCache = new Map<string, { data: Candle[], timestamp: number }>();
 const CACHE_TTL = 30000; // 30 seconds
 
+export function clearMarketDataCache(): void {
+  dataCache.clear();
+}
+
 /**
  * Unified service for fetching historical market data across different asset classes.
  */
@@ -593,81 +597,6 @@ function getClientEstimatedSpread(symbol: string, multiplier: number): number {
   return 1.5 * multiplier;
 }
 
-function generateClientWarehouseFallback(
-  symbol: string,
-  timeframeId: string,
-  limit: number,
-  startTime?: number,
-  endTime?: number
-): Candle[] {
-  const symbolStr = String(symbol || "EURUSD").toUpperCase();
-  const limitNum = Math.min(Number(limit || 200), 1000);
-  
-  const intervalSeconds = getTimeframeSeconds(timeframeId);
-  const nowSec = Math.floor(Date.now() / 1000);
-  
-  let endSec = nowSec;
-  if (endTime) {
-    const rawEnd = Number(endTime);
-    endSec = rawEnd > 50000000000 ? Math.floor(rawEnd / 1000) : rawEnd;
-  }
-  
-  let startSec = endSec - (limitNum * intervalSeconds);
-  if (startTime) {
-    const rawStart = Number(startTime);
-    startSec = rawStart > 50000000000 ? Math.floor(rawStart / 1000) : rawStart;
-    endSec = startSec + (limitNum * intervalSeconds);
-  }
-  
-  const data: Candle[] = [];
-  let currentPrice = getClientEstimatedStartPrice(symbolStr);
-  const volatility = getClientEstimatedVolatility(symbolStr);
-  const multiplier = getPipMultiplier(symbolStr, currentPrice);
-  const spreadValue = getClientEstimatedSpread(symbolStr, multiplier);
-
-  let currentTime = startSec;
-  for (let i = 0; i < limitNum; i++) {
-    const changePercent = volatility * (Math.random() - 0.495); // Extremely slight upward/neutral drift
-    const change = currentPrice * changePercent;
-    
-    const open = currentPrice;
-    const close = currentPrice + change;
-    const high = Math.max(open, close) + (Math.random() * currentPrice * volatility * 0.4);
-    const low = Math.min(open, close) - (Math.random() * currentPrice * volatility * 0.4);
-    const volume = Math.floor(Math.random() * 5000) + 1000;
-    
-    data.push({
-      time: currentTime,
-      open,
-      high,
-      low,
-      close,
-      volume,
-
-      bid_open: open,
-      bid_high: high,
-      bid_low: low,
-      bid_close: close,
-
-      ask_open: open + spreadValue,
-      ask_high: high + spreadValue,
-      ask_low: low + spreadValue,
-      ask_close: close + spreadValue,
-
-      spread_open: spreadValue,
-      spread_high: spreadValue,
-      spread_low: spreadValue,
-      spread_close: spreadValue,
-    });
-    
-    currentPrice = close;
-    currentTime += intervalSeconds;
-  }
-  
-  // Return sorted
-  return data.sort((a, b) => a.time - b.time);
-}
-
 async function fetchWarehouseData(symbol: string, timeframeId: string, limit: number, endTime?: number, startTime?: number, source?: string): Promise<Candle[]> {
   const formattedSymbol = symbol.replace('/', '').replace('-', '').toUpperCase();
   const timeframe = mapWarehouseTimeframe(timeframeId);
@@ -698,70 +627,76 @@ async function fetchWarehouseData(symbol: string, timeframeId: string, limit: nu
 
   const url = `/api/warehouse-candles?${params.toString()}`;
 
-  try {
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`Forex Datawarehouse API error: ${response.status}`);
-    }
+  const maxRetries = 3;
+  let lastError: any = null;
 
-    const contentType = response.headers.get('content-type');
-    if (!contentType || !contentType.includes('application/json')) {
-      const snippet = await response.text().then(t => t.substring(0, 200)).catch(() => 'no snippet');
-      console.error(`[MarketDataService] Expected JSON but received content-type: ${contentType || 'none'}. Body snippet: ${snippet}`);
-      throw new Error(`Forex Datawarehouse API returned invalid content-type: ${contentType || 'none'}`);
-    }
-
-    const data = await response.json();
-    if (!Array.isArray(data)) {
-      console.error('[Warehouse] Expected array, got:', data);
-      return [];
-    }
-
-    return data.map((v: any) => {
-      // Direct bid mapping or legacy open fallback
-      const bid_open = typeof v.bid_open !== 'undefined' ? parseFloat(v.bid_open) : parseFloat(v.open);
-      const bid_high = typeof v.bid_high !== 'undefined' ? parseFloat(v.bid_high) : parseFloat(v.high);
-      const bid_low = typeof v.bid_low !== 'undefined' ? parseFloat(v.bid_low) : parseFloat(v.low);
-      const bid_close = typeof v.bid_close !== 'undefined' ? parseFloat(v.bid_close) : parseFloat(v.close);
-
-      const rawTime = parseInt(v.time);
-      const secTime = rawTime > 50000000000 ? Math.floor(rawTime / 1000) : rawTime;
-
-      return {
-        time: secTime,
-        open: bid_open,
-        high: bid_high,
-        low: bid_low,
-        close: bid_close,
-        volume: parseFloat(v.volume || 0),
-
-        // Store explicit tick-defined bid/ask/spread data for realistic execution
-        bid_open,
-        bid_high,
-        bid_low,
-        bid_close,
-
-        ask_open: typeof v.ask_open !== 'undefined' ? parseFloat(v.ask_open) : (typeof v.spread_open !== 'undefined' ? bid_open + parseFloat(v.spread_open) : undefined),
-        ask_high: typeof v.ask_high !== 'undefined' ? parseFloat(v.ask_high) : (typeof v.spread_high !== 'undefined' ? bid_high + parseFloat(v.spread_high) : undefined),
-        ask_low: typeof v.ask_low !== 'undefined' ? parseFloat(v.ask_low) : (typeof v.spread_low !== 'undefined' ? bid_low + parseFloat(v.spread_low) : undefined),
-        ask_close: typeof v.ask_close !== 'undefined' ? parseFloat(v.ask_close) : (typeof v.spread_close !== 'undefined' ? bid_close + parseFloat(v.spread_close) : undefined),
-
-        spread_open: typeof v.spread_open !== 'undefined' ? parseFloat(v.spread_open) : undefined,
-        spread_high: typeof v.spread_high !== 'undefined' ? parseFloat(v.spread_high) : undefined,
-        spread_low: typeof v.spread_low !== 'undefined' ? parseFloat(v.spread_low) : undefined,
-        spread_close: typeof v.spread_close !== 'undefined' ? parseFloat(v.spread_close) : undefined,
-
-        news: v.news
-      };
-    }).filter((c: any) => c !== null && !isNaN(c.open) && !isNaN(c.high) && !isNaN(c.low) && !isNaN(c.close))
-      .sort((a: any, b: any) => a.time - b.time);
-  } catch (err: any) {
-    console.warn(`[MarketDataService] fetchWarehouseData failed: ${err.message}. Generating client-side synthetic candles as a safety fallback.`);
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      return generateClientWarehouseFallback(symbol, timeframeId, limit, startTime, endTime);
-    } catch (fallbackError: any) {
-      console.error('[MarketDataService] Critical failure in fallback synthetic generator:', fallbackError);
-      throw err;
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`Forex Datawarehouse API error: ${response.status}`);
+      }
+
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        const snippet = await response.text().then(t => t.substring(0, 200)).catch(() => 'no snippet');
+        console.error(`[MarketDataService] Expected JSON but received content-type: ${contentType || 'none'}. Body snippet: ${snippet}`);
+        throw new Error(`Forex Datawarehouse API returned invalid content-type: ${contentType || 'none'}`);
+      }
+
+      const data = await response.json();
+      if (!Array.isArray(data)) {
+        console.error('[Warehouse] Expected array, got:', data);
+        return [];
+      }
+
+      return data.map((v: any) => {
+        // Direct bid mapping or legacy open fallback
+        const bid_open = typeof v.bid_open !== 'undefined' ? parseFloat(v.bid_open) : parseFloat(v.open);
+        const bid_high = typeof v.bid_high !== 'undefined' ? parseFloat(v.bid_high) : parseFloat(v.high);
+        const bid_low = typeof v.bid_low !== 'undefined' ? parseFloat(v.bid_low) : parseFloat(v.low);
+        const bid_close = typeof v.bid_close !== 'undefined' ? parseFloat(v.bid_close) : parseFloat(v.close);
+
+        const rawTime = parseInt(v.time);
+        const secTime = rawTime > 50000000000 ? Math.floor(rawTime / 1000) : rawTime;
+
+        return {
+          time: secTime,
+          open: bid_open,
+          high: bid_high,
+          low: bid_low,
+          close: bid_close,
+          volume: parseFloat(v.volume || 0),
+
+          // Store explicit tick-defined bid/ask/spread data for realistic execution
+          bid_open,
+          bid_high,
+          bid_low,
+          bid_close,
+
+          ask_open: typeof v.ask_open !== 'undefined' ? parseFloat(v.ask_open) : (typeof v.spread_open !== 'undefined' ? bid_open + parseFloat(v.spread_open) : undefined),
+          ask_high: typeof v.ask_high !== 'undefined' ? parseFloat(v.ask_high) : (typeof v.spread_high !== 'undefined' ? bid_high + parseFloat(v.spread_high) : undefined),
+          ask_low: typeof v.ask_low !== 'undefined' ? parseFloat(v.ask_low) : (typeof v.spread_low !== 'undefined' ? bid_low + parseFloat(v.spread_low) : undefined),
+          ask_close: typeof v.ask_close !== 'undefined' ? parseFloat(v.ask_close) : (typeof v.spread_close !== 'undefined' ? bid_close + parseFloat(v.spread_close) : undefined),
+
+          spread_open: typeof v.spread_open !== 'undefined' ? parseFloat(v.spread_open) : undefined,
+          spread_high: typeof v.spread_high !== 'undefined' ? parseFloat(v.spread_high) : undefined,
+          spread_low: typeof v.spread_low !== 'undefined' ? parseFloat(v.spread_low) : undefined,
+          spread_close: typeof v.spread_close !== 'undefined' ? parseFloat(v.spread_close) : undefined,
+
+          news: v.news
+        };
+      }).filter((c: any) => c !== null && !isNaN(c.open) && !isNaN(c.high) && !isNaN(c.low) && !isNaN(c.close))
+        .sort((a: any, b: any) => a.time - b.time);
+    } catch (err: any) {
+      lastError = err;
+      console.warn(`[MarketDataService] fetchWarehouseData attempt ${attempt} failed: ${err.message}.`);
+      if (attempt < maxRetries) {
+        const delay = 1000 * Math.pow(2, attempt - 1);
+        await new Promise(res => setTimeout(res, delay));
+      }
     }
   }
+
+  throw lastError || new Error(`Failed to load Forex Data after ${maxRetries} attempts`);
 }
