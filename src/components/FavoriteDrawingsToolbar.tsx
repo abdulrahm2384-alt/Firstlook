@@ -101,6 +101,7 @@ interface FavoriteDrawingsToolbarProps {
   sessionCurrentTimesRef?: any;
   activePrefix?: string;
   selectedSymbol?: string;
+  watchlist?: any[];
 }
 
 export const FavoriteDrawingsToolbar = memo(function FavoriteDrawingsToolbar({ 
@@ -145,7 +146,8 @@ export const FavoriteDrawingsToolbar = memo(function FavoriteDrawingsToolbar({
   replayTrade,
   sessionCurrentTimesRef,
   activePrefix,
-  selectedSymbol
+  selectedSymbol,
+  watchlist
 }: FavoriteDrawingsToolbarProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
@@ -800,7 +802,7 @@ export const FavoriteDrawingsToolbar = memo(function FavoriteDrawingsToolbar({
                       </button>
 
                       {/* Step Forward Button */}
-                      <button
+                       <button
                         onClick={() => {
                           if (isReplayMode) {
                             setReplayCurrentTime?.((prev: number) => {
@@ -818,17 +820,25 @@ export const FavoriteDrawingsToolbar = memo(function FavoriteDrawingsToolbar({
                               return;
                             }
 
-                            const current = sessionCurrentTimesRef?.current?.[sessionKey] || session.currentTime || session.startTime;
                             const currentData = historicalDataRef?.current;
+                            const activeItem = watchlist?.find((i: any) => i.id === sessionKey) ||
+                                               watchlist?.find((i: any) => i.symbol === selectedSymbol && (i.prefix || null) === (activePrefix || null));
+                            const start_time = activeItem?.start_time || (currentData?.[0]?.time);
+                            const last_play_candle_time = activeItem?.last_play_candle_time || start_time;
+
+                            // Retreive the reference base time keeping the active playlist item aligned
+                            const current = last_play_candle_time || sessionCurrentTimesRef?.current?.[sessionKey] || session.currentTime || session.startTime;
                             const nextCandle = currentData?.find((c: any) => c.time > current);
                             const next = nextCandle ? nextCandle.time : current + (getStepSeconds?.() || 60);
                             
-                            if (session.endTime && next > session.endTime) {
-                              addNotification?.('Cannot move beyond session end date', 'warning');
+                            const end_time = activeItem?.end_time || (currentData?.[currentData?.length - 1]?.time);
+
+                            if (last_play_candle_time && end_time && last_play_candle_time >= end_time) {
+                              addNotification?.('Cannot move beyond end time', 'warning');
                               return;
                             }
 
-                            if (sessionCurrentTimesRef?.current) {
+                            if (sessionCurrentTimesRef?.current && sessionKey) {
                               sessionCurrentTimesRef.current[sessionKey] = next;
                             }
                             setSimCurrentTime?.(next);

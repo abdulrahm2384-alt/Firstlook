@@ -20,4 +20,7 @@ export interface WatchlistItem extends MarketSymbol {
   lastCandlePlayAt?: number;
   lastSimulationTime?: number;
   timeSyncSpeed?: number;
+  start_time?: number;
+  last_play_candle_time?: number;
+  end_time?: number;
 }

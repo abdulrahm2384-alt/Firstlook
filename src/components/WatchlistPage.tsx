@@ -194,9 +194,16 @@ const WatchlistItemRow = memo(({
                   </span>
                 )}
               </span>
-              <span className="text-[7.5px] text-slate-400 font-bold uppercase tracking-wider truncate">
-                  {item.dataSource || item.name} {((item.category || POPULAR_SYMBOLS.find(s => s.symbol === item.symbol)?.category) === 'Crypto') && item.marketType ? `• ${item.marketType.replace('-', ' ')}` : ''}
-              </span>
+              <div className="flex items-center gap-1.5 mt-0.5">
+                <span className="text-[7.5px] text-slate-400 font-bold uppercase tracking-wider truncate">
+                    {item.dataSource || item.name} {((item.category || POPULAR_SYMBOLS.find(s => s.symbol === item.symbol)?.category) === 'Crypto') && item.marketType ? `• ${item.marketType.replace('-', ' ')}` : ''}
+                </span>
+                <span className={`text-[8px] font-mono font-black ${
+                  item.isDown ? 'text-rose-600 bg-rose-50 border border-rose-100/50' : 'text-emerald-700 bg-emerald-50 border border-emerald-100/50'
+                } px-1.5 py-[1px] rounded leading-none`}>
+                  {item.change || '0.00%'}
+                </span>
+              </div>
             </div>
           </div>
 
@@ -209,10 +216,10 @@ const WatchlistItemRow = memo(({
             </div>
 
             <div className="flex flex-col items-end">
-              <span className="text-[5.5px] font-black text-slate-300 uppercase tracking-widest leading-none mb-0.5">Progress</span>
+              <span className="text-[5.5px] font-black text-slate-300 uppercase tracking-widest leading-none mb-0.5">End</span>
               <div className="flex items-center gap-1.5">
-                <span className="font-mono font-bold text-[8.5px] tracking-tight text-indigo-600">
-                  {progress.label}
+                <span className="font-mono font-bold text-[7.5px] tracking-tight text-slate-500 bg-slate-50 px-1 py-0.5 rounded border border-slate-100/50">
+                  {item.end_time ? new Date(item.end_time * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: '2-digit' }) : '---'}
                 </span>
                 <div className="w-8 h-1 bg-slate-100 rounded-full overflow-hidden hidden sm:block">
                   <div 
@@ -302,6 +309,11 @@ const WatchlistItemRow = memo(({
                   {item.prefix}
                 </span>
               )}
+              <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[8.5px] font-mono font-black uppercase tracking-wider leading-none shrink-0 ${
+                item.isDown ? 'text-rose-600 bg-rose-50 border border-rose-100/50' : 'text-emerald-700 bg-emerald-50 border border-emerald-100/50'
+              }`}>
+                {item.change || '0.00%'}
+              </span>
             </div>
             <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider mt-0.5 flex items-center gap-1.5">
               <span className="px-1 py-0.2 bg-slate-100 rounded text-slate-500 text-[8px] font-black">{item.dataSource || item.name}</span>
@@ -326,11 +338,16 @@ const WatchlistItemRow = memo(({
         <div className="col-span-3 flex items-center gap-3">
           <div className="flex-1 flex flex-col">
             <div className="flex items-baseline justify-between mb-1">
-              <span className="text-[10px] font-black text-indigo-600 font-mono leading-none">
-                {progress.label}
+              <span className="text-[10px] font-black text-indigo-600 font-mono leading-none flex gap-1.5 items-center">
+                <span>End date: {item.end_time ? new Date(item.end_time * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '---'}</span>
+                {item.price && item.price !== 'Loading...' && (
+                  <span className="text-[9px] font-mono text-slate-500 border border-slate-100 rounded px-1 py-[1px] bg-slate-50">
+                    {item.price}
+                  </span>
+                )}
               </span>
-              <span className="text-[7.5px] text-slate-405 font-black uppercase tracking-widest leading-none">
-                {progress.fraction >= 100 ? 'SUCCESS' : 'ACTIVE'}
+              <span className="text-[9px] font-mono font-black uppercase tracking-wider leading-none px-1.5 py-[1px] rounded text-indigo-500 bg-indigo-50 border border-indigo-100 animate-pulse">
+                {progress.label}
               </span>
             </div>
             <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden border border-slate-200/40">

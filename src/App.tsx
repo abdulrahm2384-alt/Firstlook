@@ -456,19 +456,26 @@ const FloatingPlaybackControls = memo(({
                 return;
               }
 
-              // Retrieve the isolated current time for this session
-              const current = sessionCurrentTimesRef.current?.[sessionKey] || session.currentTime || session.startTime;
               const currentData = historicalDataRef.current;
+              const activeItem = (watchlist || []).find((i: any) => i.id === sessionKey) ||
+                                 (watchlist || []).find((i: any) => i.symbol === selectedSymbol && (i.prefix || null) === (activePrefix || null));
+              const start_time = activeItem?.start_time || (currentData[0]?.time);
+              const last_play_candle_time = activeItem?.last_play_candle_time || start_time;
+
+              // Retreive the reference base time keeping the active playlist item aligned
+              const current = last_play_candle_time || sessionCurrentTimesRef.current?.[sessionKey] || session.currentTime || session.startTime;
               const nextCandle = currentData.find(c => c.time > current);
               const next = nextCandle ? nextCandle.time : current + getStepSeconds();
               
-              if (session.endTime && next > session.endTime) {
-                addNotification('Cannot move beyond session end date', 'warning');
+              const end_time = activeItem?.end_time || (currentData[currentData.length - 1]?.time);
+
+              if (last_play_candle_time && end_time && last_play_candle_time >= end_time) {
+                addNotification('Cannot move beyond end time', 'warning');
                 return;
               }
 
-              // Update the ref synchronously
-              if (sessionCurrentTimesRef.current) {
+              // Update the state synchronously (parent useEffect will sync simCurrentTimeRef automatically)
+              if (sessionCurrentTimesRef.current && sessionKey) {
                 sessionCurrentTimesRef.current[sessionKey] = next;
               }
               setSimCurrentTime(next);
@@ -2056,6 +2063,87 @@ export default function App() {
     replayCurrentTimeRef.current = replayCurrentTime;
   }, [replayCurrentTime]);
 
+  // Synchronize start_time, last_play_candle_time, end_time, price, and percentage change for active watchlist item
+  useEffect(() => {
+    if (!selectedSymbol || historicalData.length === 0) return;
+
+    // Find active watchlist item
+    const activeItem = watchlist.find(item => {
+      if (activeWatchlistItemId) return item.id === activeWatchlistItemId;
+      return item.symbol === selectedSymbol && (item.prefix || '') === (activePrefix || '');
+    });
+    if (!activeItem) return;
+
+    if (!isReplayMode && (simCurrentTime === null || simCurrentTime === 0)) return;
+    if (isReplayMode && (replayCurrentTime === null || replayCurrentTime === 0)) return;
+
+    const start_time = historicalData[0]?.time;
+    const end_time = historicalData[historicalData.length - 1]?.time;
+
+    const currentPlayoutTime = isReplayMode ? (replayCurrentTime || 0) : (simCurrentTime || 0);
+    // Find the last candle played or rendered
+    const playedCandles = historicalData.filter(c => c.time <= currentPlayoutTime);
+    const last_play_candle_time = playedCandles.length > 0 
+      ? playedCandles[playedCandles.length - 1].time 
+      : start_time;
+
+    // Prices
+    const startCandle = historicalData[0];
+    const endCandle = historicalData[historicalData.length - 1];
+    
+    const startPrice = startCandle ? (typeof startCandle.open === 'number' ? startCandle.open : startCandle.close) : 0;
+    const endPrice = endCandle ? (typeof endCandle.close === 'number' ? endCandle.close : endCandle.open) : 0;
+
+    let totalPct = 0;
+    if (startPrice > 0) {
+      totalPct = ((endPrice - startPrice) / startPrice) * 100;
+    }
+
+    let progressFraction = 0;
+    const denom = end_time - start_time;
+    if (denom > 0) {
+      progressFraction = Math.max(0, Math.min(1, (last_play_candle_time - start_time) / denom));
+    }
+
+    const currentPct = totalPct * progressFraction;
+    const isDown = currentPct < 0;
+    const changeStr = (currentPct >= 0 ? '+' : '') + currentPct.toFixed(2) + '%';
+
+    const currentCandle = historicalData.find(c => c.time === last_play_candle_time) || startCandle;
+    const priceStr = currentCandle ? (typeof currentCandle.close === 'number' ? currentCandle.close.toFixed(2) : String(currentCandle.close)) : 'Loading...';
+
+    // To prevent infinite loop, compare with current item values
+    if (
+      activeItem.start_time !== start_time || 
+      activeItem.end_time !== end_time || 
+      activeItem.last_play_candle_time !== last_play_candle_time ||
+      activeItem.price !== priceStr ||
+      activeItem.change !== changeStr ||
+      activeItem.isDown !== isDown
+    ) {
+      setWatchlist(prev => {
+        const updated = prev.map(item => {
+          if (item.id === activeItem.id) {
+            return {
+              ...item,
+              start_time,
+              last_play_candle_time,
+              end_time,
+              price: priceStr,
+              change: changeStr,
+              isDown
+            };
+          }
+          return item;
+        });
+        if (session?.user?.id) {
+          persistenceService.saveWatchlist(session.user.id, updated).catch(() => {});
+        }
+        return updated;
+      });
+    }
+  }, [historicalData, simCurrentTime, replayCurrentTime, isReplayMode, activeWatchlistItemId, selectedSymbol, activePrefix, session]);
+
   const [nonPlayingTickIndex, setNonPlayingTickIndex] = useState(0);
   const [nonPlayingTickPrice, setNonPlayingTickPrice] = useState<number | null>(null);
 
@@ -2116,44 +2204,53 @@ export default function App() {
         setSimIsPlaying(false);
       }
     } else {
-      // Before starting to play, if nonPlayingTickIndex > 0, we must adjust the starting playhead (time)
-      // so that active playback starts exactly at the tick where we paused!
-      if (nonPlayingTickIndex > 0) {
-        if (isReplayMode) {
-          if (replayTrade) {
-            const timeframeSeconds = TIMEFRAMES.find(tf => tf.id.toLowerCase() === replayTrade.timeframe.toLowerCase() || tf.label.toLowerCase() === replayTrade.timeframe.toLowerCase())?.seconds || 60;
-            const totalTicks = Math.max(1, Math.floor(timeframeSeconds / 2));
-            const current = replayCurrentTimeRef.current || replayTrade.entryTime;
-            // Find the exact candle time
-            const currentData = historicalDataRef.current;
-            const curCandle = [...currentData].reverse().find(c => c.time <= current);
-            if (curCandle) {
-              const elapsedSeconds = (nonPlayingTickIndex / totalTicks) * timeframeSeconds;
-              const newTime = curCandle.time + elapsedSeconds;
-              replayCurrentTimeRef.current = newTime;
-              setReplayCurrentTime(newTime);
-            }
-          }
-        } else if (isSimulating || currentSessionKey) {
-          const timeframeSeconds = selectedTimeframeRef.current?.seconds || 60;
+      // Check if we are already at or beyond end time
+      const activeItem = watchlistRef.current.find(i => i.id === activeWatchlistItemId) ||
+                         watchlistRef.current.find(i => i.symbol === selectedSymbolRef.current && (i.prefix || null) === (activePrefixRef.current || null));
+      const start_time = activeItem?.start_time || (historicalDataRef.current[0]?.time);
+      const end_time = activeItem?.end_time || (historicalDataRef.current[historicalDataRef.current.length - 1]?.time);
+      const last_play_candle_time = activeItem?.last_play_candle_time || start_time;
+
+      if (last_play_candle_time && end_time && last_play_candle_time >= end_time) {
+        addNotification('Cannot move beyond end time', 'warning');
+        return;
+      }
+
+      // Ensure active playback always resumes exactly from the last_play_candle_time of the active watchlist item
+      const currentBaseTime = last_play_candle_time || start_time;
+
+      if (isReplayMode) {
+        let playheadTime = currentBaseTime;
+        if (nonPlayingTickIndex > 0 && replayTrade) {
+          const timeframeSeconds = TIMEFRAMES.find(tf => tf.id.toLowerCase() === replayTrade.timeframe.toLowerCase() || tf.label.toLowerCase() === replayTrade.timeframe.toLowerCase())?.seconds || 60;
           const totalTicks = Math.max(1, Math.floor(timeframeSeconds / 2));
-          const sessionKey = simTimeSessionKeyRef.current || '';
-          const session = sessionKey ? (backtestSessionsRef.current[sessionKey] || (selectedSymbolRef.current ? backtestSessionsRef.current[activePrefix ? `${selectedSymbolRef.current}_${activePrefix}` : selectedSymbolRef.current] : null)) : null;
-          if (session) {
-            const current = sessionCurrentTimesRef.current?.[sessionKey] || session.currentTime || session.startTime;
-            const currentData = historicalDataRef.current;
-            const curCandle = [...currentData].reverse().find(c => c.time <= current);
-            if (curCandle) {
-              const elapsedSeconds = (nonPlayingTickIndex / totalTicks) * timeframeSeconds;
-              const newTime = curCandle.time + elapsedSeconds;
-              simCurrentTimeRef.current = newTime;
-              if (sessionCurrentTimesRef.current && sessionKey) {
-                sessionCurrentTimesRef.current[sessionKey] = newTime;
-              }
-              setSimCurrentTime(newTime);
-            }
+          const currentData = historicalDataRef.current;
+          const curCandle = [...currentData].reverse().find(c => c.time <= currentBaseTime);
+          if (curCandle) {
+            const elapsedSeconds = (nonPlayingTickIndex / totalTicks) * timeframeSeconds;
+            playheadTime = curCandle.time + elapsedSeconds;
           }
         }
+        replayCurrentTimeRef.current = playheadTime;
+        setReplayCurrentTime(playheadTime);
+      } else if (isSimulating || currentSessionKey) {
+        const sessionKey = simTimeSessionKeyRef.current || currentSessionKey || activeItem?.id || '';
+        let playheadTime = currentBaseTime;
+        if (nonPlayingTickIndex > 0) {
+          const timeframeSeconds = selectedTimeframeRef.current?.seconds || 60;
+          const totalTicks = Math.max(1, Math.floor(timeframeSeconds / 2));
+          const currentData = historicalDataRef.current;
+          const curCandle = [...currentData].reverse().find(c => c.time <= currentBaseTime);
+          if (curCandle) {
+            const elapsedSeconds = (nonPlayingTickIndex / totalTicks) * timeframeSeconds;
+            playheadTime = curCandle.time + elapsedSeconds;
+          }
+        }
+        simCurrentTimeRef.current = playheadTime;
+        if (sessionCurrentTimesRef.current && sessionKey) {
+          sessionCurrentTimesRef.current[sessionKey] = playheadTime;
+        }
+        setSimCurrentTime(playheadTime);
       }
 
       if (isReplayMode) {
@@ -4040,13 +4137,13 @@ export default function App() {
         if (simCurrentTimeRef.current !== null && loadedSymbolRef.current === symbol && lastLoadedSessionKeyRef.current === currentSessionKey) {
           simToSet = simCurrentTimeRef.current;
         }
-        // 2. Database symbol-level playhead (synchronized 100% across all devices / timeframes)
-        else if (viewStateKey && symbolViewStates[viewStateKey]?.simCurrentTime) {
-          simToSet = symbolViewStates[viewStateKey].simCurrentTime;
-        }
-        // 3. Database active session currentTime
+        // 2. Database active session currentTime
         else if (currentSessionKey && backtestSessions[currentSessionKey]?.currentTime) {
           simToSet = backtestSessions[currentSessionKey].currentTime;
+        }
+        // 3. Database symbol-level playhead (synchronized 100% across all devices / timeframes)
+        else if (viewStateKey && symbolViewStates[viewStateKey]?.simCurrentTime) {
+          simToSet = symbolViewStates[viewStateKey].simCurrentTime;
         }
         // 4. Database timeframe-specific playhead
         else if (viewStateKey && symbolViewStates[viewStateKey]?.timeframeStates?.[timeframeId]?.simCurrentTime) {
@@ -4180,13 +4277,13 @@ export default function App() {
               if (simCurrentTimeRef.current !== null && loadedSymbolRef.current === symbol && lastLoadedSessionKeyRef.current === currentSessionKey) {
                 simToSet = simCurrentTimeRef.current;
               }
-              // 2. Database symbol-level playhead (synchronized 100% across all devices / timeframes)
-              else if (viewStateKey && symbolViewStates[viewStateKey]?.simCurrentTime) {
-                simToSet = symbolViewStates[viewStateKey].simCurrentTime;
-              }
-              // 3. Database active session currentTime
+              // 2. Database active session currentTime
               else if (currentSessionKey && backtestSessions[currentSessionKey]?.currentTime) {
                 simToSet = backtestSessions[currentSessionKey].currentTime;
+              }
+              // 3. Database symbol-level playhead (synchronized 100% across all devices / timeframes)
+              else if (viewStateKey && symbolViewStates[viewStateKey]?.simCurrentTime) {
+                simToSet = symbolViewStates[viewStateKey].simCurrentTime;
               }
               // 4. Database timeframe-specific playhead
               else if (viewStateKey && symbolViewStates[viewStateKey]?.timeframeStates?.[timeframeId]?.simCurrentTime) {
@@ -4336,8 +4433,6 @@ export default function App() {
       let timeToLoad: number;
       if (lastLoadedSessionKeyRef.current !== currentSessionKey) {
         // Switching to a different session/pair!
-        let baseTime = sessionData.currentTime || sessionData.startTime;
-        
         // Find matching watchlist item
         const matchingWatchlistItem = watchlist.find(item => {
           if (currentSessionKey && currentSessionKey.startsWith('wl_')) {
@@ -4345,6 +4440,11 @@ export default function App() {
           }
           return item.id === currentSessionKey || (item.symbol === selectedSymbol && (item.prefix || '') === (activePrefix || ''));
         });
+
+        const start_time = matchingWatchlistItem?.start_time || sessionData.startTime;
+        const last_play_candle_time = matchingWatchlistItem?.last_play_candle_time;
+        
+        let baseTime = last_play_candle_time || sessionData.currentTime || start_time;
 
         const isTSEnabled = sessionData.timeSyncEnabled || matchingWatchlistItem?.timeSync;
 
@@ -6560,8 +6660,14 @@ export default function App() {
                   const nextCandle = currentData.find(c => c.time > current);
                   const next = nextCandle ? nextCandle.time : current + getStepSeconds();
                   
-                  if (session.endTime && next > session.endTime) {
-                    addNotification('Cannot move beyond session end date', 'warning');
+                  const activeItem = watchlistRef.current.find(i => i.id === sessionKey) ||
+                                     watchlistRef.current.find(i => i.symbol === selectedSymbol && (i.prefix || null) === (activePrefix || null));
+                  const start_time = activeItem?.start_time || (currentData[0]?.time);
+                  const end_time = activeItem?.end_time || (currentData[currentData.length - 1]?.time);
+                  const last_play_candle_time = activeItem?.last_play_candle_time || start_time;
+
+                  if (last_play_candle_time && end_time && last_play_candle_time >= end_time) {
+                    addNotification('Cannot move beyond end time', 'warning');
                     return;
                   }
 
@@ -7202,6 +7308,7 @@ export default function App() {
                           sessionCurrentTimesRef={sessionCurrentTimesRef}
                           activePrefix={activePrefix}
                           selectedSymbol={selectedSymbol}
+                          watchlist={watchlist}
                         />
                       )}
                     </AnimatePresence>
@@ -7317,6 +7424,7 @@ export default function App() {
                           sessionCurrentTimesRef={sessionCurrentTimesRef}
                           activePrefix={activePrefix}
                           selectedSymbol={selectedSymbol}
+                          watchlist={watchlist}
                         />
                       )}
                     </AnimatePresence>
