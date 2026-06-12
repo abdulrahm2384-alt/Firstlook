@@ -14,6 +14,7 @@ import {
   Clock,
   ExternalLink,
   Calendar,
+  Info,
   Shield,
   Layers,
   Database,
@@ -35,7 +36,7 @@ import {
   Loader2
 } from 'lucide-react';
 import React, { useState, useEffect, useRef, useMemo, memo, useCallback, useDeferredValue } from 'react';
-import { BacktestSession, MarketSymbol, MarketType } from '../types';
+import { BacktestSession, MarketSymbol, MarketType, JournalTrade } from '../types';
 import { WatchlistItem, MarketDataSource } from '../types/watchlist';
 import { POPULAR_SYMBOLS } from '../constants/symbols';
 import { normalizeSymbol } from '../lib/marketUtils';
@@ -49,10 +50,12 @@ interface WatchlistItemRowProps {
   onToggleStatus: (symbol: string, prefix?: string) => void;
   onDelete: (symbol: string, prefix?: string, id?: string) => void;
   onEditNotes: (item: WatchlistItem) => void;
+  onExtend: (item: WatchlistItem) => void;
   isMenuOpen: boolean;
   onToggleMenu: (id: string | null) => void;
   menuRef: React.RefObject<HTMLDivElement | null>;
   setups: any[];
+  journalTrades?: JournalTrade[];
 }
 
 const WatchlistItemRow = memo(({ 
@@ -62,13 +65,16 @@ const WatchlistItemRow = memo(({
   onToggleStatus, 
   onDelete, 
   onEditNotes,
+  onExtend,
   isMenuOpen,
   onToggleMenu,
   menuRef,
-  setups
+  setups,
+  journalTrades
 }: WatchlistItemRowProps) => {
   const sessionKey = item.prefix ? `${item.symbol}_${item.prefix}` : item.symbol;
   const dragControls = useDragControls();
+  const [isExpanded, setIsExpanded] = useState(false);
   
   const pointerDownEventRef = useRef<React.PointerEvent | null>(null);
   const startCoordsRef = useRef<{ x: number; y: number } | null>(null);
@@ -126,6 +132,23 @@ const WatchlistItemRow = memo(({
     return setups.find(s => normalizeSymbol(s.symbol) === itemSymbolNorm);
   }, [item.symbol, setups]);
 
+  const trades = useMemo(() => {
+    return (journalTrades || []).filter(t => {
+      if (t.watchlistId) return t.watchlistId === item.id;
+      return t.symbol === item.symbol && (t.prefix || '') === (item.prefix || '');
+    });
+  }, [journalTrades, item.id, item.symbol, item.prefix]);
+
+  const stats = useMemo(() => {
+    const total = trades.length;
+    const wins = trades.filter(t => t.status === 'TP').length;
+    const losses = trades.filter(t => t.status === 'SL').length;
+    const winRate = total > 0 ? (wins / total) * 100 : 0;
+    const totalRR = trades.reduce((sum, t) => sum + (isFinite(t.rr) ? t.rr : 0), 0);
+    const totalPips = trades.reduce((sum, t) => sum + (t.pips || 0), 0);
+    return { total, wins, losses, winRate, totalRR, totalPips };
+  }, [trades]);
+
   const progress = useMemo(() => {
     if (!session) return { percent: '0.00%', fraction: 0, label: '0.00%' };
     // session.startTime and session.currentTime are in seconds. createdAt is in ms.
@@ -149,249 +172,423 @@ const WatchlistItemRow = memo(({
       value={item}
       dragListener={false}
       dragControls={dragControls}
-      className={`relative will-change-transform transform-gpu ${isMenuOpen ? 'z-50' : 'z-10'}`}
+      className={`relative will-change-transform transform-gpu ${isMenuOpen ? 'z-[200]' : (isExpanded ? 'z-[50]' : 'z-10')}`}
+      style={{ zIndex: isMenuOpen ? 1000 : (isExpanded ? 50 : 10) }}
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, scale: 0.95 }}
     >
-      {/* MOBILE COMPACT VIEW (hidden on desktop screens md and up) */}
-      <div 
-        className="flex md:hidden gap-2.5 px-3.5 py-3.5 items-center hover:bg-slate-50/80 active:bg-slate-100/60 transition-all duration-200 group border-b border-slate-100/60 hover:border-transparent rounded-2xl mx-1.5 my-0.5 bg-transparent"
-      >
-        {/* Clickable Area for OnSelect + Press-and-hold Trigger */}
+      <div className={`bg-white border-b border-slate-100 hover:bg-slate-50/20 transition-all duration-200 flex flex-col relative shadow-[0_1px_3px_rgba(0,0,0,0.02)] ${isMenuOpen ? 'z-[200]' : (isExpanded ? 'z-[50]' : 'z-10')}`}>
+        {/* MOBILE COMPACT VIEW (hidden on desktop screens md and up) */}
+        <div className="flex md:hidden gap-2 px-3 py-3 items-center hover:bg-slate-50/40 active:bg-slate-100/30 transition-all duration-200 justify-between">
+          {/* Clickable Area for OnSelect + Press-and-hold Trigger */}
+          <div 
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={(e) => handlePointerUpOrLeave(e, true)}
+            onPointerCancel={(e) => handlePointerUpOrLeave(e, false)}
+            onPointerLeave={(e) => handlePointerUpOrLeave(e, false)}
+            className="flex-1 min-w-0 flex items-center justify-between cursor-pointer gap-2 select-none touch-none"
+          >
+            <div className="flex items-center gap-2 flex-1 min-w-0">
+              <div className="w-7 h-7 rounded-lg bg-slate-50 border border-slate-100 flex items-center justify-center overflow-hidden shrink-0">
+                <img 
+                  src={`https://raw.githubusercontent.com/spothq/cryptocurrency-icons/master/32/color/${item.symbol.toLowerCase().split('/')[0].replace('usd', '')}.png`} 
+                  alt=""
+                  loading="lazy"
+                  className="w-4.5 h-4.5 object-contain"
+                  onError={(e) => {
+                    const target = e.target as HTMLImageElement;
+                    target.src = "https://cdn-icons-png.flaticon.com/128/2272/2272635.png";
+                  }}
+                />
+              </div>
+              <div className="flex flex-col min-w-0">
+                <span className="font-bold text-slate-900 text-[10.5px] uppercase tracking-tight truncate flex items-center gap-1">
+                  {item.symbol} 
+                  {setup && (
+                     <span className="px-1 py-0.5 rounded bg-slate-900 text-white text-[6.5px] font-black uppercase leading-none">
+                       {setup.grade}
+                     </span>
+                  )}
+                  {item.prefix && (
+                    <span className="text-indigo-500 ml-1 opacity-80 text-[10px]">
+                       ({item.prefix.length > 8 ? `${item.prefix.substring(0, 7)}...` : item.prefix})
+                    </span>
+                  )}
+                </span>
+                <div className="flex items-center gap-1.5 mt-0.5">
+                  <span className="text-[7.5px] text-slate-400 font-bold uppercase tracking-wider truncate">
+                      {item.dataSource || item.name} {((item.category || POPULAR_SYMBOLS.find(s => s.symbol === item.symbol)?.category) === 'Crypto') && item.marketType ? `• ${item.marketType.replace('-', ' ')}` : ''}
+                  </span>
+                  <span className="text-[8px] font-mono font-black text-indigo-600 bg-indigo-50 border border-indigo-100/40 px-1.5 py-[1px] rounded leading-none animate-pulse">
+                    {progress.label}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 shrink-0 pointer-events-none">
+              <div className="flex flex-col items-end">
+                <span className="text-[5.5px] font-black text-slate-300 uppercase tracking-widest leading-none mb-0.5">Start</span>
+                <span className="font-mono font-bold text-[7.5px] tracking-tight text-slate-500 bg-slate-50 px-1 py-0.5 rounded border border-slate-100/50">
+                  {session ? new Date(session.startTime * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: '2-digit' }) : '---'}
+                </span>
+              </div>
+
+              <div className="flex flex-col items-end">
+                <span className="text-[5.5px] font-black text-slate-300 uppercase tracking-widest leading-none mb-0.5">End</span>
+                <div className="flex items-center gap-1">
+                  <span className="font-mono font-bold text-[7.5px] tracking-tight text-slate-500 bg-slate-50 px-1 py-0.5 rounded border border-slate-100/50">
+                    {item.end_time ? new Date(item.end_time * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: '2-digit' }) : '---'}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Action Controls Menu */}
+          <div className="flex justify-end items-center ml-1 relative">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleMenu(isMenuOpen ? null : sessionKey);
+              }}
+              className="p-1 text-slate-300 hover:text-slate-900 hover:bg-slate-100 rounded transition-all toggle-menu-btn"
+            >
+              <MoreVertical size={13} />
+            </button>
+            {isMenuOpen && (
+              <div 
+                ref={menuRef}
+                className="absolute right-0 top-full mt-1.5 bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200 shadow-[0_10px_30px_rgba(0,0,0,0.1)] z-[500] py-1.5 p-1.5 min-w-[125px] flex flex-col gap-1 w-[125px] animate-in fade-in slide-in-from-top-2 duration-150 watchlist-menu-dropdown"
+                onClick={e => e.stopPropagation()}
+              >
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsExpanded(prev => !prev);
+                    onToggleMenu(null);
+                  }}
+                  className="flex items-center gap-2 w-full px-2.5 py-2 text-slate-700 hover:bg-slate-50 hover:text-slate-900 transition-all duration-150 rounded-xl text-left font-bold text-[9.5px] uppercase tracking-wider"
+                >
+                  <Info size={13} className="shrink-0 text-slate-400" />
+                  <span>Details</span>
+                </button>
+                
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onExtend(item);
+                    onToggleMenu(null);
+                  }}
+                  className="flex items-center gap-2 w-full px-2.5 py-2 text-indigo-600 hover:bg-indigo-50/50 hover:text-indigo-850 transition-all duration-150 rounded-xl text-left font-bold text-[9.5px] uppercase tracking-wider border-t border-slate-100/70 pt-2 mt-0.5"
+                >
+                  <Calendar size={13} className="shrink-0 text-indigo-400" />
+                  <span>Extend</span>
+                </button>
+
+                {!(item.status === 'completed' || item.hasBeenExtended) && (
+                  <button
+                    onClick={() => {
+                      onDelete(item.symbol, item.prefix, item.id);
+                      onToggleMenu(null);
+                    }}
+                    className="flex items-center gap-2 w-full px-2.5 py-2 text-rose-600 hover:bg-rose-50/60 transition-all duration-150 rounded-xl text-left font-bold text-[9.5px] uppercase tracking-wider border-t border-slate-100/70 pt-2 mt-0.5"
+                  >
+                    <Trash2 size={13} className="shrink-0 text-rose-400" />
+                    <span>Delete</span>
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* ADVANCED DESKTOP TABLE ROW VIEW (hidden on small/mobile screens) */}
         <div 
-          onPointerDown={handlePointerDown}
-          onPointerMove={handlePointerMove}
-          onPointerUp={(e) => handlePointerUpOrLeave(e, true)}
-          onPointerCancel={(e) => handlePointerUpOrLeave(e, false)}
-          onPointerLeave={(e) => handlePointerUpOrLeave(e, false)}
-          className="flex-1 min-w-0 flex items-center justify-between cursor-pointer gap-2 select-none touch-none"
+          className="hidden md:grid grid-cols-12 gap-4 px-6 py-4 items-center bg-white hover:bg-indigo-50/20 active:bg-indigo-100/10 transition-all duration-200 border-none"
         >
-          <div className="flex items-center gap-2 flex-1 min-w-0">
-            <div className="w-7 h-7 rounded-lg bg-slate-50 border border-slate-100 flex items-center justify-center overflow-hidden shrink-0">
+          {/* Column 1: Asset Ticker & Feed details (col-span-4) */}
+          <div 
+            onClick={() => onSelect(item.symbol, item.prefix, item.id)}
+            className="col-span-4 flex items-center gap-3 cursor-pointer select-none"
+          >
+            <div className="w-9 h-9 rounded-xl bg-slate-50 border border-slate-150 flex items-center justify-center overflow-hidden shrink-0 shadow-xs">
               <img 
                 src={`https://raw.githubusercontent.com/spothq/cryptocurrency-icons/master/32/color/${item.symbol.toLowerCase().split('/')[0].replace('usd', '')}.png`} 
                 alt=""
                 loading="lazy"
-                className="w-4.5 h-4.5 object-contain"
+                className="w-5 h-5 object-contain"
                 onError={(e) => {
                   const target = e.target as HTMLImageElement;
                   target.src = "https://cdn-icons-png.flaticon.com/128/2272/2272635.png";
                 }}
               />
             </div>
+
             <div className="flex flex-col min-w-0">
-              <span className="font-bold text-slate-900 text-[10.5px] uppercase tracking-tight truncate flex items-center gap-1">
-                {item.symbol} 
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-black text-slate-900 text-xs uppercase tracking-tight truncate">
+                  {item.symbol}
+                </span>
                 {setup && (
-                   <span className="px-1 py-0.5 rounded bg-slate-900 text-white text-[6.5px] font-black uppercase leading-none">
-                     {setup.grade}
-                   </span>
-                )}
-                {item.prefix && (
-                  <span className="text-indigo-500 ml-1 opacity-80 text-[10px]">
-                     ({item.prefix.length > 8 ? `${item.prefix.substring(0, 7)}...` : item.prefix})
+                  <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-100 text-[7px] font-black uppercase leading-none">
+                    GRADE {setup.grade}
                   </span>
                 )}
-              </span>
-              <div className="flex items-center gap-1.5 mt-0.5">
-                <span className="text-[7.5px] text-slate-400 font-bold uppercase tracking-wider truncate">
-                    {item.dataSource || item.name} {((item.category || POPULAR_SYMBOLS.find(s => s.symbol === item.symbol)?.category) === 'Crypto') && item.marketType ? `• ${item.marketType.replace('-', ' ')}` : ''}
-                </span>
-                <span className={`text-[8px] font-mono font-black ${
+                {item.prefix && (
+                  <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-100 text-[8px] font-bold">
+                    {item.prefix}
+                  </span>
+                )}
+                <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[8.5px] font-mono font-black uppercase tracking-wider leading-none shrink-0 ${
                   item.isDown ? 'text-rose-600 bg-rose-50 border border-rose-100/50' : 'text-emerald-700 bg-emerald-50 border border-emerald-100/50'
-                } px-1.5 py-[1px] rounded leading-none`}>
+                }`}>
                   {item.change || '0.00%'}
                 </span>
               </div>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-3.5 md:gap-8 shrink-0 pointer-events-none">
-            <div className="flex flex-col items-end">
-              <span className="text-[5.5px] font-black text-slate-300 uppercase tracking-widest leading-none mb-0.5">Start</span>
-              <span className="font-mono font-bold text-[7.5px] tracking-tight text-slate-500 bg-slate-50 px-1 py-0.5 rounded border border-slate-100/50">
-                {session ? new Date(session.startTime * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: '2-digit' }) : '---'}
-              </span>
-            </div>
-
-            <div className="flex flex-col items-end">
-              <span className="text-[5.5px] font-black text-slate-300 uppercase tracking-widest leading-none mb-0.5">End</span>
-              <div className="flex items-center gap-1.5">
-                <span className="font-mono font-bold text-[7.5px] tracking-tight text-slate-500 bg-slate-50 px-1 py-0.5 rounded border border-slate-100/50">
-                  {item.end_time ? new Date(item.end_time * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: '2-digit' }) : '---'}
-                </span>
-                <div className="w-8 h-1 bg-slate-100 rounded-full overflow-hidden hidden sm:block">
-                  <div 
-                    className="h-full bg-indigo-500 rounded-full transition-all duration-500" 
-                    style={{ width: progress.fraction > 0 ? `${Math.max(2, progress.fraction)}%` : '0%' }} 
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="flex flex-col items-end hidden lg:flex font-sans">
-              <span className="text-[5.5px] font-black text-slate-300 uppercase tracking-widest leading-none mb-0.5">Created</span>
-              <span className="font-mono font-bold text-[7.5px] tracking-tight text-slate-400">
-                {session ? new Date(session.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '---'}
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* Action Controls Menu */}
-        <div className="flex justify-end items-center ml-1.5 relative">
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggleMenu(isMenuOpen ? null : sessionKey);
-            }}
-            className="p-1 text-slate-300 hover:text-slate-900 hover:bg-slate-100 rounded transition-all"
-          >
-            <MoreVertical size={13} />
-          </button>
-          {isMenuOpen && (
-            <div 
-              ref={menuRef}
-              className="absolute right-5 top-1/2 -translate-y-1/2 bg-white rounded border border-slate-200 shadow-md z-50 py-0.5 px-0.5"
-              onClick={e => e.stopPropagation()}
-            >
-              <button
-                onClick={() => {
-                  onDelete(item.symbol, item.prefix, item.id);
-                  onToggleMenu(null);
-                }}
-                className="flex items-center gap-1 px-1.5 py-1 text-red-600 hover:bg-red-50 transition-colors duration-150 rounded"
-              >
-                <Trash2 size={11} className="shrink-0 animate-pulse" />
-                <span className="text-[8.5px] font-bold uppercase tracking-wider leading-none">Delete</span>
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* ADVANCED DESKTOP TABLE ROW VIEW (hidden on small/mobile screens) */}
-      <div 
-        className="hidden md:grid grid-cols-12 gap-4 px-6 py-4 items-center bg-white hover:bg-indigo-50/20 active:bg-indigo-100/10 transition-all duration-200 border border-slate-100 hover:border-indigo-200 rounded-3xl mx-2 my-1.5 shadow-sm hover:shadow-md"
-      >
-        {/* Column 1: Asset Ticker & Feed details (col-span-4) */}
-        <div 
-          onClick={() => onSelect(item.symbol, item.prefix, item.id)}
-          className="col-span-4 flex items-center gap-3 cursor-pointer select-none"
-        >
-          <div className="w-9 h-9 rounded-xl bg-slate-50 border border-slate-150 flex items-center justify-center overflow-hidden shrink-0 shadow-xs">
-            <img 
-              src={`https://raw.githubusercontent.com/spothq/cryptocurrency-icons/master/32/color/${item.symbol.toLowerCase().split('/')[0].replace('usd', '')}.png`} 
-              alt=""
-              loading="lazy"
-              className="w-5 h-5 object-contain"
-              onError={(e) => {
-                const target = e.target as HTMLImageElement;
-                target.src = "https://cdn-icons-png.flaticon.com/128/2272/2272635.png";
-              }}
-            />
-          </div>
-
-          <div className="flex flex-col min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="font-black text-slate-900 text-xs uppercase tracking-tight truncate">
-                {item.symbol}
-              </span>
-              {setup && (
-                <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-100 text-[7px] font-black uppercase leading-none">
-                  GRADE {setup.grade}
-                </span>
-              )}
-              {item.prefix && (
-                <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-100 text-[8px] font-bold">
-                  {item.prefix}
-                </span>
-              )}
-              <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[8.5px] font-mono font-black uppercase tracking-wider leading-none shrink-0 ${
-                item.isDown ? 'text-rose-600 bg-rose-50 border border-rose-100/50' : 'text-emerald-700 bg-emerald-50 border border-emerald-100/50'
-              }`}>
-                {item.change || '0.00%'}
-              </span>
-            </div>
-            <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider mt-0.5 flex items-center gap-1.5">
-              <span className="px-1 py-0.2 bg-slate-100 rounded text-slate-500 text-[8px] font-black">{item.dataSource || item.name}</span>
-              {((item.category || POPULAR_SYMBOLS.find(s => s.symbol === item.symbol)?.category) === 'Crypto') && item.marketType && (
-                <span className="text-slate-400 font-sans">• {item.marketType.replace('-', ' ')}</span>
-              )}
-            </span>
-          </div>
-        </div>
-
-        {/* Column 2: Launch / Lifecycle Date (col-span-2) */}
-        <div className="col-span-2 flex flex-col font-sans">
-          <span className="text-[10px] font-extrabold text-slate-700 leading-normal">
-            {session ? new Date(session.startTime * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '---'}
-          </span>
-          <span className="text-[7.5px] font-black text-slate-350 uppercase tracking-widest leading-none mt-0.5">
-            Launch Date
-          </span>
-        </div>
-
-        {/* Column 3: Backtest Progress & Lifespan Indicator (col-span-3) */}
-        <div className="col-span-3 flex items-center gap-3">
-          <div className="flex-1 flex flex-col">
-            <div className="flex items-baseline justify-between mb-1">
-              <span className="text-[10px] font-black text-indigo-600 font-mono leading-none flex gap-1.5 items-center">
-                <span>End date: {item.end_time ? new Date(item.end_time * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '---'}</span>
-                {item.price && item.price !== 'Loading...' && (
-                  <span className="text-[9px] font-mono text-slate-500 border border-slate-100 rounded px-1 py-[1px] bg-slate-50">
-                    {item.price}
-                  </span>
+              <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider mt-0.5 flex items-center gap-1.5">
+                <span className="px-1 py-0.2 bg-slate-100 rounded text-slate-500 text-[8px] font-black">{item.dataSource || item.name}</span>
+                {((item.category || POPULAR_SYMBOLS.find(s => s.symbol === item.symbol)?.category) === 'Crypto') && item.marketType && (
+                  <span className="text-slate-400 font-sans">• {item.marketType.replace('-', ' ')}</span>
                 )}
               </span>
-              <span className="text-[9px] font-mono font-black uppercase tracking-wider leading-none px-1.5 py-[1px] rounded text-indigo-500 bg-indigo-50 border border-indigo-100 animate-pulse">
-                {progress.label}
-              </span>
             </div>
-            <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden border border-slate-200/40">
-              <div 
-                className="h-full bg-gradient-to-r from-indigo-500 to-indigo-600 rounded-full transition-all duration-500" 
-                style={{ width: progress.fraction > 0 ? `${Math.min(100, Math.max(3, progress.fraction))}%` : '0%' }} 
-              />
+          </div>
+
+          {/* Column 2: Launch / Lifecycle Date (col-span-2) */}
+          <div className="col-span-2 flex flex-col font-sans">
+            <span className="text-[10px] font-extrabold text-slate-700 leading-normal">
+              {session ? new Date(session.startTime * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '---'}
+            </span>
+            <span className="text-[7.5px] font-black text-slate-350 uppercase tracking-widest leading-none mt-0.5">
+              Launch Date
+            </span>
+          </div>
+
+          {/* Column 3: Backtest Progress & Lifespan Indicator (col-span-3) */}
+          <div className="col-span-3 flex items-center gap-3">
+            <div className="flex-1 flex flex-col">
+              <div className="flex items-baseline justify-between mb-1 flex-wrap gap-1">
+                <span className="text-[10px] font-black text-slate-500 font-mono leading-none flex gap-1.5 items-center flex-wrap">
+                  <span>
+                    {session ? new Date(session.startTime * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '---'}
+                    <span className="mx-1 text-slate-300">→</span>
+                    {item.end_time ? new Date(item.end_time * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '---'}
+                  </span>
+                  {item.price && item.price !== 'Loading...' && (
+                    <span className="text-[8.5px] font-mono text-slate-400 border border-slate-100 rounded px-1.5 py-[0.5px] bg-slate-50">
+                      {item.price}
+                    </span>
+                  )}
+                </span>
+                <span className="text-[9px] font-mono font-black uppercase tracking-wider leading-none px-1.5 py-[1px] rounded text-indigo-500 bg-indigo-50 border border-indigo-100 animate-pulse">
+                  {progress.label}
+                </span>
+              </div>
+              <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden border border-slate-200/40">
+                <div 
+                  className="h-full bg-gradient-to-r from-indigo-500 to-indigo-600 rounded-full transition-all duration-500" 
+                  style={{ width: progress.fraction > 0 ? `${Math.min(100, Math.max(3, progress.fraction))}%` : '0%' }} 
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Column 4: Custom Notes & Grade Setup (col-span-2) */}
+          <button 
+            onClick={() => onEditNotes(item)}
+            className="col-span-2 flex flex-col text-left border border-transparent rounded-xl hover:bg-slate-50 hover:border-slate-100 p-1.5 transition-all cursor-pointer group"
+          >
+            <span className="text-[9.5px] text-slate-600 font-bold block truncate leading-tight w-full">
+              {item.description || 'No strategic notes...'}
+            </span>
+            <span className="text-[7px] font-black text-indigo-500 group-hover:text-indigo-700 uppercase tracking-widest block mt-0.5">
+              {item.description ? 'Edit Strategy Notes' : '+ Add Strategic Notes'}
+            </span>
+          </button>
+
+          {/* Column 5: Desktop Controller Clicks (col-span-1) */}
+          <div className="col-span-1 flex items-center justify-end gap-1.5 shrink-0 relative">
+            <button
+              type="button"
+              onClick={() => onSelect(item.symbol, item.prefix, item.id)}
+              title="Launch Sandbox Replay Dashboard"
+              className="p-1 px-1.5 text-indigo-600 hover:bg-indigo-50 hover:text-indigo-800 rounded-xl transition-all cursor-pointer"
+            >
+              <ChevronRight size={15} strokeWidth={3} />
+            </button>
+            
+            <div className="relative flex items-center">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggleMenu(isMenuOpen ? null : sessionKey);
+                }}
+                title="More Options"
+                className="p-1 text-slate-350 hover:text-slate-900 hover:bg-slate-150/40 rounded transition-all cursor-pointer toggle-menu-btn"
+              >
+                <MoreVertical size={13} />
+              </button>
+              {isMenuOpen && (
+                <div 
+                  ref={menuRef}
+                  className="absolute right-0 top-full mt-1.5 bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200 shadow-[0_10px_30px_rgba(0,0,0,0.1)] z-[500] py-1.5 p-1.5 min-w-[125px] flex flex-col gap-1 w-[125px] animate-in fade-in slide-in-from-top-2 duration-150 watchlist-menu-dropdown"
+                  onClick={e => e.stopPropagation()}
+                >
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsExpanded(prev => !prev);
+                      onToggleMenu(null);
+                    }}
+                    className="flex items-center gap-2 w-full px-2.5 py-2 text-slate-700 hover:bg-slate-50 hover:text-slate-900 transition-all duration-150 rounded-xl text-left font-bold text-[9.5px] uppercase tracking-wider"
+                  >
+                    <Info size={13} className="shrink-0 text-slate-400" />
+                    <span>Details</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onExtend(item);
+                      onToggleMenu(null);
+                    }}
+                    className="flex items-center gap-2 w-full px-2.5 py-2 text-indigo-600 hover:bg-indigo-50/50 hover:text-indigo-850 transition-all duration-150 rounded-xl text-left font-bold text-[9.5px] uppercase tracking-wider border-t border-slate-100/70 pt-2 mt-0.5"
+                  >
+                    <Calendar size={13} className="shrink-0 text-indigo-400" />
+                    <span>Extend</span>
+                  </button>
+
+                  {!(item.status === 'completed' || item.hasBeenExtended) && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDelete(item.symbol, item.prefix, item.id);
+                        onToggleMenu(null);
+                      }}
+                      className="flex items-center gap-2 w-full px-2.5 py-2 text-rose-600 hover:bg-rose-50/60 transition-all duration-150 rounded-xl text-left font-bold text-[9.5px] uppercase tracking-wider border-t border-slate-100/70 pt-2 mt-0.5"
+                    >
+                      <Trash2 size={13} className="shrink-0 text-rose-400" />
+                      <span>Delete</span>
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>
 
-        {/* Column 4: Custom Notes & Grade Setup (col-span-2) */}
-        <button 
-          onClick={() => onEditNotes(item)}
-          className="col-span-2 flex flex-col text-left border border-transparent rounded-xl hover:bg-slate-50 hover:border-slate-100 p-1.5 transition-all cursor-pointer group"
-        >
-          <span className="text-[9.5px] text-slate-600 font-bold block truncate leading-tight w-full">
-            {item.description || 'No strategic notes...'}
-          </span>
-          <span className="text-[7px] font-black text-indigo-500 group-hover:text-indigo-700 uppercase tracking-widest block mt-0.5">
-            {item.description ? 'Edit Strategy Notes' : '+ Add Strategic Notes'}
-          </span>
-        </button>
+        {/* EXPANDABLE QUICK DETAILS PANEL */}
+        <AnimatePresence>
+          {isExpanded && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.22, ease: "easeInOut" }}
+              className="border-t border-slate-100 bg-slate-50/50 px-4 py-3 sm:px-5 sm:py-3.5 flex flex-col gap-3 text-slate-700"
+            >
+              {/* Dynamic Compact Meta Badges */}
+              <div className="flex flex-wrap items-center gap-1.5 text-[8.5px] uppercase font-black text-slate-400">
+                <span className="bg-white px-2 py-0.5 rounded border border-slate-100/60 text-slate-600 font-extrabold">{item.category || 'Trading Instrument'}</span>
+                <span>•</span>
+                <span className="bg-white px-2 py-0.5 rounded border border-slate-100/60 text-slate-600 font-extrabold">{item.dataSource || item.source || 'FirstLook Core'}</span>
+                <span>•</span>
+                <span className="bg-white px-2 py-0.5 rounded border border-slate-100/60 text-slate-600 font-extrabold">{item.marketType ? item.marketType.replace('-', ' ') : 'Standard CFD'}</span>
+                <span>•</span>
+                <span className="bg-white px-2 py-0.5 rounded border border-slate-100/60 text-slate-600 font-extrabold">{item.timeSyncSpeed ? `${item.timeSyncSpeed}x speed` : '1x Realtime'}</span>
+              </div>
 
-        {/* Column 5: Desktop Controller Clicks (col-span-1) */}
-        <div className="col-span-1 flex items-center justify-end gap-1 shrink-0">
-          <button
-            type="button"
-            onClick={() => onSelect(item.symbol, item.prefix, item.id)}
-            title="Launch Sandbox Replay Dashboard"
-            className="p-1 px-1.5 text-indigo-600 hover:bg-indigo-50 hover:text-indigo-800 rounded-xl transition-all cursor-pointer"
-          >
-            <ChevronRight size={15} strokeWidth={3} />
-          </button>
-          
-          <button
-            type="button"
-            onClick={() => onDelete(item.symbol, item.prefix, item.id)}
-            title="Remove from Watchlist"
-            className="p-1 px-1.5 text-slate-300 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all cursor-pointer"
-          >
-            <Trash2 size={13} />
-          </button>
-        </div>
+              {/* Grid: Left: Playback timeline, Right: Basic stats */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-white border border-slate-100 rounded-2xl p-3 shadow-xs">
+                {/* Lifespan Timeline details */}
+                <div className="flex flex-col justify-center">
+                  <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Historical Playback Frame</span>
+                  <div className="flex items-center gap-1.5 mt-1 text-[10px] font-bold text-slate-700 font-mono">
+                    <Calendar size={11} className="text-indigo-400 shrink-0" />
+                    <span>{session ? new Date(session.startTime * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '---'}</span>
+                    <span className="text-slate-300">→</span>
+                    <span>{item.end_time ? new Date(item.end_time * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '---'}</span>
+                  </div>
+                  <div className="flex items-center gap-1 mt-1 text-[9px]">
+                    <span className="text-[8px] font-black text-slate-400 uppercase">Playhead:</span>
+                    <span className="font-extrabold font-mono text-indigo-600">
+                      {session?.currentTime 
+                        ? new Date(session.currentTime * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+                        : (item.last_play_candle_time 
+                          ? new Date(item.last_play_candle_time * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+                          : 'Not Initiated')}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Trade Performance Basic Stats */}
+                <div className="border-t sm:border-t-0 sm:border-l border-slate-100 pt-2 sm:pt-0 sm:pl-3.5 flex flex-col justify-center">
+                  <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Sandbox Performance Stats</span>
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 mt-1.5">
+                    <div className="flex items-baseline gap-1">
+                      <span className="text-[7.5px] font-bold text-slate-400 uppercase">Trades:</span>
+                      <span className="text-[9.5px] font-black font-mono text-slate-800">{stats.total}</span>
+                    </div>
+                    <div className="flex items-baseline gap-1">
+                      <span className="text-[7.5px] font-bold text-slate-400 uppercase">WinRate:</span>
+                      <span className="text-[9.5px] font-black font-mono text-slate-800">
+                        {stats.winRate.toFixed(1)}% <span className="text-[7.5px] text-slate-400 font-bold">({stats.wins}/{stats.total})</span>
+                      </span>
+                    </div>
+                    <div className="flex items-baseline gap-1">
+                      <span className="text-[7.5px] font-bold text-slate-400 uppercase">Net PnL:</span>
+                      <span className={`text-[9.5px] font-black font-mono ${stats.totalRR >= 0 ? 'text-emerald-600' : 'text-rose-500'}`}>
+                        {stats.totalRR >= 0 ? '+' : ''}{stats.totalRR.toFixed(2)} R
+                      </span>
+                    </div>
+                    <div className="flex items-baseline gap-1">
+                      <span className="text-[7.5px] font-bold text-slate-400 uppercase">Net Pips:</span>
+                      <span className={`text-[9.5px] font-black font-mono ${stats.totalPips >= 0 ? 'text-emerald-600' : 'text-rose-500'}`}>
+                        {stats.totalPips >= 0 ? '+' : ''}{stats.totalPips.toFixed(1)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Bottom Setup/Analysis footer - ultra compact */}
+              {setup ? (
+                <div className="bg-indigo-50/20 border border-indigo-100/20 rounded-xl p-2 flex items-center justify-between text-[8px] gap-2">
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <span className="font-extrabold text-slate-450 uppercase tracking-wider text-[7px]">Execution Plan:</span>
+                    <span className="px-1.5 py-0.2 bg-indigo-600 text-white font-mono text-[8px] font-black rounded uppercase">
+                      GRADE {setup.grade}
+                    </span>
+                  </div>
+                  {item.description ? (
+                    <span className="text-slate-550 text-[8.5px] font-bold truncate italic max-w-xs block">
+                      "{item.description}"
+                    </span>
+                  ) : (
+                    <span className="text-slate-400 text-[8px] italic">No active notes documented. Click edit notes to write.</span>
+                  )}
+                </div>
+              ) : (
+                item.description && (
+                  <div className="bg-slate-100/30 border border-slate-150/30 rounded-xl p-2 text-[8.5px] text-slate-505 leading-normal italic truncate">
+                    <span className="font-extrabold text-slate-405 uppercase tracking-wider text-[7px] mr-1.5 not-italic">Notes:</span>
+                    "{item.description}"
+                  </div>
+                )
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </Reorder.Item>
   );
@@ -400,13 +597,23 @@ const WatchlistItemRow = memo(({
          prev.session?.currentTime === next.session?.currentTime && 
          prev.session?.startTime === next.session?.startTime &&
          prev.isMenuOpen === next.isMenuOpen &&
-         prev.setups === next.setups;
+         prev.setups === next.setups &&
+         prev.journalTrades === next.journalTrades;
 });
+
+const getPreviousWeekFriday = (refDate: Date = new Date()): Date => {
+  const day = refDate.getDay();
+  const daysToSubtract = [9, 3, 4, 5, 6, 7, 8][day];
+  const prevFriday = new Date(refDate.getTime() - daysToSubtract * 24 * 60 * 60 * 1000);
+  prevFriday.setHours(23, 59, 59, 999);
+  return prevFriday;
+};
 
 interface WatchlistPageProps {
   userId?: string;
   onSelectSymbol: (symbol: string, prefix?: string, id?: string, source?: string, marketType?: MarketType) => void;
   onDeleteItem?: (symbol: string, prefix?: string, id?: string) => void;
+  onExtendSession?: (id: string, newEndTimeSeconds: number) => void;
   watchlist: WatchlistItem[];
   setWatchlist: React.Dispatch<React.SetStateAction<WatchlistItem[]>>;
   activeTab: 'ongoing' | 'completed';
@@ -421,6 +628,7 @@ interface WatchlistPageProps {
   subscriptionPlan?: 'basic' | 'plus' | 'premium';
   onLockedFeature?: (feat: 'script' | 'watchlist' | 'replay' | 'sync' | 'competition') => void;
   onNavigateToCompetitions?: () => void;
+  journalTrades?: JournalTrade[];
 }
 
 const MarketSymbolButton = memo(({ 
@@ -472,6 +680,7 @@ export function WatchlistPage({
   userId, 
   onSelectSymbol, 
   onDeleteItem,
+  onExtendSession,
   watchlist, 
   setWatchlist, 
   activeTab, 
@@ -485,11 +694,42 @@ export function WatchlistPage({
   setups = [],
   subscriptionPlan = 'basic',
   onLockedFeature,
-  onNavigateToCompetitions
+  onNavigateToCompetitions,
+  journalTrades = []
 }: WatchlistPageProps) {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [systemBanner, setSystemBanner] = useState<any>(null);
   const [isBannerDismissed, setIsBannerDismissed] = useState<boolean>(false);
+  
+  const [extendingItem, setExtendingItem] = useState<WatchlistItem | null>(null);
+  const [selectedNewDate, setSelectedNewDate] = useState<string>('');
+  const [extendError, setExtendError] = useState<string | null>(null);
+
+  const extendConfig = useMemo(() => {
+    if (!extendingItem) return null;
+    const currentEndTime = extendingItem.end_time || 0;
+    const maxDate = getPreviousWeekFriday();
+    
+    const formatDate = (d: Date) => {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    };
+
+    const minSelectableDateObj = new Date((currentEndTime + 86400) * 1000);
+    const minSelectableStr = formatDate(minSelectableDateObj);
+    const maxSelectableStr = formatDate(maxDate);
+    const isPastLimit = currentEndTime >= Math.floor(maxDate.getTime() / 1000);
+
+    return {
+      currentEndTime,
+      minSelectableStr,
+      maxSelectableStr,
+      maxDate,
+      isPastLimit
+    };
+  }, [extendingItem]);
 
   useEffect(() => {
     fetch('/api/system/banner')
@@ -498,12 +738,15 @@ export function WatchlistPage({
         throw new Error('Failed to fetch banner');
       })
       .then(data => {
-        if (data && data.status === 'success' && data.banner) {
+        if (data && data.status === 'success' && data.banner && data.banner.enabled) {
           setSystemBanner(data.banner);
+        } else {
+          setSystemBanner(null);
         }
       })
       .catch(err => {
         console.error('[WatchlistPage] Error fetching system banner:', err);
+        setSystemBanner(null);
       });
   }, []);
 
@@ -974,9 +1217,11 @@ export function WatchlistPage({
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-        setMenuOpenId(null);
+      const target = event.target as HTMLElement;
+      if (target.closest('.watchlist-menu-dropdown') || target.closest('.toggle-menu-btn')) {
+        return;
       }
+      setMenuOpenId(null);
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
@@ -1030,6 +1275,12 @@ export function WatchlistPage({
     setMenuOpenId(id);
   }, []);
 
+  const handleOpenExtendModal = useCallback((item: WatchlistItem) => {
+    setExtendingItem(item);
+    setExtendError(null);
+    setSelectedNewDate('');
+  }, []);
+
   return (
     <div className="flex flex-col h-full bg-white text-slate-900 relative overflow-hidden antialiased">
       {/* System Alert Banner */}
@@ -1041,20 +1292,24 @@ export function WatchlistPage({
             exit={{ height: 0, opacity: 0 }}
             transition={{ type: 'spring', stiffness: 260, damping: 25 }}
             className={`w-full shrink-0 border-b overflow-hidden relative ${
-              systemBanner.type === 'error' 
+              systemBanner.type === 'error' || systemBanner.type === 'danger'
                 ? 'bg-gradient-to-r from-red-50/70 to-white border-red-100 text-red-950' 
                 : systemBanner.type === 'success'
                   ? 'bg-gradient-to-r from-emerald-50/70 to-white border-emerald-100 text-emerald-950'
-                  : 'bg-gradient-to-r from-amber-50/70 via-amber-50/30 to-white border-amber-100/80 text-amber-950'
+                  : systemBanner.type === 'info'
+                    ? 'bg-gradient-to-r from-blue-50/70 to-white border-blue-100 text-blue-950'
+                    : 'bg-gradient-to-r from-amber-50/70 via-amber-50/30 to-white border-amber-100/80 text-amber-950'
             }`}
           >
             {/* Glow / Accent strip on the left margin */}
             <div className={`absolute top-0 left-0 bottom-0 w-[3px] ${
-              systemBanner.type === 'error' 
+              systemBanner.type === 'error' || systemBanner.type === 'danger'
                 ? 'bg-red-500' 
                 : systemBanner.type === 'success'
                   ? 'bg-emerald-500'
-                  : 'bg-amber-500'
+                  : systemBanner.type === 'info'
+                    ? 'bg-blue-500'
+                    : 'bg-amber-500'
             }`} />
 
             <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3.5 flex items-center justify-between gap-4">
@@ -1062,23 +1317,29 @@ export function WatchlistPage({
                 {/* Advanced icon with live pulse shell */}
                 <div className="relative shrink-0 flex items-center justify-center">
                   <span className={`absolute inline-flex h-6 w-6 rounded-full opacity-15 animate-ping ${
-                    systemBanner.type === 'error' 
+                    systemBanner.type === 'error' || systemBanner.type === 'danger'
                       ? 'bg-red-400' 
                       : systemBanner.type === 'success'
                         ? 'bg-emerald-400'
-                        : 'bg-amber-400'
+                        : systemBanner.type === 'info'
+                          ? 'bg-blue-400'
+                          : 'bg-amber-400'
                   }`} />
                   <div className={`relative flex items-center justify-center h-8 w-8 rounded-xl ${
-                    systemBanner.type === 'error' 
+                    systemBanner.type === 'error' || systemBanner.type === 'danger'
                       ? 'bg-red-100/80 text-red-600' 
                       : systemBanner.type === 'success'
                         ? 'bg-emerald-100/80 text-emerald-600'
-                        : 'bg-amber-100/95 text-amber-600'
+                        : systemBanner.type === 'info'
+                          ? 'bg-blue-100/80 text-blue-600'
+                          : 'bg-amber-100/95 text-amber-600'
                   } border border-white/20 shadow-sm shadow-black/5`}>
-                    {systemBanner.type === 'error' ? (
+                    {systemBanner.type === 'error' || systemBanner.type === 'danger' ? (
                       <AlertCircle size={14} strokeWidth={2.5} />
                     ) : systemBanner.type === 'success' ? (
                       <CheckCircle2 size={14} strokeWidth={2.5} />
+                    ) : systemBanner.type === 'info' ? (
+                      <Info size={14} strokeWidth={2.5} />
                     ) : (
                       <AlertTriangle size={13} strokeWidth={2.5} />
                     )}
@@ -1089,11 +1350,13 @@ export function WatchlistPage({
                   {/* Category Pill + Title */}
                   <div className="flex items-center gap-2">
                     <span className={`text-[7.5px] font-black uppercase tracking-[0.15em] px-1.5 py-0.5 rounded-md ${
-                      systemBanner.type === 'error' 
+                      systemBanner.type === 'error' || systemBanner.type === 'danger'
                         ? 'bg-red-200/50 text-red-800' 
                         : systemBanner.type === 'success'
                           ? 'bg-emerald-200/50 text-emerald-800'
-                          : 'bg-amber-200/75 text-amber-800'
+                          : systemBanner.type === 'info'
+                            ? 'bg-blue-200/50 text-blue-800'
+                            : 'bg-amber-200/75 text-amber-800'
                     }`}>
                       {systemBanner.type || 'system'}
                     </span>
@@ -1254,15 +1517,17 @@ export function WatchlistPage({
                     <WatchlistItemRow
                       key={item.id}
                       item={item}
-                      session={backtestSessions[sessionKey]}
+                      session={backtestSessions[item.id] || backtestSessions[sessionKey]}
                       onSelect={handleSelect}
                       onToggleStatus={toggleStatus}
                       onDelete={deleteItem}
                       onEditNotes={handleEditNotes}
+                      onExtend={handleOpenExtendModal}
                       isMenuOpen={menuOpenId === sessionKey}
                       onToggleMenu={handleToggleMenu}
                       menuRef={menuRef}
                       setups={setups}
+                      journalTrades={journalTrades}
                     />
                   );
                 })}
@@ -1604,6 +1869,133 @@ export function WatchlistPage({
                 >
                   Save Notes
                 </button>
+              </div>
+            </motion.div>
+          </>
+        )}
+
+        {extendingItem && extendConfig && (
+          <>
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => {
+                setExtendingItem(null);
+                setSelectedNewDate('');
+                setExtendError(null);
+              }}
+              className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[2000]"
+            />
+            <motion.div 
+              initial={{ scale: 0.95, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.95, opacity: 0, y: 20 }}
+              className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-white rounded-[2rem] shadow-2xl z-[2001] overflow-hidden border border-slate-100"
+            >
+              <div className="p-6 border-b border-slate-50 flex items-center justify-between">
+                <div>
+                  <h3 className="text-lg font-black text-slate-900 leading-tight">Extend Playback Span</h3>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">FOR Sandbox: {extendingItem.symbol}</p>
+                </div>
+                <button 
+                  onClick={() => {
+                    setExtendingItem(null);
+                    setSelectedNewDate('');
+                    setExtendError(null);
+                  }} 
+                  className="p-2 hover:bg-slate-50 rounded-xl transition-colors"
+                >
+                  <X size={20} className="text-slate-300" />
+                </button>
+              </div>
+
+              <div className="p-6 space-y-4">
+                {extendConfig.isPastLimit ? (
+                  <div className="p-4 bg-amber-50 border border-amber-100/50 rounded-2xl flex items-start gap-3">
+                    <AlertTriangle className="text-amber-500 shrink-0 mt-0.5" size={16} />
+                    <div>
+                      <h4 className="text-[9.5px] font-black uppercase tracking-widest text-amber-900">Historical Border Reached</h4>
+                      <p className="text-[10.5px] text-amber-700 font-medium mt-1 leading-normal">
+                        This sandbox is already at the maximum available complete historical data frame. Future sessions must wait for updated data packages.
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div className="space-y-1.5">
+                      <label className="text-[8px] font-black uppercase tracking-widest text-slate-400">Current End Date</label>
+                      <div className="bg-slate-50 border border-slate-100 rounded-xl p-3 text-xs font-bold text-slate-700">
+                        {extendingItem.end_time ? new Date(extendingItem.end_time * 1000).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' }) : '---'}
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-[8px] font-black uppercase tracking-widest text-slate-400">Choose New End Date</label>
+                      <input 
+                        type="date"
+                        min={extendConfig.minSelectableStr}
+                        max={extendConfig.maxSelectableStr}
+                        value={selectedNewDate}
+                        onChange={(e) => {
+                          setSelectedNewDate(e.target.value);
+                          setExtendError(null);
+                        }}
+                        className="w-full bg-slate-50 border border-slate-100 rounded-xl p-3 text-xs font-bold text-slate-800 focus:outline-none focus:ring-4 focus:ring-slate-900/5 focus:border-indigo-400 transition-all cursor-pointer"
+                      />
+                    </div>
+
+                    {extendError && (
+                      <div className="text-[10px] font-bold text-rose-500 bg-rose-50 border border-rose-100 rounded-xl p-3 flex items-center gap-2">
+                        <AlertCircle size={14} />
+                        <span>{extendError}</span>
+                      </div>
+                    )}
+
+                    <button
+                      onClick={() => {
+                        if (!selectedNewDate) {
+                          setExtendError('Please select a valid extension date');
+                          return;
+                        }
+
+                        const [year, month, day] = selectedNewDate.split('-').map(Number);
+                        const dateObj = new Date(year, month - 1, day, 23, 59, 59, 999);
+                        const newEndTimeSeconds = Math.floor(dateObj.getTime() / 1000);
+
+                        if (newEndTimeSeconds <= extendConfig.currentEndTime) {
+                          setExtendError('New date must be after current end date');
+                          return;
+                        }
+
+                        if (onExtendSession) {
+                          onExtendSession(extendingItem.id, newEndTimeSeconds);
+                        } else {
+                          // Local fallback update
+                          setWatchlist(prev => prev.map(item => {
+                            if (item.id === extendingItem.id) {
+                              return {
+                                ...item,
+                                end_time: newEndTimeSeconds,
+                                status: 'ongoing' as const,
+                                hasBeenExtended: true
+                              };
+                            }
+                            return item;
+                          }));
+                        }
+
+                        // Close modal cleanly
+                        setExtendingItem(null);
+                        setSelectedNewDate('');
+                        setExtendError(null);
+                      }}
+                      className="w-full py-4 mt-3 bg-slate-900 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-xl shadow-slate-900/20 hover:scale-[1.01] active:scale-95 transition-all text-center cursor-pointer"
+                    >
+                      Confirm Span Extension
+                    </button>
+                  </>
+                )}
               </div>
             </motion.div>
           </>

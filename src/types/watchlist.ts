@@ -23,4 +23,5 @@ export interface WatchlistItem extends MarketSymbol {
   start_time?: number;
   last_play_candle_time?: number;
   end_time?: number;
+  hasBeenExtended?: boolean;
 }

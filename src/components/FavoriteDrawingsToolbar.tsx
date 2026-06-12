@@ -24,7 +24,6 @@ import {
   Type,
   Play,
   Pause,
-  SkipForward,
   ChevronUp,
   Info
 } from 'lucide-react';
@@ -799,55 +798,6 @@ export const FavoriteDrawingsToolbar = memo(function FavoriteDrawingsToolbar({
                         title={(isReplayMode ? replayIsPlaying : simIsPlaying) ? "Pause" : "Play"}
                       >
                         {(isReplayMode ? replayIsPlaying : simIsPlaying) ? <Pause size={10} fill="currentColor" /> : <Play size={10} fill="currentColor" />}
-                      </button>
-
-                      {/* Step Forward Button */}
-                       <button
-                        onClick={() => {
-                          if (isReplayMode) {
-                            setReplayCurrentTime?.((prev: number) => {
-                              const current = prev || (replayTrade ? replayTrade.entryTime : 0);
-                              const currentData = historicalDataRef?.current;
-                              const nextCandle = currentData?.find((c: any) => c.time > current);
-                              return nextCandle ? nextCandle.time : current + (getStepSeconds?.() || 60);
-                            });
-                          } else {
-                            const sessionKey = currentSessionKey || '';
-                            const session = sessionKey ? (backtestSessions?.[sessionKey] || (selectedSymbol ? backtestSessions?.[activePrefix ? `${selectedSymbol}_${activePrefix}` : selectedSymbol] : null)) : null;
-                            
-                            if (!session) {
-                              addNotification?.('No backtest session found', 'error');
-                              return;
-                            }
-
-                            const currentData = historicalDataRef?.current;
-                            const activeItem = watchlist?.find((i: any) => i.id === sessionKey) ||
-                                               watchlist?.find((i: any) => i.symbol === selectedSymbol && (i.prefix || null) === (activePrefix || null));
-                            const start_time = activeItem?.start_time || (currentData?.[0]?.time);
-                            const last_play_candle_time = activeItem?.last_play_candle_time || start_time;
-
-                            // Retreive the reference base time keeping the active playlist item aligned
-                            const current = last_play_candle_time || sessionCurrentTimesRef?.current?.[sessionKey] || session.currentTime || session.startTime;
-                            const nextCandle = currentData?.find((c: any) => c.time > current);
-                            const next = nextCandle ? nextCandle.time : current + (getStepSeconds?.() || 60);
-                            
-                            const end_time = activeItem?.end_time || (currentData?.[currentData?.length - 1]?.time);
-
-                            if (last_play_candle_time && end_time && last_play_candle_time >= end_time) {
-                              addNotification?.('Cannot move beyond end time', 'warning');
-                              return;
-                            }
-
-                            if (sessionCurrentTimesRef?.current && sessionKey) {
-                              sessionCurrentTimesRef.current[sessionKey] = next;
-                            }
-                            setSimCurrentTime?.(next);
-                          }
-                        }}
-                        className="w-7 h-7 flex items-center justify-center text-slate-400 hover:text-slate-900 hover:bg-slate-50 rounded-full transition-all"
-                        title="Step Forward"
-                      >
-                        <SkipForward size={10} />
                       </button>
 
                       {/* Speed Controller display */}

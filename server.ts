@@ -6,6 +6,7 @@ import { GoogleGenAI, Type } from "@google/genai";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import nodemailer from "nodemailer";
+import fs from "fs";
 import { db, initializeDatabase } from "./db";
 import { getCurrencyForCountry } from "./src/utils/currencyConverter";
 
@@ -35,112 +36,267 @@ interface PendingSignup {
 
 const pendingOtps = new Map<string, PendingSignup>();
 
-function getZohoTransporter() {
-  const user = process.env.ZOHO_MAIL_USER;
-  const pass = process.env.ZOHO_MAIL_PASS;
-  
-  if (!user || !pass || user.trim() === "" || pass.trim() === "" || user.includes("placeholder") || pass.includes("placeholder")) {
-    return null;
+interface PendingForgot {
+  otp: string;
+  expiresAt: number;
+}
+const pendingForgotOtps = new Map<string, PendingForgot>();
+
+// Helper to load/save Zoho configuration
+const TOKENS_FILE = path.join(process.cwd(), "zoho-tokens.json");
+
+interface ZohoConfig {
+  accessToken?: string;
+  refreshToken?: string;
+  apiDomain?: string;
+  authServer?: string;
+  expiresAt?: number; // timestamp in ms when accessToken expires
+  accountId?: string;
+  emailAddress?: string;
+}
+
+async function loadZohoConfig(): Promise<ZohoConfig> {
+  // First try DB
+  try {
+    const dbVal = await db.getSystemConfig("zoho_config");
+    if (dbVal) {
+      return JSON.parse(dbVal);
+    }
+  } catch (err) {
+    console.warn("[Zoho Config] Error reading from DB:", err);
   }
-  
-  const host = process.env.ZOHO_MAIL_HOST || "smtp.zoho.com";
-  const port = Number(process.env.ZOHO_MAIL_PORT) || 465;
-  
-  return nodemailer.createTransport({
-    host,
-    port,
-    secure: port === 465,
-    auth: {
-      user,
-      pass
+
+  // Fallback to file system
+  try {
+    if (fs.existsSync(TOKENS_FILE)) {
+      const fileData = fs.readFileSync(TOKENS_FILE, "utf-8");
+      return JSON.parse(fileData);
+    }
+  } catch (err) {
+    console.warn("[Zoho Config] Error reading from file system:", err);
+  }
+
+  return {};
+}
+
+async function saveZohoConfig(config: ZohoConfig) {
+  // Save to DB
+  try {
+    await db.setSystemConfig("zoho_config", JSON.stringify(config));
+  } catch (err) {
+    console.warn("[Zoho Config] Error saving to DB:", err);
+  }
+
+  // Save to file system
+  try {
+    fs.writeFileSync(TOKENS_FILE, JSON.stringify(config, null, 2), "utf-8");
+  } catch (err) {
+    console.error("[Zoho Config] Error saving to file system:", err);
+  }
+}
+
+async function getValidAccessToken(): Promise<string> {
+  const config = await loadZohoConfig();
+  const clientId = process.env.ZOHO_CLIENT_ID;
+  const clientSecret = process.env.ZOHO_CLIENT_SECRET;
+
+  if (!clientId || !clientSecret) {
+    throw new Error("Zoho OAuth credentials ZOHO_CLIENT_ID or ZOHO_CLIENT_SECRET are not configured in environment variables.");
+  }
+
+  if (config.accessToken && config.expiresAt && config.expiresAt > Date.now() + 60000) {
+    return config.accessToken;
+  }
+
+  // Need to refresh
+  if (!config.refreshToken) {
+    throw new Error("Zoho accounts authorization is missing. Please authorize Zoho at /api/zoho/auth first.");
+  }
+
+  const authServer = config.authServer || "https://accounts.zoho.com";
+  console.log(`[Zoho OAuth] Refreshing access token via ${authServer}...`);
+
+  const params = new URLSearchParams();
+  params.append("refresh_token", config.refreshToken);
+  params.append("client_id", clientId);
+  params.append("client_secret", clientSecret);
+  params.append("grant_type", "refresh_token");
+
+  const response = await fetch(`${authServer}/oauth/v2/token`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded"
+    },
+    body: params.toString()
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Failed to refresh Zoho access token: ${response.status} ${errText}`);
+  }
+
+  const data = await response.json() as any;
+  if (!data.access_token) {
+    throw new Error(`Zoho refresh token response was invalid: ${JSON.stringify(data)}`);
+  }
+
+  config.accessToken = data.access_token;
+  const expiresIn = data.expires_in || 3600;
+  config.expiresAt = Date.now() + (expiresIn * 1000);
+  if (data.api_domain) {
+    config.apiDomain = data.api_domain;
+  }
+
+  await saveZohoConfig(config);
+  return config.accessToken;
+}
+
+interface ZohoMailAccount {
+  accountId: string;
+  emailAddress: string;
+  status: string;
+}
+
+async function fetchPrimaryZohoAccount(accessToken: string, apiDomain: string): Promise<ZohoMailAccount> {
+  const url = `${apiDomain}/api/accounts`;
+  console.log(`[Zoho Mail API] Fetching mail accounts from: ${url}`);
+  const response = await fetch(url, {
+    method: "GET",
+    headers: {
+      "Authorization": `Zoho-oauthtoken ${accessToken}`
     }
   });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Failed to fetch Zoho Mail accounts: ${response.status} ${errText}`);
+  }
+
+  const resData = await response.json() as any;
+  if (!resData.data || !Array.isArray(resData.data) || resData.data.length === 0) {
+    throw new Error(`No Zoho Mail accounts found in accounts query: ${JSON.stringify(resData)}`);
+  }
+
+  const activeAccount = resData.data.find((acc: any) => acc.status === "active") || resData.data[0];
+  return {
+    accountId: activeAccount.accountId,
+    emailAddress: activeAccount.emailAddress,
+    status: activeAccount.status
+  };
+}
+
+async function sendZohoEmail(toEmail: string, subject: string, htmlContent: string): Promise<boolean> {
+  try {
+    const accessToken = await getValidAccessToken();
+    const config = await loadZohoConfig();
+    const apiDomain = config.apiDomain || "https://mail.zoho.com";
+
+    let accountId = config.accountId;
+    let fromAddress = config.emailAddress;
+
+    if (!accountId || !fromAddress) {
+      console.log("[Zoho Mail API] accountId or fromAddress not cached. Fetching primary account...");
+      const account = await fetchPrimaryZohoAccount(accessToken, apiDomain);
+      accountId = account.accountId;
+      fromAddress = account.emailAddress;
+
+      const updatedConfig = { ...config, accountId, emailAddress: fromAddress };
+      await saveZohoConfig(updatedConfig);
+    }
+
+    const sendUrl = `${apiDomain}/api/accounts/${accountId}/messages`;
+    console.log(`[Zoho Mail API] Dispatching message via: ${sendUrl} from ${fromAddress} to ${toEmail}`);
+
+    const payload = {
+      fromAddress,
+      toAddress: toEmail,
+      subject,
+      content: htmlContent
+    };
+
+    const response = await fetch(sendUrl, {
+      method: "POST",
+      headers: {
+        "Authorization": `Zoho-oauthtoken ${accessToken}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`Failed to send Zoho email: ${response.status} ${errText}`);
+    }
+
+    const data = await response.json() as any;
+    console.log("[Zoho Mail API] Email dispatched successfully:", data);
+    return true;
+  } catch (err: any) {
+    console.error("[Zoho Mail API Error] sendZohoEmail failed:", err);
+    throw err;
+  }
 }
 
 async function sendOtpEmail(email: string, otp: string): Promise<boolean> {
-  const transporter = getZohoTransporter();
-  if (!transporter) {
-    throw new Error("Zoho credentials not configured");
-  }
-  
-  const fromEmail = process.env.ZOHO_MAIL_USER;
-  const mailOptions = {
-    from: `"FirstLook Core" <${fromEmail}>`,
-    to: email,
-    subject: "Verify Your FirstLook System Handle [OTP Code]",
-    html: `
-      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #0b0f19; color: #f3f4f6; padding: 40px 20px; text-align: center; border-radius: 12px; max-width: 500px; margin: 0 auto; border: 1px solid #1e293b;">
-        <div style="margin-bottom: 24px;">
-          <h2 style="color: #6366f1; text-transform: uppercase; letter-spacing: 0.15em; font-size: 14px; margin-bottom: 4px;">SYSTEM INGRESS</h2>
-          <h1 style="color: #ffffff; text-transform: uppercase; font-size: 22px; font-weight: 900; margin: 0; letter-spacing: 0.05em;">Verify Identity</h1>
-        </div>
-        <p style="color: #9ca3af; font-size: 13px; line-height: 1.6; max-width: 400px; margin: 0 auto 30px auto;">
-          You have requested access to the FirstLook Strategy Backtester. Enter the secure security code below to complete your profile verification.
-        </p>
-        <div style="background-color: #030712; border: 1px solid #312e81; padding: 20px; border-radius: 10px; display: inline-block; margin-bottom: 30px;">
-          <span style="font-family: 'Courier New', Courier, monospace; font-size: 36px; font-weight: bold; letter-spacing: 0.2em; color: #818cf8; padding-left: 0.2em;">${otp}</span>
-        </div>
-        <p style="color: #6b7280; font-size: 11px; margin: 0 0 10px 0;">This code is valid for exactly <strong>5 minutes</strong>. If you did not make this request, please disregard this transmission.</p>
-        <div style="border-top: 1px solid #111827; padding-top: 20px; margin-top: 30px; font-size: 10px; color: #4b5563; font-family: monospace;">
-          SECURE LOG / COCKROACH_CLUSTER // MULTI-REGION SECURITY PASSCODE
-        </div>
+  const subject = "Verify Your FirstLook System Handle [OTP Code]";
+  const html = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #0b0f19; color: #f3f4f6; padding: 40px 20px; text-align: center; border-radius: 12px; max-width: 500px; margin: 0 auto; border: 1px solid #1e293b;">
+      <div style="margin-bottom: 24px;">
+        <h2 style="color: #6366f1; text-transform: uppercase; letter-spacing: 0.15em; font-size: 14px; margin-bottom: 4px;">SYSTEM INGRESS</h2>
+        <h1 style="color: #ffffff; text-transform: uppercase; font-size: 22px; font-weight: 900; margin: 0; letter-spacing: 0.05em;">Verify Identity</h1>
       </div>
-    `
-  };
-  
-  await transporter.sendMail(mailOptions);
-  return true;
+      <p style="color: #9ca3af; font-size: 13px; line-height: 1.6; max-width: 400px; margin: 0 auto 30px auto;">
+        You have requested access to the FirstLook Strategy Backtester. Enter the secure security code below to complete your profile verification.
+      </p>
+      <div style="background-color: #030712; border: 1px solid #312e81; padding: 20px; border-radius: 10px; display: inline-block; margin-bottom: 30px;">
+        <span style="font-family: 'Courier New', Courier, monospace; font-size: 36px; font-weight: bold; letter-spacing: 0.2em; color: #818cf8; padding-left: 0.2em;">${otp}</span>
+      </div>
+      <p style="color: #6b7280; font-size: 11px; margin: 0 0 10px 0;">This code is valid for exactly <strong>5 minutes</strong>. If you did not make this request, please disregard this transmission.</p>
+      <div style="border-top: 1px solid #111827; padding-top: 20px; margin-top: 30px; font-size: 10px; color: #4b5563; font-family: monospace;">
+        SECURE LOG / COCKROACH_CLUSTER // MULTI-REGION SECURITY PASSCODE
+      </div>
+    </div>
+  `;
+  return await sendZohoEmail(email, subject, html);
 }
 
 async function sendWelcomeEmail(email: string, fullName: string): Promise<boolean> {
-  const transporter = getZohoTransporter();
-  if (!transporter) {
-    return false;
-  }
-  
-  const fromEmail = process.env.ZOHO_MAIL_USER;
-  const mailOptions = {
-    from: `"FirstLook Team" <${fromEmail}>`,
-    to: email,
-    subject: "Welcome to FirstLook - Strategy Verified!",
-    html: `
-      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #000000; color: #ffffff; padding: 40px; border-radius: 16px; max-width: 550px; margin: 0 auto; border: 1px solid rgba(99, 102, 241, 0.2); box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.1);">
-        <div style="text-align: center; margin-bottom: 30px;">
-          <h1 style="color: #6366f1; text-transform: uppercase; font-size: 24px; font-weight: 900; margin: 0; letter-spacing: 0.1em;">FIRSTLOOK MATCH</h1>
-          <p style="color: #94a3b8; font-size: 12px; text-transform: uppercase; tracking: 0.15em; margin-top: 5px;">ACCOUNT STABILIZED SUCCESSFULLY</p>
-        </div>
-        
-        <p style="font-size: 14px; color: #e2e8f0; line-height: 1.6; margin-bottom: 20px;">
-          Greetings <strong>${fullName || 'Trader'}</strong>,
-        </p>
-        
-        <p style="font-size: 13px; color: #94a3b8; line-height: 1.6; margin-bottom: 20px;">
-          Your profile is officially initialized. Welcome to the workspace! FirstLook is built to elevate your performance, help you verify strategy depth, keep historical drawing states, and calculate exact risk rewards before risking live market capital.
-        </p>
-        
-        <div style="background-color: rgb(30 27 75 / 0.4); border: 1px solid rgba(99, 102, 241, 0.15); padding: 18px; border-radius: 12px; margin-bottom: 25px;">
-          <h3 style="color: #818cf8; font-size: 13px; margin-top: 0; margin-bottom: 8px; text-transform: uppercase; font-family: monospace;">Workspace Directives</h3>
-          <ul style="color: #cbd5e1; font-size: 12px; margin: 0; padding-left: 20px; line-height: 1.7;">
-            <li>Test and review custom rules before risking capital</li>
-            <li>Maintain historical drawings & confluences</li>
-            <li>Define rules & grade setup performances</li>
-          </ul>
-        </div>
-        
-        <p style="font-size: 13px; color: #94a3b8; line-height: 1.6; margin-bottom: 30px;">
-          Our backtester is free forever. Elevate your setup today, test multiple market pairs, and master execution precision with complete visual control.
-        </p>
-        
-        <div style="text-align: center; padding-top: 20px; border-top: 1px solid rgb(30 41 59); font-size: 11px; color: #64748b; font-family: monospace;">
-          FIRSTLOOK SYSTEMS // SECURE BACKTEST LABS
-        </div>
+  const subject = "Welcome to FirstLook - Strategy Verified!";
+  const html = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #000000; color: #ffffff; padding: 40px; border-radius: 16px; max-width: 550px; margin: 0 auto; border: 1px solid rgba(99, 102, 241, 0.2); box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.1);">
+      <div style="text-align: center; margin-bottom: 30px;">
+        <h1 style="color: #6366f1; text-transform: uppercase; font-size: 24px; font-weight: 900; margin: 0; letter-spacing: 0.1em;">FIRSTLOOK MATCH</h1>
+        <p style="color: #94a3b8; font-size: 12px; text-transform: uppercase; tracking: 0.15em; margin-top: 5px;">ACCOUNT STABILIZED SUCCESSFULLY</p>
       </div>
-    `
-  };
-  
+      
+      <p style="font-size: 14px; color: #e2e8f0; line-height: 1.6; margin-bottom: 20px;">
+        Greetings <strong>${fullName || 'Trader'}</strong>,
+      </p>
+      
+      <p style="font-size: 13px; color: #94a3b8; line-height: 1.6; margin-bottom: 20px;">
+        Your profile is officially initialized. Welcome to the workspace! FirstLook is built to elevate your performance, help you verify strategy depth, keep historical drawing states, and calculate exact risk rewards before risking live market capital.
+      </p>
+      
+      <div style="background-color: rgb(30 27 75 / 0.4); border: 1px solid rgba(99, 102, 241, 0.15); padding: 18px; border-radius: 12px; margin-bottom: 25px;">
+        <h3 style="color: #818cf8; font-size: 13px; margin-top: 0; margin-bottom: 8px; text-transform: uppercase; font-family: monospace;">Workspace Directives</h3>
+        <ul style="color: #cbd5e1; font-size: 12px; margin: 0; padding-left: 20px; line-height: 1.7;">
+          <li>Test and review custom rules before risking capital</li>
+          <li>Maintain historical drawings & confluences</li>
+          <li>Define rules & grade setup performances</li>
+        </ul>
+      </div>
+      
+      <p style="font-size: 13px; color: #94a3b8; line-height: 1.6; margin-bottom: 30px;">
+        Our backtester is free forever. Elevate your setup today, test multiple market pairs, and master execution precision with complete visual control.
+      </p>
+      
+      <div style="text-align: center; padding-top: 20px; border-top: 1px solid rgb(30 41 59); font-size: 11px; color: #64748b; font-family: monospace;">
+        FIRSTLOOK SYSTEMS // SECURE BACKTEST LABS
+      </div>
+    </div>
+  `;
   try {
-    await transporter.sendMail(mailOptions);
-    return true;
+    return await sendZohoEmail(email, subject, html);
   } catch (err) {
     console.warn("[Zoho Mail] Welcome email failed:", err);
     return false;
@@ -148,47 +304,34 @@ async function sendWelcomeEmail(email: string, fullName: string): Promise<boolea
 }
 
 async function sendSubscriptionExpiredEmail(email: string, plan: string): Promise<boolean> {
-  const transporter = getZohoTransporter();
-  if (!transporter) {
-    console.warn("[Zoho SMTP Expiry Notification skipped] Zoho credentials not configured.");
-    return false;
-  }
-  
-  const fromEmail = process.env.ZOHO_MAIL_USER;
-  const mailOptions = {
-    from: `"FirstLook Core" <${fromEmail}>`,
-    to: email,
-    subject: `Your FirstLook ${plan.toUpperCase()} Access Has Expired`,
-    html: `
-      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #0b0f19; color: #f3f4f6; padding: 40px 20px; text-align: center; border-radius: 12px; max-width: 500px; margin: 0 auto; border: 1px solid #1e293b;">
-        <div style="margin-bottom: 24px;">
-          <h2 style="color: #f59e0b; text-transform: uppercase; letter-spacing: 0.15em; font-size: 14px; margin-bottom: 4px;">SYSTEM ALERT</h2>
-          <h1 style="color: #ffffff; text-transform: uppercase; font-size: 22px; font-weight: 900; margin: 0; letter-spacing: 0.05em;">Subscription Expired</h1>
-        </div>
-        <p style="color: #9ca3af; font-size: 13px; line-height: 1.6; max-width: 400px; margin: 0 auto 30px auto;">
-          This notification serves as a record that your <strong>FirstLook ${plan.toUpperCase()}</strong> one-time membership has completed its 30-day active period.
-        </p>
-        <p style="color: #d1d5db; font-size: 13px; font-weight: 500; margin-bottom: 25px;">
-          Your account has been reverted back to the free <strong>BASIC</strong> tier. Locked indicators, multi-symbol watchlist allowances, and trade replays are now restricted.
-        </p>
-        <div style="background-color: #030712; border: 1px solid #d97706; padding: 15px; border-radius: 10px; display: inline-block; margin-bottom: 30px; text-align: left;">
-          <span style="font-family: monospace; font-size: 11px; color: #fbbf24; line-height: 1.5; display: block;">
-            &gt; STATUS: CONVERTED_TO_BASIC<br/>
-            &gt; LIMITS: ENGAGED<br/>
-            &gt; ACTION REQUIRED: UPGRADE WORKSPACE
-          </span>
-        </div>
-        <p style="color: #6b7280; font-size: 11px; margin: 0 0 10px 0;">To regain uninterrupted full suite workspace benefits, navigate to your platform Profile and select a monthly automatic subscription plan.</p>
-        <div style="border-top: 1px solid #111827; padding-top: 20px; margin-top: 30px; font-size: 10px; color: #4b5563; font-family: monospace;">
-          AUTO_EXPIRE_SERVICE // GATEWAY TERMINATION NOTICE
-        </div>
+  const subject = `Your FirstLook ${plan.toUpperCase()} Access Has Expired`;
+  const html = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #0b0f19; color: #f3f4f6; padding: 40px 20px; text-align: center; border-radius: 12px; max-width: 500px; margin: 0 auto; border: 1px solid #1e293b;">
+      <div style="margin-bottom: 24px;">
+        <h2 style="color: #f59e0b; text-transform: uppercase; letter-spacing: 0.15em; font-size: 14px; margin-bottom: 4px;">SYSTEM ALERT</h2>
+        <h1 style="color: #ffffff; text-transform: uppercase; font-size: 22px; font-weight: 900; margin: 0; letter-spacing: 0.05em;">Subscription Expired</h1>
       </div>
-    `
-  };
-  
+      <p style="color: #9ca3af; font-size: 13px; line-height: 1.6; max-width: 400px; margin: 0 auto 30px auto;">
+        This notification serves as a record that your <strong>FirstLook ${plan.toUpperCase()}</strong> one-time membership has completed its 30-day active period.
+      </p>
+      <p style="color: #d1d5db; font-size: 13px; font-weight: 500; margin-bottom: 25px;">
+        Your account has been reverted back to the free <strong>BASIC</strong> tier. Locked indicators, multi-symbol watchlist allowances, and trade replays are now restricted.
+      </p>
+      <div style="background-color: #030712; border: 1px solid #d97706; padding: 15px; border-radius: 10px; display: inline-block; margin-bottom: 30px; text-align: left;">
+        <span style="font-family: monospace; font-size: 11px; color: #fbbf24; line-height: 1.5; display: block;">
+          &gt; STATUS: CONVERTED_TO_BASIC<br/>
+          &gt; LIMITS: ENGAGED<br/>
+          &gt; ACTION REQUIRED: UPGRADE WORKSPACE
+        </span>
+      </div>
+      <p style="color: #6b7280; font-size: 11px; margin: 0 0 10px 0;">To regain uninterrupted full suite workspace benefits, navigate to your platform Profile and select a monthly automatic subscription plan.</p>
+      <div style="border-top: 1px solid #111827; padding-top: 20px; margin-top: 30px; font-size: 10px; color: #4b5563; font-family: monospace;">
+        AUTO_EXPIRE_SERVICE // GATEWAY TERMINATION NOTICE
+      </div>
+    </div>
+  `;
   try {
-    await transporter.sendMail(mailOptions);
-    return true;
+    return await sendZohoEmail(email, subject, html);
   } catch (err) {
     console.warn("[Zoho Mail] Expiration email failed:", err);
     return false;
@@ -476,6 +619,122 @@ async function startServer() {
     }
   });
 
+  app.get("/api/zoho/auth", async (req, res) => {
+    const clientId = process.env.ZOHO_CLIENT_ID;
+    const protocol = req.secure || req.headers["x-forwarded-proto"] === "https" ? "https" : "http";
+    const host = req.get("host");
+    const redirectUri = `${protocol}://${host}/api/zoho/auth/callback`;
+    
+    if (!clientId) {
+      return res.status(500).send("ZOHO_CLIENT_ID environment variable is missing.");
+    }
+
+    const authUrl = `https://accounts.zoho.com/oauth/v2/auth?response_type=code&client_id=${clientId}&scope=ZohoMail.accounts.READ,ZohoMail.messages.CREATE,ZohoMail.messages.SEND&redirect_uri=${encodeURIComponent(redirectUri)}&access_type=offline&prompt=consent`;
+    res.redirect(authUrl);
+  });
+
+  app.get("/api/zoho/auth/callback", async (req, res) => {
+    const code = req.query.code as string;
+    const authServer = (req.query["accounts-server"] as string) || "https://accounts.zoho.com";
+    
+    if (!code) {
+      return res.status(400).send("OAuth Authorization code is missing in Zoho callback query parameters.");
+    }
+
+    const clientId = process.env.ZOHO_CLIENT_ID;
+    const clientSecret = process.env.ZOHO_CLIENT_SECRET;
+    const protocol = req.secure || req.headers["x-forwarded-proto"] === "https" ? "https" : "http";
+    const host = req.get("host");
+    const redirectUri = `${protocol}://${host}/api/zoho/auth/callback`;
+
+    if (!clientId || !clientSecret) {
+      return res.status(500).send("ZOHO_CLIENT_ID or ZOHO_CLIENT_SECRET are not configured in environment variables.");
+    }
+
+    const params = new URLSearchParams();
+    params.append("code", code);
+    params.append("client_id", clientId);
+    params.append("client_secret", clientSecret);
+    params.append("redirect_uri", redirectUri);
+    params.append("grant_type", "authorization_code");
+
+    try {
+      const response = await fetch(`${authServer}/oauth/v2/token`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded"
+        },
+        body: params.toString()
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        return res.status(500).send(`Failed to exchange code: ${response.status} ${errText}`);
+      }
+
+      const data = await response.json() as any;
+      if (!data.access_token || !data.refresh_token) {
+        return res.status(500).send(`Zoho reply did not contain required access_token or refresh_token: ${JSON.stringify(data)}`);
+      }
+
+      const config: ZohoConfig = {
+        accessToken: data.access_token,
+        refreshToken: data.refresh_token,
+        apiDomain: data.api_domain || "https://mail.zoho.com",
+        authServer,
+        expiresAt: Date.now() + (data.expires_in || 3600) * 1000
+      };
+
+      try {
+        const pAcc = await fetchPrimaryZohoAccount(config.accessToken, config.apiDomain);
+        config.accountId = pAcc.accountId;
+        config.emailAddress = pAcc.emailAddress;
+      } catch (err: any) {
+        console.warn("[Zoho OAuth Callback] Could not fetch primary account details during callback:", err);
+      }
+
+      await saveZohoConfig(config);
+
+      res.setHeader("Content-Type", "text/html");
+      return res.send(`
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>Zoho Authorized Successfully</title>
+          <script src="https://cdn.tailwindcss.com"></script>
+        </head>
+        <body class="bg-slate-950 text-slate-100 flex items-center justify-center min-h-screen p-4 font-sans">
+          <div class="max-w-md w-full bg-slate-900 border border-indigo-900/40 p-8 rounded-2xl shadow-xl text-center">
+            <div class="mx-auto w-16 h-16 bg-indigo-950 border border-indigo-500/30 flex items-center justify-center rounded-full mb-6">
+              <svg class="w-8 h-8 text-indigo-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"></path>
+              </svg>
+            </div>
+            <h1 class="text-2xl font-black tracking-tight text-white uppercase mb-2">Security Core Active</h1>
+            <p class="text-indigo-400 text-xs font-mono tracking-wider uppercase mb-6">> ZOHO_MAIL_OAUTH_VERIFIED</p>
+            <p class="text-slate-400 text-sm leading-relaxed mb-6">
+              Your FirstLook Zoho Mail OAuth registration has completed successfully. Access and refresh security credentials have been securely stored in the system configuration registry.
+            </p>
+            <div class="p-4 bg-slate-950 border border-slate-800 rounded-xl mb-6 text-left font-mono text-xs text-indigo-300">
+              <p class="mb-1"><span class="text-slate-500">API DOMAIN:</span> ${config.apiDomain}</p>
+              <p class="mb-1"><span class="text-slate-500">AUTO-FROM:</span> ${config.emailAddress || 'Not Cached Yet'}</p>
+              <p><span class="text-slate-500">REFRESH TOKEN:</span> SECURE & ACTIVE</p>
+            </div>
+            <button onclick="window.close()" class="w-full py-3 bg-indigo-600 hover:bg-indigo-500 transition font-medium rounded-xl text-white outline-none">
+              Dismiss Console
+            </button>
+          </div>
+        </body>
+        </html>
+      `);
+    } catch (err: any) {
+      console.error("[Zoho Auth Callback Error]:", err);
+      return res.status(500).send(`Inner processing failure: ${err.message}`);
+    }
+  });
+
   app.post("/api/auth/signup", async (req, res) => {
     try {
       const { email, password, username, fullName, country, bio, experienceLevel, avatarUrl } = req.body;
@@ -490,42 +749,32 @@ async function startServer() {
       }
 
       const passwordHash = await bcrypt.hash(password, 10);
-      const user = await db.createUser(
-        cleanEmail, 
-        passwordHash, 
-        username, 
-        fullName, 
-        country, 
-        bio, 
-        experienceLevel, 
-        avatarUrl
-      );
+      const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
-      // Sign JWT
-      const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
+      pendingOtps.set(cleanEmail, {
+        otp,
+        expiresAt: Date.now() + 5 * 60 * 1000,
+        signupData: {
+          passwordHash,
+          username,
+          fullName,
+          country,
+          bio,
+          experienceLevel,
+          avatarUrl
+        }
+      });
+
+      await sendOtpEmail(cleanEmail, otp);
 
       res.status(200).json({
-        data: {
-          session: {
-            access_token: token,
-            token_type: "bearer",
-            user: { 
-              id: user.id, 
-              email: user.email,
-              username: user.username,
-              full_name: user.full_name,
-              country: user.country,
-              bio: user.bio,
-              experience_level: user.experience_level,
-              avatar_url: user.avatar_url
-            }
-          }
-        },
-        error: null
+        requiresOtp: true,
+        success: true,
+        message: "Code sent to email. Please verify to complete your signup."
       });
     } catch (err: any) {
-      console.error("[Auth API] Signup failed:", err);
-      res.status(500).json({ error: { message: err.message || "Failed to sign up" } });
+      console.error("[Auth API] Signup initiation failed:", err);
+      res.status(500).json({ error: { message: err.message || "Failed to initialize signup" } });
     }
   });
 
@@ -542,27 +791,32 @@ async function startServer() {
         return res.status(400).json({ error: { message: "Email is already registered" } });
       }
 
-      // Hash passcode and create user profile directly
       const passwordHash = await bcrypt.hash(password, 10);
-      const user = await db.createUser(
-        cleanEmail, 
-        passwordHash, 
-        username, 
-        fullName, 
-        country, 
-        bio, 
-        experienceLevel, 
-        avatarUrl
-      );
+      const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
-      // Return instant success response (requiresOtp is false, does not log user in automatically)
+      pendingOtps.set(cleanEmail, {
+        otp,
+        expiresAt: Date.now() + 5 * 60 * 1000,
+        signupData: {
+          passwordHash,
+          username,
+          fullName,
+          country,
+          bio,
+          experienceLevel,
+          avatarUrl
+        }
+      });
+
+      await sendOtpEmail(cleanEmail, otp);
+
       return res.status(200).json({
-        requiresOtp: false,
+        requiresOtp: true,
         success: true,
-        message: "Your profile has been synchronized successfully. Please proceed to system entry log."
+        message: "A verification code has been dispatched to your email. Please enter it to complete registration."
       });
     } catch (err: any) {
-      console.error("[Auth API] register-request direct registration failed:", err);
+      console.error("[Auth API] register-request OTP dispatch failed:", err);
       res.status(500).json({ error: { message: err.message || "Failed to initialize registration" } });
     }
   });
@@ -590,9 +844,8 @@ async function startServer() {
         return res.status(400).json({ error: { message: "Incorrect security code. Please try again." } });
       }
 
-      // Successful OTP! Perform register creation
-      const { password, username, fullName, country, bio, experienceLevel, avatarUrl } = record.signupData;
-      const passwordHash = await bcrypt.hash(password, 10);
+      // Successful OTP! Perform database record registration
+      const { passwordHash, username, fullName, country, bio, experienceLevel, avatarUrl } = record.signupData;
       const user = await db.createUser(
         cleanEmail, 
         passwordHash, 
@@ -604,12 +857,10 @@ async function startServer() {
         avatarUrl
       );
 
-      // Async welcome email send triggers
-      sendWelcomeEmail(cleanEmail, fullName).catch(e => {
-        console.warn("[Zoho SMTP] Welcoming dispatch error ignored client-side:", e);
+      sendWelcomeEmail(cleanEmail, fullName || username || "").catch(e => {
+        console.warn("[Zoho API] Welcoming dispatch error ignored client-side:", e);
       });
 
-      // Clear pending signup cache
       pendingOtps.delete(cleanEmail);
 
       const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
@@ -636,6 +887,98 @@ async function startServer() {
     } catch (err: any) {
       console.error("[Auth API] verify-otp failed:", err);
       res.status(500).json({ error: { message: err.message || "Failed to verify security code" } });
+    }
+  });
+
+  app.post("/api/auth/forgot-password-request", async (req, res) => {
+    try {
+      const { email } = req.body;
+      if (!email) {
+        return res.status(400).json({ error: { message: "Email address is required." } });
+      }
+
+      const cleanEmail = email.toLowerCase().trim();
+      const user = await db.getUserByEmail(cleanEmail);
+      if (!user) {
+        return res.status(404).json({ error: { message: "No registered profile matches this email address." } });
+      }
+
+      const otp = Math.floor(100000 + Math.random() * 900000).toString();
+      pendingForgotOtps.set(cleanEmail, {
+        otp,
+        expiresAt: Date.now() + 5 * 60 * 1000 // 5 minutes
+      });
+
+      const messageContent = `
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #0b0f19; color: #f3f4f6; padding: 40px 20px; text-align: center; border-radius: 12px; max-width: 500px; margin: 0 auto; border: 1px solid #1e293b;">
+          <div style="margin-bottom: 24px;">
+            <h2 style="color: #6366f1; text-transform: uppercase; letter-spacing: 0.15em; font-size: 14px; margin-bottom: 4px;">SECURITY COMPONENT</h2>
+            <h1 style="color: #ffffff; text-transform: uppercase; font-size: 22px; font-weight: 900; margin: 0; letter-spacing: 0.05em;">Reset Credentials</h1>
+          </div>
+          <p style="color: #9ca3af; font-size: 13px; line-height: 1.6; max-width: 400px; margin: 0 auto 30px auto;">
+            You requested a passkey reset for your FirstLook Backtester account. Input the secure transaction code below to grant modification authority.
+          </p>
+          <div style="background-color: #030712; border: 1px solid #312e81; padding: 20px; border-radius: 10px; display: inline-block; margin-bottom: 30px;">
+            <span style="font-family: 'Courier New', Courier, monospace; font-size: 36px; font-weight: bold; letter-spacing: 0.2em; color: #f43f5e; padding-left: 0.2em;">${otp}</span>
+          </div>
+          <p style="color: #6b7280; font-size: 11px; margin: 0 0 10px 0;">This code is valid for exactly <strong>5 minutes</strong>.</p>
+          <div style="border-top: 1px solid #111827; padding-top: 20px; margin-top: 30px; font-size: 10px; color: #4b5563; font-family: monospace;">
+            SECURE LOG / COCKROACHDB_SECURITY // PASSWORD_RESET_OTP
+          </div>
+        </div>
+      `;
+
+      await sendZohoEmail(cleanEmail, "FirstLook Secure - Password Reset Code", messageContent);
+
+      return res.status(200).json({
+        success: true,
+        message: "Temporary access reset code has been successfully dispatched."
+      });
+    } catch (err: any) {
+      console.error("[Auth API] Forgot password request failed:", err);
+      res.status(500).json({ error: { message: err.message || "Failed to dispatch reset passcode" } });
+    }
+  });
+
+  app.post("/api/auth/verify-reset-password", async (req, res) => {
+    try {
+      const { email, otp, newPassword } = req.body;
+      if (!email || !otp || !newPassword) {
+        return res.status(400).json({ error: { message: "Email, code, and new password are required parameters." } });
+      }
+
+      const cleanEmail = email.toLowerCase().trim();
+      const record = pendingForgotOtps.get(cleanEmail);
+
+      if (!record) {
+        return res.status(400).json({ error: { message: "Password reset request session not found or expired." } });
+      }
+
+      if (Date.now() > record.expiresAt) {
+        pendingForgotOtps.delete(cleanEmail);
+        return res.status(400).json({ error: { message: "Reset token has expired. Please request a new code." } });
+      }
+
+      if (record.otp !== otp.trim()) {
+        return res.status(400).json({ error: { message: "Incorrect security credentials. Correct code required." } });
+      }
+
+      const passwordHash = await bcrypt.hash(newPassword, 10);
+      const ok = await db.updateUserPassword(cleanEmail, passwordHash);
+
+      if (!ok) {
+        return res.status(404).json({ error: { message: "Unable to update profile password. Account matching failed." } });
+      }
+
+      pendingForgotOtps.delete(cleanEmail);
+
+      return res.status(200).json({
+        success: true,
+        message: "Your profile passcode has been successfully modified. Please proceed to system clearance login."
+      });
+    } catch (err: any) {
+      console.error("[Auth API] verify-reset-password failed:", err);
+      res.status(500).json({ error: { message: err.message || "Failed to update profile passcode" } });
     }
   });
 
@@ -2372,19 +2715,39 @@ async function startServer() {
     }
   });
 
-  app.get("/api/system/banner", (req, res) => {
-    return res.json({
-      "status": "success",
-      "banner": {
-        "enabled": true,
-        "type": "warning",
-        "title": "FirstLook Update In Progress",
-        "message": "We're currently deploying improvements to the Invite API. Some features may experience temporary delays.",
-        "start_time": "2026-06-10T09:00:00Z",
-        "end_time": "2026-06-10T18:00:00Z",
-        "dismissible": true
+  app.get("/api/system/banner", async (req, res) => {
+    try {
+      let baseUrl = (process.env.FOREX_API_URL || "").trim();
+      if (!baseUrl) {
+        console.warn("[Server] FOREX_API_URL is empty, returning empty banner.");
+        return res.json({ status: "success", banner: null });
       }
-    });
+      if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
+        baseUrl = `https://${baseUrl}`;
+      }
+      if (baseUrl.endsWith("/")) {
+        baseUrl = baseUrl.slice(0, -1);
+      }
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 4000); // 4s timeout
+
+      const response = await fetch(`${baseUrl}/api/system/banner`, {
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data && data.status === "success" && data.banner) {
+          return res.json(data);
+        }
+      }
+      return res.json({ status: "success", banner: null });
+    } catch (error) {
+      console.error("[Server] Error proxying system banner:", error);
+      return res.json({ status: "success", banner: null });
+    }
   });
 
   app.get("/api/sources", async (req, res) => {
@@ -2451,15 +2814,15 @@ async function startServer() {
         return res.status(400).json({ error: "Missing symbol or interval" });
       }
 
-      let baseUrls = [`https://api.binance.com` ];
+      let baseUrls = [`https://api-gcp.binance.com`, `https://api.binance.com` ];
       let endpoint = `/api/v3/klines`;
 
       // Handle different Binance market types
       if (marketType === 'usdt-futures') {
-        baseUrls = [`https://fapi.binance.com`];
+        baseUrls = [`https://fapi.binance.com` ];
         endpoint = `/fapi/v1/klines`;
       } else if (marketType === 'coin-futures') {
-        baseUrls = [`https://dapi.binance.com`];
+        baseUrls = [`https://dapi.binance.com` ];
         endpoint = `/dapi/v1/klines`;
       }
 
@@ -2499,7 +2862,10 @@ async function startServer() {
         try {
           const response = await fetch(url, {
             signal: controller.signal,
-            headers: { 'Accept': 'application/json' }
+            headers: { 
+              'Accept': 'application/json',
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            }
           });
 
           if (response.ok) {

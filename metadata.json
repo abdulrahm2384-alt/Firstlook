@@ -1,6 +1,6 @@
 {
-  "name": "FirstlookLabs",
-  "description": "A lightweight strategy backtesting platform built for traders to test trading strategies on historical market data.",
+  "name": "Remix: Remix: Check-In",
+  "description": "Quickly verify the safety and presence of loved ones with simple status notifications and real-time check-ins.",
   "requestFramePermissions": [],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"

@@ -119,6 +119,15 @@ export async function initializeDatabase() {
     const client = await pool.connect();
     console.log('[DB] Connected to CockroachDB. Running schema initialisation...');
     try {
+    // 0. System Config table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS system_config (
+        key VARCHAR PRIMARY KEY,
+        value TEXT,
+        updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
     // 1. Users table
     await client.query(`
       CREATE TABLE IF NOT EXISTS users (
@@ -447,6 +456,44 @@ export async function initializeDatabase() {
 export const db = {
   isCockroach() {
     return isDbActive;
+  },
+
+  async getSystemConfig(key: string): Promise<string | null> {
+    if (!isDbActive) {
+      if (memPreferences.has(`sys_${key}`)) {
+        return memPreferences.get(`sys_${key}`);
+      }
+      return null;
+    }
+    const res = await pool.query('SELECT value FROM system_config WHERE key = $1', [key]);
+    return res.rows[0]?.value || null;
+  },
+
+  async setSystemConfig(key: string, value: string): Promise<void> {
+    if (!isDbActive) {
+      memPreferences.set(`sys_${key}`, value);
+      return;
+    }
+    await pool.query(
+      `INSERT INTO system_config (key, value, updated_at)
+       VALUES ($1, $2, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW();`,
+      [key, value]
+    );
+  },
+
+  async updateUserPassword(email: string, passwordHash: string): Promise<boolean> {
+    const cleanEmail = email.toLowerCase().trim();
+    if (!isDbActive) {
+      const user = memUsers.find(u => u.email === cleanEmail);
+      if (user) {
+        user.password_hash = passwordHash;
+        return true;
+      }
+      return false;
+    }
+    const res = await pool.query('UPDATE users SET password_hash = $1 WHERE email = $2', [passwordHash, cleanEmail]);
+    return res.rowCount !== null && res.rowCount > 0;
   },
 
   // --- AUTH SERVICES ---

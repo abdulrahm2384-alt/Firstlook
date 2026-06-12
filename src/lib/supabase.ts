@@ -149,6 +149,30 @@ export const supabase = {
       }
     },
 
+    async verifyOtp({ email, otp }: { email: string; otp: string }) {
+      try {
+        const response = await fetch('/api/auth/verify-otp', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, otp })
+        });
+        const res = await response.json();
+        if (!response.ok || res.error) {
+          throw new Error(res.error?.message || 'Verification of security code failed.');
+        }
+
+        const session = res.data.session;
+        localStorage.setItem('firstlook_session_token', session.access_token);
+        localStorage.setItem('firstlook_session_user', JSON.stringify(session.user));
+        setSessionCookie(session.access_token);
+
+        listeners.forEach(cb => cb('SIGNED_IN', session));
+        return { data: { user: session?.user || null, session }, error: null };
+      } catch (err: any) {
+        return { data: { user: null, session: null }, error: err };
+      }
+    },
+
     async signOut() {
       try {
         await fetch('/api/auth/signout', { method: 'POST' });

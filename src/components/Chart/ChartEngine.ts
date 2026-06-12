@@ -2186,8 +2186,19 @@ export class ChartEngine {
       }
 
       const rangeBuffer = (maxPriceVisible - minPriceVisible) * 0.1;
-      this.cachedMinP = minPriceVisible - rangeBuffer;
-      this.cachedMaxP = maxPriceVisible + rangeBuffer;
+      const targetMin = minPriceVisible - rangeBuffer;
+      const targetMax = maxPriceVisible + rangeBuffer;
+
+      if (this.cachedMinP === undefined || this.cachedMinP === 0 || this.cachedMaxP === undefined || this.cachedMaxP === 0 || this.forcePriceRangeUpdate) {
+        this.cachedMinP = targetMin;
+        this.cachedMaxP = targetMax;
+      } else {
+        // Exponential smoothing damping (LERP) provides a highly fluid, premium, organic vertical auto-scale transition!
+        const damping = 0.25; 
+        this.cachedMinP += (targetMin - this.cachedMinP) * damping;
+        this.cachedMaxP += (targetMax - this.cachedMaxP) * damping;
+      }
+
       if (this.data.length > 0) {
         this.forcePriceRangeUpdate = false;
       }
@@ -5544,18 +5555,62 @@ export class ChartEngine {
         return isNaN(y) ? 0 : y;
     };
 
+    // Calculate actual visible top and bottom prices to scale grid/labels perfectly
+    const safePriceScale = isFinite(priceScale) && priceScale > 0 ? priceScale : 1;
+    const topPrice = (height * 0.9 + this.offsetY - 0) / safePriceScale + minP;
+    const bottomPrice = (height * 0.9 + this.offsetY - (height - 30)) / safePriceScale + minP;
+
+    // Use actual visible price range for dynamic grid lines - exactly matches TradingView's viewport approach!
+    const visiblePriceRange = Math.abs(topPrice - bottomPrice);
+    const safeVisiblePriceRange = isFinite(visiblePriceRange) && visiblePriceRange > 0 
+        ? visiblePriceRange 
+        : (isFinite(priceRange) && priceRange > 0 ? priceRange : 1);
+
     // Calculate price scale parameters once for both grid and sidebar
     const targetLabelCount = Math.max(2, Math.floor(height / 60));
-    const rawStep = priceRange / targetLabelCount;
-    const mag = Math.pow(10, Math.floor(Math.log10(rawStep)));
-    const magResChars = rawStep / mag;
+    const rawStep = safeVisiblePriceRange / targetLabelCount;
+    const log10RawStep = Math.log10(rawStep);
     
     let priceStep: number;
-    if (magResChars < 1.0) priceStep = 1 * mag;
-    else if (magResChars < 2.0) priceStep = 2 * mag;
-    else if (magResChars < 4.0) priceStep = 4 * mag;
-    else if (magResChars < 7.0) priceStep = 5 * mag;
-    else priceStep = 10 * mag;
+    if (isFinite(log10RawStep)) {
+        const mag = Math.pow(10, Math.floor(log10RawStep));
+        const magResChars = rawStep / mag;
+        
+        if (magResChars < 1.0) priceStep = 1 * mag;
+        else if (magResChars < 2.0) priceStep = 2 * mag;
+        else if (magResChars < 4.0) priceStep = 4 * mag;
+        else if (magResChars < 7.0) priceStep = 5 * mag;
+        else priceStep = 10 * mag;
+    } else {
+        priceStep = safeVisiblePriceRange / targetLabelCount;
+    }
+
+    // Ultimate safeguard against infinite loop or tiny fractional steps
+    if (!isFinite(priceStep) || priceStep <= 0) {
+        priceStep = safeVisiblePriceRange / 10;
+        if (!isFinite(priceStep) || priceStep <= 0) {
+            priceStep = 1;
+        }
+    }
+
+    // Apply TradingView vertical pixel-density optimization to prevent too many dense grid lines
+    const minPixelSpacing = 55; // Keep grid lines spaced beautifully apart by at least 55 pixels
+    let pixelStep = priceStep * safePriceScale;
+    if (pixelStep < minPixelSpacing) {
+        const scaleNeeded = minPixelSpacing / (pixelStep || 1);
+        if (scaleNeeded > 1) {
+            const logNeeded = Math.log10(scaleNeeded);
+            const magNeeded = Math.pow(10, Math.floor(logNeeded));
+            const ratio = scaleNeeded / magNeeded;
+            
+            let multiplier = 1;
+            if (ratio < 2.0) multiplier = 2;
+            else if (ratio < 5.0) multiplier = 5;
+            else multiplier = 10;
+            
+            priceStep = priceStep * multiplier * magNeeded;
+        }
+    }
 
     const formatPrice = (p: number) => {
         if (p === 0) return "0.00000";
@@ -5581,9 +5636,6 @@ export class ChartEngine {
     const interval = this.data.length > 1 ? this.data[1].time - this.data[0].time : 3600;
     const isIntraday = interval < 86400;
     const lastIdx = this.data.length - 1;
-
-    const topPrice = (height * 0.9 + this.offsetY - 0) / priceScale + minP;
-    const bottomPrice = (height * 0.9 + this.offsetY - (height - 30)) / priceScale + minP;
 
     // --- Dynamic Adaptive Time Labeling System (TradingView Style) ---
     const tz = this.theme.timezone || 'UTC';
@@ -5786,7 +5838,10 @@ export class ChartEngine {
       const startP = Math.floor(Math.min(topPrice, bottomPrice) / priceStep) * priceStep;
       const endP = Math.ceil(Math.max(topPrice, bottomPrice) / priceStep) * priceStep;
       
+      let gridCount = 0;
       for (let p = startP; p <= endP + priceStep; p += priceStep) {
+          gridCount++;
+          if (gridCount > 100) break; // Hard safeguard against too many lines
           const y = getY(p);
           if (y < 0 || y > height) continue;
           ctx.beginPath();
@@ -5905,7 +5960,10 @@ export class ChartEngine {
     // 1. Collect standard axis labels
     const startP = Math.floor(Math.min(topPrice, bottomPrice) / priceStep) * priceStep;
     const endP = Math.ceil(Math.max(topPrice, bottomPrice) / priceStep) * priceStep;
+    let labelCount = 0;
     for (let p = startP; p <= endP; p += priceStep) {
+        labelCount++;
+        if (labelCount > 100) break; // Hard safeguard against too many lines
         const y = getY(p);
         if (y < 0 || y > height - 30) continue; 
         sidebarLabels.push({

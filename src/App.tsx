@@ -29,7 +29,6 @@ import {
   Play,
   Pause,
   Eye,
-  SkipForward,
   ChevronDown,
   ChevronUp,
   LogOut,
@@ -437,54 +436,6 @@ const FloatingPlaybackControls = memo(({
           className={`${isMobile ? 'w-7 h-7' : 'w-9 h-9 md:w-[5.5vh] md:h-[5.5vh]'} flex items-center justify-center rounded-xl transition-all ${(isReplayMode ? replayIsPlaying : simIsPlaying) ? 'bg-indigo-50 text-indigo-600' : 'bg-slate-900 text-white shadow-lg'}`}
         >
           {(isReplayMode ? replayIsPlaying : simIsPlaying) ? <Pause size={isMobileLandscape ? '3vh' : isMobile ? 10 : 18} fill="currentColor" /> : <Play size={isMobileLandscape ? '3vh' : isMobile ? 10 : 18} fill="currentColor" />}
-        </button>
-        <button 
-          onClick={() => {
-            if (isReplayMode) {
-              setReplayCurrentTime((prev: number) => {
-                const current = prev || (replayTrade ? replayTrade.entryTime : 0);
-                const currentData = historicalDataRef.current;
-                const nextCandle = currentData.find(c => c.time > current);
-                return nextCandle ? nextCandle.time : current + getStepSeconds();
-              });
-            } else {
-              const sessionKey = currentSessionKey || '';
-              const session = sessionKey ? (backtestSessions[sessionKey] || (selectedSymbol ? backtestSessions[activePrefix ? `${selectedSymbol}_${activePrefix}` : selectedSymbol] : null)) : null;
-              
-              if (!session) {
-                addNotification('No backtest session found for active pair', 'error');
-                return;
-              }
-
-              const currentData = historicalDataRef.current;
-              const activeItem = (watchlist || []).find((i: any) => i.id === sessionKey) ||
-                                 (watchlist || []).find((i: any) => i.symbol === selectedSymbol && (i.prefix || null) === (activePrefix || null));
-              const start_time = activeItem?.start_time || (currentData[0]?.time);
-              const last_play_candle_time = activeItem?.last_play_candle_time || start_time;
-
-              // Retreive the reference base time keeping the active playlist item aligned
-              const current = last_play_candle_time || sessionCurrentTimesRef.current?.[sessionKey] || session.currentTime || session.startTime;
-              const nextCandle = currentData.find(c => c.time > current);
-              const next = nextCandle ? nextCandle.time : current + getStepSeconds();
-              
-              const end_time = activeItem?.end_time || (currentData[currentData.length - 1]?.time);
-
-              if (last_play_candle_time && end_time && last_play_candle_time >= end_time) {
-                addNotification('Cannot move beyond end time', 'warning');
-                return;
-              }
-
-              // Update the state synchronously (parent useEffect will sync simCurrentTimeRef automatically)
-              if (sessionCurrentTimesRef.current && sessionKey) {
-                sessionCurrentTimesRef.current[sessionKey] = next;
-              }
-              setSimCurrentTime(next);
-            }
-          }}
-          className={`${isMobile ? 'w-7 h-7' : 'w-9 h-9 md:w-[5.5vh] md:h-[5.5vh]'} flex items-center justify-center text-slate-400 hover:text-slate-900 hover:bg-slate-50 rounded-xl transition-all`}
-          title="Step Forward"
-        >
-          <SkipForward size={isMobileLandscape ? '3vh' : isMobile ? 10 : 18} />
         </button>
       </div>
 
@@ -1838,8 +1789,11 @@ export default function App() {
           setBacktestSessions(prev => {
             if (prev[currentSessionKey]) {
               return {
-                ...prev[currentSessionKey],
-                timeSyncLastTimestamp: Date.now()
+                ...prev,
+                [currentSessionKey]: {
+                  ...prev[currentSessionKey],
+                  timeSyncLastTimestamp: Date.now()
+                }
               };
             }
             return prev;
@@ -1868,6 +1822,8 @@ export default function App() {
   useEffect(() => {
     historicalDataRef.current = historicalData;
   }, [historicalData]);
+
+  const hasNoMoreFutureDataRef = useRef(false);
 
   const selectedSymbolRef = useRef<string | null>(null);
   useEffect(() => {
@@ -2077,8 +2033,10 @@ export default function App() {
     if (!isReplayMode && (simCurrentTime === null || simCurrentTime === 0)) return;
     if (isReplayMode && (replayCurrentTime === null || replayCurrentTime === 0)) return;
 
-    const start_time = historicalData[0]?.time;
-    const end_time = historicalData[historicalData.length - 1]?.time;
+    const sessionKey = activeItem.id || (activeItem.prefix ? `${activeItem.symbol}_${activeItem.prefix}` : activeItem.symbol);
+    const linkedSession = backtestSessions[sessionKey];
+    const start_time = activeItem.start_time || linkedSession?.startTime || historicalData[0]?.time;
+    const end_time = activeItem.end_time || linkedSession?.endTime || historicalData[historicalData.length - 1]?.time;
 
     const currentPlayoutTime = isReplayMode ? (replayCurrentTime || 0) : (simCurrentTime || 0);
     // Find the last candle played or rendered
@@ -2208,24 +2166,45 @@ export default function App() {
       const activeItem = watchlistRef.current.find(i => i.id === activeWatchlistItemId) ||
                          watchlistRef.current.find(i => i.symbol === selectedSymbolRef.current && (i.prefix || null) === (activePrefixRef.current || null));
       const start_time = activeItem?.start_time || (historicalDataRef.current[0]?.time);
-      const end_time = activeItem?.end_time || (historicalDataRef.current[historicalDataRef.current.length - 1]?.time);
+      
+      const sessionKey = simTimeSessionKeyRef.current || currentSessionKey || activeItem?.id || '';
+      const session = sessionKey ? backtestSessionsRef.current[sessionKey] : null;
+      const trueEndTime = activeItem?.end_time || session?.endTime;
+      
       const last_play_candle_time = activeItem?.last_play_candle_time || start_time;
 
-      if (last_play_candle_time && end_time && last_play_candle_time >= end_time) {
+      if (trueEndTime && last_play_candle_time && last_play_candle_time >= trueEndTime) {
         addNotification('Cannot move beyond end time', 'warning');
         return;
       }
 
-      // Ensure active playback always resumes exactly from the last_play_candle_time of the active watchlist item
-      const currentBaseTime = last_play_candle_time || start_time;
+      // Ensure active playback always resumes strictly from last_play_candle_time of the active watchlist item if it's set,
+      // and only falls back to existingTime if last_play_candle_time is missing. This strictly guarantees no forward jumping.
+      const existingTime = isReplayMode 
+        ? replayCurrentTimeRef.current 
+        : (simCurrentTimeRef.current || (sessionKey ? backtestSessionsRef.current[sessionKey]?.currentTime : null));
+      const currentBaseTime = (last_play_candle_time && last_play_candle_time >= start_time)
+        ? last_play_candle_time
+        : ((existingTime && existingTime >= start_time) ? existingTime : start_time);
 
       if (isReplayMode) {
         let playheadTime = currentBaseTime;
+        const currentData = historicalDataRef.current;
+        if (currentData.length > 0) {
+          const firstCandleTime = currentData[0].time;
+          if (playheadTime < firstCandleTime) {
+            playheadTime = firstCandleTime;
+          } else {
+            const snapCandle = [...currentData].reverse().find(c => c.time <= playheadTime);
+            if (snapCandle) {
+              playheadTime = snapCandle.time;
+            }
+          }
+        }
         if (nonPlayingTickIndex > 0 && replayTrade) {
           const timeframeSeconds = TIMEFRAMES.find(tf => tf.id.toLowerCase() === replayTrade.timeframe.toLowerCase() || tf.label.toLowerCase() === replayTrade.timeframe.toLowerCase())?.seconds || 60;
           const totalTicks = Math.max(1, Math.floor(timeframeSeconds / 2));
-          const currentData = historicalDataRef.current;
-          const curCandle = [...currentData].reverse().find(c => c.time <= currentBaseTime);
+          const curCandle = [...currentData].reverse().find(c => c.time <= playheadTime);
           if (curCandle) {
             const elapsedSeconds = (nonPlayingTickIndex / totalTicks) * timeframeSeconds;
             playheadTime = curCandle.time + elapsedSeconds;
@@ -2236,11 +2215,22 @@ export default function App() {
       } else if (isSimulating || currentSessionKey) {
         const sessionKey = simTimeSessionKeyRef.current || currentSessionKey || activeItem?.id || '';
         let playheadTime = currentBaseTime;
+        const currentData = historicalDataRef.current;
+        if (currentData.length > 0) {
+          const firstCandleTime = currentData[0].time;
+          if (playheadTime < firstCandleTime) {
+            playheadTime = firstCandleTime;
+          } else {
+            const snapCandle = [...currentData].reverse().find(c => c.time <= playheadTime);
+            if (snapCandle) {
+              playheadTime = snapCandle.time;
+            }
+          }
+        }
         if (nonPlayingTickIndex > 0) {
           const timeframeSeconds = selectedTimeframeRef.current?.seconds || 60;
           const totalTicks = Math.max(1, Math.floor(timeframeSeconds / 2));
-          const currentData = historicalDataRef.current;
-          const curCandle = [...currentData].reverse().find(c => c.time <= currentBaseTime);
+          const curCandle = [...currentData].reverse().find(c => c.time <= playheadTime);
           if (curCandle) {
             const elapsedSeconds = (nonPlayingTickIndex / totalTicks) * timeframeSeconds;
             playheadTime = curCandle.time + elapsedSeconds;
@@ -2269,7 +2259,11 @@ export default function App() {
     setReplayIsPlaying,
     setSimIsPlaying,
     setReplayCurrentTime,
-    setSimCurrentTime
+    setSimCurrentTime,
+    activeWatchlistItemId,
+    currentSessionKey,
+    watchlist,
+    selectedSymbol
   ]);
 
   // Passive, background real-time ticker running when playback is idle/paused
@@ -3446,7 +3440,18 @@ export default function App() {
     prefix = finalPrefix;
     const isNew = !backtestSessions[sessionKey];
 
-    const startDateObj = new Date(startDate);
+    const parseLocalDate = (dateStr: string) => {
+      const parts = dateStr.split('-');
+      if (parts.length === 3) {
+        const year = parseInt(parts[0], 10);
+        const month = parseInt(parts[1], 10) - 1;
+        const day = parseInt(parts[2], 10);
+        return new Date(year, month, day);
+      }
+      return new Date(dateStr);
+    };
+
+    const startDateObj = parseLocalDate(startDate);
     const minSelectableDate = getMinSelectableStartDate(symbol, finalSource);
 
     if (startDateObj < minSelectableDate) {
@@ -3455,7 +3460,11 @@ export default function App() {
     }
 
     const startTimeInSeconds = Math.floor(startDateObj.getTime() / 1000);
-    const endTimeInSeconds = endDate ? Math.floor(new Date(endDate).getTime() / 1000) : undefined;
+    const endDateObj = endDate ? parseLocalDate(endDate) : undefined;
+    if (endDateObj) {
+      endDateObj.setHours(23, 59, 59, 999);
+    }
+    const endTimeInSeconds = endDateObj ? Math.floor(endDateObj.getTime() / 1000) : undefined;
     const createdAt = Date.now();
     const watchlistId = `wl_${Math.random().toString(36).substr(2, 9)}_${Date.now()}`;
     
@@ -3503,7 +3512,10 @@ export default function App() {
       nextWatchlist[existingIndex] = {
         ...nextWatchlist[existingIndex],
         description,
-        setupImage
+        setupImage,
+        start_time: startTimeInSeconds,
+        end_time: endTimeInSeconds,
+        last_play_candle_time: startTimeInSeconds
       };
       addNotification(`Updated ${symbol} (${prefix}) details`, 'success');
     } else {
@@ -3520,7 +3532,10 @@ export default function App() {
         setupImage,
         dataSource: source || showBacktestSetup?.source || asset.source,
         marketType: finalMarketType,
-        createdAt: Date.now()
+        createdAt: Date.now(),
+        start_time: startTimeInSeconds,
+        end_time: endTimeInSeconds,
+        last_play_candle_time: startTimeInSeconds
       };
       nextWatchlist = [...watchlist, newItem];
       addNotification(`Launched ${symbol} (${prefix}) session`, 'success');
@@ -4072,6 +4087,7 @@ export default function App() {
     if (!symbol) return;
     lastRequestedSymbolRef.current = symbol;
     lastRequestedTimeframeRef.current = timeframeId;
+    hasNoMoreFutureDataRef.current = false;
 
     // Use explicit source/marketType if provided, otherwise find in watchlist
     let activeItem = watchlist.find(i => i.id === activeWatchlistItemId);
@@ -4107,63 +4123,95 @@ export default function App() {
 
       if (isReplayMode) {
         // Replay Mode priority hierarchy (Sync Cache layer):
-        // 1. Current active replay ref (if switching within same symbol/trade)
-        if (replayCurrentTimeRef.current !== null && loadedSymbolRef.current === symbol && lastLoadedSessionKeyRef.current === currentSessionKey && (!replayTrade || lastLoadedReplayTradeIdRef.current === replayTrade.id)) {
+        // 1. Strict last_play_candle_time limit to prevent future jumps
+        if (activeItem?.last_play_candle_time) {
+          replayToSet = activeItem.last_play_candle_time;
+        }
+        // 2. Current active replay ref (if switching within same symbol/trade)
+        else if (replayCurrentTimeRef.current !== null && loadedSymbolRef.current === symbol && lastLoadedSessionKeyRef.current === currentSessionKey && (!replayTrade || lastLoadedReplayTradeIdRef.current === replayTrade.id)) {
           replayToSet = replayCurrentTimeRef.current;
         }
-        // 2. Database symbol-level playhead (shared across all devices & timeframes)
+        // 3. Database symbol-level playhead (shared across all devices & timeframes)
         else if (viewStateKey && symbolViewStates[viewStateKey]?.replayCurrentTime) {
           replayToSet = symbolViewStates[viewStateKey].replayCurrentTime;
         }
-        // 3. Database timeframe-specific playhead
+        // 4. Database timeframe-specific playhead
         else if (viewStateKey && symbolViewStates[viewStateKey]?.timeframeStates?.[timeframeId]?.replayCurrentTime) {
           replayToSet = symbolViewStates[viewStateKey].timeframeStates[timeframeId].replayCurrentTime;
         }
-        // 4. Cached state timeframe playhead
+        // 5. Cached state timeframe playhead
         else if (syncCachedState && syncCachedState.replayCurrentTime !== null) {
           replayToSet = syncCachedState.replayCurrentTime;
         }
-        // 5. Explicit initialEndTime passed
+        // 6. Explicit initialEndTime passed
         else {
           replayToSet = initialEndTime || null;
         }
 
         const finalPlayToSet = replayToSet !== null ? replayToSet : (initialEndTime || 0);
-        replayCurrentTimeRef.current = finalPlayToSet;
-        setReplayCurrentTime(finalPlayToSet);
+        let snappedPlayToSet = finalPlayToSet;
+        if (syncCachedState.candles && syncCachedState.candles.length > 0) {
+          const firstCandleTime = syncCachedState.candles[0].time;
+          if (snappedPlayToSet < firstCandleTime) {
+            snappedPlayToSet = firstCandleTime;
+          } else {
+            const snapCandle = [...syncCachedState.candles].reverse().find(c => c.time <= snappedPlayToSet);
+            if (snapCandle) {
+              snappedPlayToSet = snapCandle.time;
+            }
+          }
+        }
+        replayCurrentTimeRef.current = snappedPlayToSet;
+        setReplayCurrentTime(snappedPlayToSet);
       } else {
         // Simulation Playhead priority hierarchy (Sync Cache layer):
-        // 1. Current active simulation ref (if switching within same session/symbol)
-        if (simCurrentTimeRef.current !== null && loadedSymbolRef.current === symbol && lastLoadedSessionKeyRef.current === currentSessionKey) {
+        // 1. Strict last_play_candle_time limit to prevent future jumps
+        if (activeItem?.last_play_candle_time) {
+          simToSet = activeItem.last_play_candle_time;
+        }
+        // 2. Current active simulation ref (if switching within same session/symbol)
+        else if (simCurrentTimeRef.current !== null && loadedSymbolRef.current === symbol && lastLoadedSessionKeyRef.current === currentSessionKey) {
           simToSet = simCurrentTimeRef.current;
         }
-        // 2. Database active session currentTime
+        // 3. Database active session currentTime
         else if (currentSessionKey && backtestSessions[currentSessionKey]?.currentTime) {
           simToSet = backtestSessions[currentSessionKey].currentTime;
         }
-        // 3. Database symbol-level playhead (synchronized 100% across all devices / timeframes)
+        // 4. Database symbol-level playhead (synchronized 100% across all devices / timeframes)
         else if (viewStateKey && symbolViewStates[viewStateKey]?.simCurrentTime) {
           simToSet = symbolViewStates[viewStateKey].simCurrentTime;
         }
-        // 4. Database timeframe-specific playhead
+        // 5. Database timeframe-specific playhead
         else if (viewStateKey && symbolViewStates[viewStateKey]?.timeframeStates?.[timeframeId]?.simCurrentTime) {
           simToSet = symbolViewStates[viewStateKey].timeframeStates[timeframeId].simCurrentTime;
         }
-        // 5. Cached state timeframe playhead
+        // 6. Cached state timeframe playhead
         else if (syncCachedState && syncCachedState.simCurrentTime !== null) {
           simToSet = syncCachedState.simCurrentTime;
         }
-        // 6. Explicit initialEndTime passed
+        // 7. Explicit initialEndTime passed
         else {
           simToSet = initialEndTime || null;
         }
 
         const finalSimToSet = simToSet !== null ? simToSet : (initialEndTime || 0);
-        simCurrentTimeRef.current = finalSimToSet;
-        if (currentSessionKey && sessionCurrentTimesRef.current) {
-          sessionCurrentTimesRef.current[currentSessionKey] = finalSimToSet;
+        let snappedSimToSet = finalSimToSet;
+        if (syncCachedState.candles && syncCachedState.candles.length > 0) {
+          const firstCandleTime = syncCachedState.candles[0].time;
+          if (snappedSimToSet < firstCandleTime) {
+            snappedSimToSet = firstCandleTime;
+          } else {
+            const snapCandle = [...syncCachedState.candles].reverse().find(c => c.time <= snappedSimToSet);
+            if (snapCandle) {
+              snappedSimToSet = snapCandle.time;
+            }
+          }
         }
-        setSimCurrentTime(finalSimToSet);
+        simCurrentTimeRef.current = snappedSimToSet;
+        if (currentSessionKey && sessionCurrentTimesRef.current) {
+          sessionCurrentTimesRef.current[currentSessionKey] = snappedSimToSet;
+        }
+        setSimCurrentTime(snappedSimToSet);
       }
 
       if (syncCachedState.indicators && syncCachedState.indicators.length > 0) {
@@ -4247,63 +4295,95 @@ export default function App() {
 
             if (isReplayMode) {
               // Replay Mode priority hierarchy (Async layer):
-              // 1. Current active replay ref (if switching within same symbol/trade)
-              if (replayCurrentTimeRef.current !== null && loadedSymbolRef.current === symbol && lastLoadedSessionKeyRef.current === currentSessionKey && (!replayTrade || lastLoadedReplayTradeIdRef.current === replayTrade.id)) {
+              // 1. Strict last_play_candle_time limit to prevent future jumps
+              if (activeItem?.last_play_candle_time) {
+                replayToSet = activeItem.last_play_candle_time;
+              }
+              // 2. Current active replay ref (if switching within same symbol/trade)
+              else if (replayCurrentTimeRef.current !== null && loadedSymbolRef.current === symbol && lastLoadedSessionKeyRef.current === currentSessionKey && (!replayTrade || lastLoadedReplayTradeIdRef.current === replayTrade.id)) {
                 replayToSet = replayCurrentTimeRef.current;
               }
-              // 2. Database symbol-level playhead (shared across all devices & timeframes)
+              // 3. Database symbol-level playhead (shared across all devices & timeframes)
               else if (viewStateKey && symbolViewStates[viewStateKey]?.replayCurrentTime) {
                 replayToSet = symbolViewStates[viewStateKey].replayCurrentTime;
               }
-              // 3. Database timeframe-specific playhead
+              // 4. Database timeframe-specific playhead
               else if (viewStateKey && symbolViewStates[viewStateKey]?.timeframeStates?.[timeframeId]?.replayCurrentTime) {
                 replayToSet = symbolViewStates[viewStateKey].timeframeStates[timeframeId].replayCurrentTime;
               }
-              // 4. Cached state timeframe playhead
+              // 5. Cached state timeframe playhead
               else if (cachedState && cachedState.replayCurrentTime !== null) {
                 replayToSet = cachedState.replayCurrentTime;
               }
-              // 5. Explicit initialEndTime passed
+              // 6. Explicit initialEndTime passed
               else {
                 replayToSet = initialEndTime || null;
               }
 
               const finalPlayToSet = replayToSet !== null ? replayToSet : (initialEndTime || 0);
-              replayCurrentTimeRef.current = finalPlayToSet;
-              setReplayCurrentTime(finalPlayToSet);
+              let snappedPlayToSet = finalPlayToSet;
+              if (combinedCandles && combinedCandles.length > 0) {
+                const firstCandleTime = combinedCandles[0].time;
+                if (snappedPlayToSet < firstCandleTime) {
+                  snappedPlayToSet = firstCandleTime;
+                } else {
+                  const snapCandle = [...combinedCandles].reverse().find(c => c.time <= snappedPlayToSet);
+                  if (snapCandle) {
+                    snappedPlayToSet = snapCandle.time;
+                  }
+                }
+              }
+              replayCurrentTimeRef.current = snappedPlayToSet;
+              setReplayCurrentTime(snappedPlayToSet);
             } else {
               // Simulation Playhead priority hierarchy (Async layer):
-              // 1. Current active simulation ref (if switching within same session/symbol)
-              if (simCurrentTimeRef.current !== null && loadedSymbolRef.current === symbol && lastLoadedSessionKeyRef.current === currentSessionKey) {
+              // 1. Strict last_play_candle_time limit to prevent future jumps
+              if (activeItem?.last_play_candle_time) {
+                simToSet = activeItem.last_play_candle_time;
+              }
+              // 2. Current active simulation ref (if switching within same session/symbol)
+              else if (simCurrentTimeRef.current !== null && loadedSymbolRef.current === symbol && lastLoadedSessionKeyRef.current === currentSessionKey) {
                 simToSet = simCurrentTimeRef.current;
               }
-              // 2. Database active session currentTime
+              // 3. Database active session currentTime
               else if (currentSessionKey && backtestSessions[currentSessionKey]?.currentTime) {
                 simToSet = backtestSessions[currentSessionKey].currentTime;
               }
-              // 3. Database symbol-level playhead (synchronized 100% across all devices / timeframes)
+              // 4. Database symbol-level playhead (synchronized 100% across all devices / timeframes)
               else if (viewStateKey && symbolViewStates[viewStateKey]?.simCurrentTime) {
                 simToSet = symbolViewStates[viewStateKey].simCurrentTime;
               }
-              // 4. Database timeframe-specific playhead
+              // 5. Database timeframe-specific playhead
               else if (viewStateKey && symbolViewStates[viewStateKey]?.timeframeStates?.[timeframeId]?.simCurrentTime) {
                 simToSet = symbolViewStates[viewStateKey].timeframeStates[timeframeId].simCurrentTime;
               }
-              // 5. Cached state timeframe playhead
+              // 6. Cached state timeframe playhead
               else if (cachedState && cachedState.simCurrentTime !== null) {
                 simToSet = cachedState.simCurrentTime;
               }
-              // 6. Explicit initialEndTime passed
+              // 7. Explicit initialEndTime passed
               else {
                 simToSet = initialEndTime || null;
               }
 
               const finalSimToSet = simToSet !== null ? simToSet : (initialEndTime || 0);
-              simCurrentTimeRef.current = finalSimToSet;
-              if (currentSessionKey && sessionCurrentTimesRef.current) {
-                sessionCurrentTimesRef.current[currentSessionKey] = finalSimToSet;
+              let snappedSimToSet = finalSimToSet;
+              if (combinedCandles && combinedCandles.length > 0) {
+                const firstCandleTime = combinedCandles[0].time;
+                if (snappedSimToSet < firstCandleTime) {
+                  snappedSimToSet = firstCandleTime;
+                } else {
+                  const snapCandle = [...combinedCandles].reverse().find(c => c.time <= snappedSimToSet);
+                  if (snapCandle) {
+                    snappedSimToSet = snapCandle.time;
+                  }
+                }
               }
-              setSimCurrentTime(finalSimToSet);
+              simCurrentTimeRef.current = snappedSimToSet;
+              if (currentSessionKey && sessionCurrentTimesRef.current) {
+                sessionCurrentTimesRef.current[currentSessionKey] = snappedSimToSet;
+              }
+              setSimCurrentTime(snappedSimToSet);
             }
 
             // Restore cached indicators
@@ -4359,8 +4439,9 @@ export default function App() {
             
             if (!isReplayMode) {
               if (simCurrentTimeRef.current === null || lastLoadedSessionKeyRef.current !== currentSessionKey || forceTimeSnap) {
-                const snapCandle = combined.find(c => c.time >= initialEndTime);
-                const timeToSet = snapCandle ? snapCandle.time : initialEndTime;
+                const targetTime = activeItem?.last_play_candle_time || initialEndTime;
+                const snapCandle = combined.find(c => c.time >= targetTime);
+                const timeToSet = snapCandle ? snapCandle.time : targetTime;
                 
                 simCurrentTimeRef.current = timeToSet;
                 if (currentSessionKey && sessionCurrentTimesRef.current) {
@@ -4370,8 +4451,9 @@ export default function App() {
               }
             } else {
               if (replayCurrentTimeRef.current === null) {
-                replayCurrentTimeRef.current = initialEndTime;
-                setReplayCurrentTime(initialEndTime);
+                const targetTime = activeItem?.last_play_candle_time || initialEndTime;
+                replayCurrentTimeRef.current = targetTime;
+                setReplayCurrentTime(targetTime);
               }
             }
           } else {
@@ -4615,6 +4697,9 @@ export default function App() {
           return Array.from(uniqueMap.values()).sort((a, b) => a.time - b.time);
         });
         setFutureFetchError(null); // Explicit clear on success
+        hasNoMoreFutureDataRef.current = false;
+      } else {
+        hasNoMoreFutureDataRef.current = true;
       }
     } catch (err: any) {
       const errorMsg = err instanceof Error ? err.message : String(err);
@@ -4634,7 +4719,7 @@ export default function App() {
     }
   };
 
-  // Pre-fetch future simulation/replay candles as the playhead draws near the end of our buffer (halfway point)
+  // Pre-fetch future simulation/replay candles as the playhead draws near the end of our buffer (70% played / 30% remaining point)
   useEffect(() => {
     const effectiveTime = isReplayMode ? replayCurrentTime : simCurrentTime;
     if (!effectiveTime || historicalData.length === 0 || isLoadingMoreFuture || isLoadingPast) return;
@@ -4642,8 +4727,8 @@ export default function App() {
     // Count how many candles in historicalData represent future relative to our current playhead
     const futureCandlesCount = historicalData.filter(c => c.time > effectiveTime).length;
     
-    // If we have 250 or fewer future candles left (the halfway point of our 500-unit fetch buffer), fetch next chunk
-    if (futureCandlesCount <= 250) {
+    // If we have 150 or fewer future candles left (denoting we played to around 70% of our 500-unit fetch buffer), fetch next chunk
+    if (futureCandlesCount <= 150) {
       loadMoreFuture();
     }
   }, [simCurrentTime, replayCurrentTime, isReplayMode, historicalData, selectedTimeframe, isLoadingMoreFuture, isLoadingPast]);
@@ -4652,7 +4737,7 @@ export default function App() {
     const clickedItem = id ? watchlist.find(i => i.id === id) : watchlist.find(i => i.symbol === symbol && (i.prefix || null) === (prefix || null));
     const clickedWatchlistItemId = clickedItem?.id || null;
     const currentChartId = activeWatchlistItemId;
-    const isDifferentPair = clickedWatchlistItemId && currentChartId && clickedWatchlistItemId !== currentChartId;
+    const isDifferentPair = clickedWatchlistItemId !== currentChartId;
 
     if (isDifferentPair) {
       // 1. Completely clear all previous chart cache (IndexedDB and memory cache)
@@ -4717,7 +4802,61 @@ export default function App() {
     }
   };
 
+  const handleExtendWatchlistItem = (id: string, newEndTimeSeconds: number) => {
+    const nextWatchlist = watchlist.map(item => {
+      if (item.id === id) {
+        return {
+          ...item,
+          end_time: newEndTimeSeconds,
+          status: 'ongoing' as const,
+          hasBeenExtended: true
+        };
+      }
+      return item;
+    });
+    setWatchlist(nextWatchlist);
+
+    const nextSessions = { ...backtestSessions };
+    const item = watchlist.find(i => i.id === id);
+    if (item) {
+      if (nextSessions[id]) {
+        nextSessions[id] = {
+          ...nextSessions[id],
+          endTime: newEndTimeSeconds,
+          createdAt: newEndTimeSeconds * 1000,
+          isCompleted: false
+        };
+      }
+      const sessionKey = item.prefix ? `${item.symbol}_${item.prefix}` : item.symbol;
+      if (nextSessions[sessionKey]) {
+        nextSessions[sessionKey] = {
+          ...nextSessions[sessionKey],
+          endTime: newEndTimeSeconds,
+          createdAt: newEndTimeSeconds * 1000,
+          isCompleted: false
+        };
+      }
+    }
+    setBacktestSessions(nextSessions);
+
+    if (session?.user?.id) {
+      persistenceService.saveWatchlist(session.user.id, nextWatchlist).catch(() => {});
+      persistenceService.saveBacktestSessions(session.user.id, nextSessions).catch(() => {});
+      addNotification(`Successfully extended end date for ${item?.symbol || 'symbol'}`, 'success');
+    }
+  };
+
   const handleDeleteWatchlistItem = (symbol: string, prefix?: string, id?: string) => {
+    const itemToDelete = watchlist.find(item => {
+      if (id) return item.id === id;
+      return item.symbol === symbol && (item.prefix || '') === (prefix || '');
+    });
+
+    if (itemToDelete && (itemToDelete.status === 'completed' || itemToDelete.hasBeenExtended)) {
+      addNotification("Completed or once extension-selected trading sessions cannot be deleted", 'error');
+      return;
+    }
+
     // 1. Update watchlist
     const nextWatchlist = watchlist.filter(item => {
       if (id) return item.id !== id;
@@ -4909,8 +5048,16 @@ export default function App() {
 
     const tick = () => {
       const now = performance.now();
-      const elapsedMs = now - lastTime;
+      let elapsedMs = now - lastTime;
       lastTime = now;
+
+      // Protection from browser tab suspension or heavy GPU rendering lag.
+      // Capping at FRAME_INTERVAL * 1.2 ensures that if there's any lag or heavy calculations,
+      // the playhead will NOT skip or fast-forward through weeks of future loaded candles instantly.
+      // It keeps tick-by-tick increment speed completely realistic and accurate.
+      if (elapsedMs > FRAME_INTERVAL * 1.2) {
+        elapsedMs = FRAME_INTERVAL;
+      }
 
       accumulatorMs += elapsedMs;
 
@@ -4987,9 +5134,8 @@ export default function App() {
               break;
             }
           }
-          const endGapSeconds = (endIdx + 1 < currentData.length) ? (currentData[endIdx + 1].time - currentData[endIdx].time) : timeframeSeconds;
-          const endProgress = Math.max(0, Math.min(0.999, (maxReplayTime - currentData[endIdx].time) / endGapSeconds));
-          const maxPos = endIdx + endProgress;
+          // Permit the final candle of replay mode to fully play all its 0.000 -> 0.999 tick parts completely.
+          const maxPos = endIdx + 0.999;
 
           if (nextPos >= maxPos) {
             nextPos = maxPos;
@@ -5097,9 +5243,11 @@ export default function App() {
             return Math.max(0.5, 6 - speed);
           };
           const playDuration = getCandleDurationForSpeed(simSpeed);
-          const addedIndices = isTimeSync 
-            ? (deltaMs / 1000) * 60 / (timeframeSeconds * (session.timeSyncSpeed || 60))
-            : (deltaMs / 1000) / playDuration;
+          const safeTimeSyncSpeed = Math.max(0.1, session?.timeSyncSpeed || 60);
+          const safeTimeframeSeconds = Math.max(1, timeframeSeconds);
+          const addedIndices = Math.min(0.5, isTimeSync 
+            ? (deltaMs / 1000) * 60 / (safeTimeframeSeconds * safeTimeSyncSpeed)
+            : (deltaMs / 1000) / playDuration);
           let nextPos = currentPos + addedIndices;
 
           let endIdx = currentData.length - 1;
@@ -5109,21 +5257,23 @@ export default function App() {
               break;
             }
           }
-          const endLimitGapSeconds = (endIdx + 1 < currentData.length) ? (currentData[endIdx + 1].time - currentData[endIdx].time) : timeframeSeconds;
-          const endLimitProgress = Math.max(0, Math.min(0.999, (endLimitTime - currentData[endIdx].time) / endLimitGapSeconds));
-          const maxPos = endIdx + endLimitProgress;
+          // Implement a fully ticking last candle by setting maxPos = endIdx + 0.999
+          const maxPos = endIdx + 0.999;
 
           if (nextPos >= maxPos) {
             nextPos = maxPos;
             
-            // Only stop playback if NOT in timeSync mode, or if we hit the hard session end time
-            const hitSessionEnd = endTime && endLimitTime === endTime;
-            if (!isTimeSync || hitSessionEnd) {
+            // Only stop playback if we hit the hard session end time, or if we ran out of all database data
+            const hitSessionEnd = endTime && (endLimitTime >= endTime);
+            if (hitSessionEnd) {
               setSimIsPlaying(false);
-              addNotification(hitSessionEnd ? 'Session end date reached' : 'End of historical data reached', 'info');
+              addNotification('Session end date reached', 'info');
+            } else if (hasNoMoreFutureDataRef.current) {
+              setSimIsPlaying(false);
+              addNotification('End of historical data reached', 'info');
             } else {
-              // Time Sync is on and we just need more buffer.
-              // Trigger a load from the database for the next candles, but keep playing!
+              // We just hit the end of our current buffer, but we have more to fetch in the future!
+              // Don't stop playing, just request more future candles.
               loadMoreFuture();
             }
           }
@@ -5176,8 +5326,9 @@ export default function App() {
             return Math.max(0.5, 6 - speed);
           };
           const playDuration = getCandleDurationForSpeed(simSpeed);
+          const safeTimeSyncSpeed = Math.max(0.1, session?.timeSyncSpeed || 60);
           const nextTime = isTimeSync
-            ? current + (deltaMs / 1000) * (60 / (session.timeSyncSpeed || 60))
+            ? current + (deltaMs / 1000) * (60 / safeTimeSyncSpeed)
             : current + (deltaMs / 1000) * (timeframeSeconds / playDuration);
           simCurrentTimeRef.current = nextTime;
           if (sessionCurrentTimesRef.current) {
@@ -5959,10 +6110,11 @@ export default function App() {
                     const getPastWeekFridayStr = () => {
                       const temp = new Date();
                       const day = temp.getDay();
-                      temp.setDate(temp.getDate() - day - 2);
-                      const year = temp.getFullYear();
-                      const month = String(temp.getMonth() + 1).padStart(2, '0');
-                      const date = String(temp.getDate()).padStart(2, '0');
+                      const daysToSubtract = [9, 3, 4, 5, 6, 7, 8][day];
+                      const prevFriday = new Date(temp.getTime() - daysToSubtract * 24 * 60 * 60 * 1000);
+                      const year = prevFriday.getFullYear();
+                      const month = String(prevFriday.getMonth() + 1).padStart(2, '0');
+                      const date = String(prevFriday.getDate()).padStart(2, '0');
                       return `${year}-${month}-${date}`;
                     };
 
@@ -6015,7 +6167,7 @@ export default function App() {
                                  return getMinSelectableStartDate(showBacktestSetup.symbol || '', currentUiSource).toISOString().split('T')[0];
                               })()}
                               max={maxEndVal}
-                              defaultValue={maxEndVal}
+                              defaultValue={getPastWeekFridayStr()}
                               className="w-full bg-slate-50 border border-slate-100 rounded-2xl py-3 pl-10 pr-2 text-[10px] font-bold text-slate-900 focus:outline-none focus:ring-4 focus:ring-indigo-600/5 transition-all"
                             />
                           </div>
@@ -6219,6 +6371,7 @@ export default function App() {
                 userId={session.user?.id} 
                 onSelectSymbol={handleSelectSymbol}
                 onDeleteItem={handleDeleteWatchlistItem}
+                onExtendSession={handleExtendWatchlistItem}
                 watchlist={watchlist}
                 setWatchlist={setWatchlist}
                 activeTab={journalTab}
@@ -6236,6 +6389,7 @@ export default function App() {
                   setIsUpgradeModalOpen(true);
                 }}
                 onNavigateToCompetitions={() => setIsCompetitionsPopupOpen(true)}
+                journalTrades={journalTrades}
               />
             )}
           </div>
@@ -6635,52 +6789,6 @@ export default function App() {
               className="w-8 h-8 flex items-center justify-center bg-blue-50 text-blue-600 rounded-xl"
             >
               {(isReplayMode ? replayIsPlaying : simIsPlaying) ? <Pause size={14} fill="currentColor" /> : <Play size={14} fill="currentColor" />}
-            </button>
-            <button 
-              onClick={() => {
-                if (isReplayMode) {
-                  setReplayCurrentTime((prev: number) => {
-                    const current = prev || (replayTrade ? replayTrade.entryTime : 0);
-                    const currentData = historicalDataRef.current;
-                    const nextCandle = currentData.find(c => c.time > current);
-                    return nextCandle ? nextCandle.time : current + getStepSeconds();
-                  });
-                } else {
-                  const sessionKey = currentSessionKey || '';
-                  const session = sessionKey ? (backtestSessions[sessionKey] || (selectedSymbol ? backtestSessions[activePrefix ? `${selectedSymbol}_${activePrefix}` : selectedSymbol] : null)) : null;
-                  
-                  if (!session) {
-                    addNotification('No backtest session found for active pair', 'error');
-                    return;
-                  }
-
-                  // Retrieve the isolated current time for this session
-                  const current = sessionCurrentTimesRef.current?.[sessionKey] || session.currentTime || session.startTime;
-                  const currentData = historicalDataRef.current;
-                  const nextCandle = currentData.find(c => c.time > current);
-                  const next = nextCandle ? nextCandle.time : current + getStepSeconds();
-                  
-                  const activeItem = watchlistRef.current.find(i => i.id === sessionKey) ||
-                                     watchlistRef.current.find(i => i.symbol === selectedSymbol && (i.prefix || null) === (activePrefix || null));
-                  const start_time = activeItem?.start_time || (currentData[0]?.time);
-                  const end_time = activeItem?.end_time || (currentData[currentData.length - 1]?.time);
-                  const last_play_candle_time = activeItem?.last_play_candle_time || start_time;
-
-                  if (last_play_candle_time && end_time && last_play_candle_time >= end_time) {
-                    addNotification('Cannot move beyond end time', 'warning');
-                    return;
-                  }
-
-                  // Update the ref synchronously
-                  if (sessionCurrentTimesRef.current) {
-                    sessionCurrentTimesRef.current[sessionKey] = next;
-                  }
-                  setSimCurrentTime(next);
-                }
-              }}
-              className="w-8 h-8 flex items-center justify-center text-slate-400"
-            >
-              <SkipForward size={14} />
             </button>
             <div className="relative font-bold text-slate-600" ref={speedRef}>
               <button 

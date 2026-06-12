@@ -78,6 +78,17 @@ export function LoginPage() {
   // Stepping controls for Login & Sign up
   const [loginStep, setLoginStep] = useState<'email' | 'passcode'>('email');
 
+  // OTP States for Signup
+  const [showSignupOtp, setShowSignupOtp] = useState(false);
+  const [signupOtp, setSignupOtp] = useState('');
+
+  // States for Password Reset Flow
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotOtp, setForgotOtp] = useState('');
+  const [forgotNewPassword, setForgotNewPassword] = useState('');
+  const [forgotStep, setForgotStep] = useState<'request' | 'verify'>('request');
+
   const sortedCountries = useMemo(() => {
     const others = COUNTRIES.filter(c => c.name === 'Other');
     const rest = COUNTRIES.filter(c => c.name !== 'Other');
@@ -146,7 +157,7 @@ export function LoginPage() {
     }
   };
 
-  // Signup: Direct profile registration
+  // Signup: Initiation and profile registration request
   const handleSignupSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -173,19 +184,125 @@ export function LoginPage() {
         throw new Error(res.error?.message || 'Failed to initialize system registration');
       }
 
-      setSuccessMessage('System profile created successfully! Redirecting you to the security clearance login...');
-      
-      // Delay to show success notification and redirect to Login
-      setTimeout(() => {
-        setStage('login');
-        setLoginStep('email');
-        setError(null);
-        setSuccessMessage(null);
-      }, 2500);
+      if (res.requiresOtp) {
+        setShowSignupOtp(true);
+        setSuccessMessage('A high-security OTP passcode has been dispatched to your email address.');
+      } else {
+        setSuccessMessage('System profile created successfully! Redirecting you to the security clearance login...');
+        
+        setTimeout(() => {
+          setStage('login');
+          setLoginStep('email');
+          setError(null);
+          setSuccessMessage(null);
+        }, 2500);
+      }
 
     } catch (err: any) {
       console.error('Signup error:', err);
       setError(err.message || 'Failed to initialize profile. Try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Signup: OTP code validation
+  const handleSignupVerifyOtpSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!signupOtp) return;
+    setLoading(true);
+    setError(null);
+    setSuccessMessage(null);
+
+    try {
+      const { data, error: otpError } = await (supabase.auth as any).verifyOtp({
+        email,
+        otp: signupOtp
+      });
+
+      if (otpError) {
+        throw otpError;
+      }
+
+      setSuccessMessage('Security clearance verified! System profile activated successfully. Redirecting to workspace...');
+    } catch (err: any) {
+      console.error('OTP registration verification error:', err);
+      setError(err.message || 'Failed to verify OTP code. Correct inputs required.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Forgot Password: Send OTP Code
+  const handleForgotPasswordRequestSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!forgotEmail) return;
+    setLoading(true);
+    setError(null);
+    setSuccessMessage(null);
+
+    try {
+      const response = await fetch('/api/auth/forgot-password-request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: forgotEmail })
+      });
+
+      const res = await response.json();
+      if (!response.ok || res.error) {
+        throw new Error(res.error?.message || 'Failed to request reset passcode');
+      }
+
+      setSuccessMessage(res.message || 'A security transaction passcode has been successfully dispatched.');
+      setForgotStep('verify');
+    } catch (err: any) {
+      console.error('Forgot password submission error:', err);
+      setError(err.message || 'Failed to request password reset code.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Forgot Password: Confirm Reset
+  const handleForgotPasswordVerifySubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!forgotEmail || !forgotOtp || !forgotNewPassword) return;
+    setLoading(true);
+    setError(null);
+    setSuccessMessage(null);
+
+    try {
+      const response = await fetch('/api/auth/verify-reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+         body: JSON.stringify({
+          email: forgotEmail,
+          otp: forgotOtp,
+          newPassword: forgotNewPassword
+        })
+      });
+
+      const res = await response.json();
+      if (!response.ok || res.error) {
+        throw new Error(res.error?.message || 'Reset failed');
+      }
+
+      setSuccessMessage(res.message || 'Profile passcode updated successfully. Redirecting back to authentication portal.');
+      
+      setTimeout(() => {
+        setShowForgotPassword(false);
+        setStage('login');
+        setLoginStep('email');
+        setForgotEmail('');
+        setForgotOtp('');
+        setForgotNewPassword('');
+        setError(null);
+        setSuccessMessage(null);
+      }, 3000);
+
+    } catch (err: any) {
+      console.error('Reset password submission error:', err);
+      setError(err.message || 'Failed to complete passcode update reset.');
     } finally {
       setLoading(false);
     }
@@ -695,168 +812,390 @@ export function LoginPage() {
                       transition={{ duration: 0.3 }}
                       className="w-full max-w-md bg-white border border-slate-100 rounded-2xl p-6 md:p-8 shadow-2xl relative text-left"
                     >
-                      <div className="flex justify-between items-center mb-6">
+                      {showForgotPassword ? (
                         <div>
-                          <h2 className="text-lg font-black text-slate-900 uppercase tracking-wider font-mono">
-                            System Ingress
-                          </h2>
-                          <p className="text-[9px] font-mono text-slate-500 tracking-widest uppercase mt-0.5">
-                            {loginStep === 'email' ? 'VERIFY VALID ADDRESS' : 'PROVIDE SECURE PASSKEY'}
-                          </p>
-                        </div>
-                        <button 
-                          onClick={() => {
-                            setStage('home');
-                            setLoginStep('email');
-                            setError(null);
-                            setSuccessMessage(null);
-                          }}
-                          className="text-slate-400 hover:text-slate-900 transition-colors cursor-pointer"
-                          title="Close and return to home"
-                        >
-                          <X size={16} />
-                        </button>
-                      </div>
-
-                      <AnimatePresence mode="wait">
-                        {loginStep === 'email' ? (
-                          <motion.form 
-                            key="login_step_email"
-                            initial={{ opacity: 0, x: -15 }}
-                            animate={{ opacity: 1, x: 0 }}
-                            exit={{ opacity: 0, x: 15 }}
-                            transition={{ duration: 0.25 }}
-                            onSubmit={handleCheckEmail} 
-                            className="space-y-4"
-                          >
-                            <div className="bg-slate-50 border border-slate-200 focus-within:border-indigo-600 focus-within:ring-1 focus-within:ring-indigo-600 transition-all p-3 rounded-xl">
-                              <div className="flex justify-between items-center mb-1 text-[8px] font-mono font-bold tracking-wider text-slate-500">
-                                <span>SYS.LOGIN / IDENTITY</span>
-                                <span>REQ // EMAIL</span>
-                              </div>
-                              <div className="flex items-center">
-                                <Mail className="text-indigo-600 mr-2.5" size={13} />
-                                <input
-                                  type="email"
-                                  placeholder="ENTER REGISTERED EMAIL"
-                                  required
-                                  value={email}
-                                  onChange={(e) => setEmail(e.target.value)}
-                                  className="w-full bg-transparent text-slate-900 text-xs font-mono tracking-wider focus:outline-none placeholder:text-slate-400 py-0.5 uppercase"
-                                />
-                              </div>
+                          {/* FORGOT PASSWORD LAYOUT HEADER */}
+                          <div className="flex justify-between items-center mb-6">
+                            <div>
+                              <h2 className="text-lg font-black text-slate-900 uppercase tracking-wider font-mono">
+                                Passkey Recovery
+                              </h2>
+                              <p className="text-[9px] font-mono text-slate-500 tracking-widest uppercase mt-0.5 animate-pulse">
+                                {forgotStep === 'request' ? 'REQUEST TRANSACTION PIN' : 'VERIFY CODE & CONFIGURE KEY'}
+                              </p>
                             </div>
-
-                            {error && (
-                              <div className="text-red-700 text-[9px] font-mono leading-relaxed tracking-wider px-2 py-2 bg-red-50 border border-red-200 rounded text-center uppercase">
-                                [ACCESS DENIED] {error}
-                              </div>
-                            )}
-
-                            <button
-                              type="submit"
-                              disabled={loading}
-                              className="w-full flex items-center justify-center gap-2 px-6 py-3.5 bg-indigo-600 hover:bg-indigo-500 text-white font-mono text-[9.5px] uppercase tracking-[0.25em] transition-all active:scale-[0.98] disabled:opacity-50 shadow-md rounded-xl font-bold cursor-pointer"
+                            <button 
+                              onClick={() => {
+                                setShowForgotPassword(false);
+                                setForgotEmail('');
+                                setForgotOtp('');
+                                setForgotNewPassword('');
+                                setError(null);
+                                setSuccessMessage(null);
+                              }}
+                              className="text-slate-400 hover:text-slate-900 transition-colors cursor-pointer"
+                              title="Cancel recovery and back"
                             >
-                              {loading ? (
-                                <Loader2 className="animate-spin" size={13} />
-                              ) : (
-                                'IDENTIFY EMAIL ADDRESS'
-                              )}
+                              <X size={16} />
                             </button>
-                          </motion.form>
-                        ) : (
-                          <motion.form 
-                            key="login_step_passcode"
-                            initial={{ opacity: 0, x: 15 }}
-                            animate={{ opacity: 1, x: 0 }}
-                            exit={{ opacity: 0, x: -15 }}
-                            transition={{ duration: 0.25 }}
-                            onSubmit={handleLoginSubmit} 
-                            className="space-y-4 relative"
-                          >
-                            {/* COMPACT VERIFIED EMAIL badge */}
-                            <div className="flex items-center justify-between text-[9px] font-mono px-3 py-1.5 bg-indigo-55 border border-indigo-100 rounded-lg text-indigo-700 mb-2">
-                              <span className="flex items-center gap-1.5 font-bold truncate">
-                                <ShieldCheck size={11} className="text-indigo-650" />
-                                {email.toUpperCase()}
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => setLoginStep('email')}
-                                className="text-slate-500 hover:text-indigo-650 font-extrabold underline cursor-pointer select-none"
+                          </div>
+
+                          <AnimatePresence mode="wait">
+                            {forgotStep === 'request' ? (
+                              <motion.form
+                                key="forgot_step_request"
+                                initial={{ opacity: 0, y: -5 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                exit={{ opacity: 0, y: 5 }}
+                                transition={{ duration: 0.2 }}
+                                onSubmit={handleForgotPasswordRequestSubmit}
+                                className="space-y-4"
                               >
-                                EDIT
-                              </button>
-                            </div>
+                                <div className="text-[10px] text-slate-500 font-mono tracking-tight leading-relaxed mb-1">
+                                  Provide your system profile email format to trigger an official Zoho OTP credentials dispatch sequence.
+                                </div>
 
-                            <div className="bg-slate-50 border border-slate-200 focus-within:border-indigo-600 focus-within:ring-1 focus-within:ring-indigo-600 transition-all p-3 rounded-xl">
-                              <div className="flex justify-between items-center mb-1 text-[8px] font-mono font-bold tracking-wider text-slate-500">
-                                <span>SYS.KEY / PASSCODE</span>
-                                <span>SECKEY // 0x***</span>
-                              </div>
-                              <div className="flex items-center">
-                                <Lock className="text-indigo-600 mr-2.5" size={13} />
-                                <input
-                                  type="password"
-                                  placeholder="ENTER ACCESS PASSCODE"
-                                  required
-                                  autoFocus
-                                  value={password}
-                                  onChange={(e) => setPassword(e.target.value)}
-                                  className="w-full bg-transparent text-slate-900 text-xs font-mono tracking-wider focus:outline-none placeholder:text-slate-400 py-0.5 uppercase"
-                                />
-                              </div>
-                            </div>
+                                <div className="bg-slate-50 border border-slate-200 focus-within:border-indigo-600 focus-within:ring-1 focus-within:ring-indigo-600 transition-all p-3 rounded-xl">
+                                  <div className="flex justify-between items-center mb-1 text-[8px] font-mono font-bold tracking-wider text-slate-500">
+                                    <span>SYS.PROFILE / EMAIL</span>
+                                    <span>REQ // SENDER</span>
+                                  </div>
+                                  <div className="flex items-center">
+                                    <Mail className="text-indigo-600 mr-2.5" size={13} />
+                                    <input
+                                      type="email"
+                                      placeholder="ENTER REGISTERED EMAIL"
+                                      required
+                                      value={forgotEmail}
+                                      onChange={(e) => setForgotEmail(e.target.value)}
+                                      className="w-full bg-transparent text-slate-900 text-xs font-mono tracking-wider focus:outline-none placeholder:text-slate-400 py-0.5 uppercase"
+                                    />
+                                  </div>
+                                </div>
 
-                            {error && (
-                              <div className="text-red-700 text-[9px] font-mono leading-relaxed tracking-wider px-2 py-2 bg-red-50 border border-red-200 rounded text-center uppercase">
-                                [CREDENTIAL DENIED] {error}
-                              </div>
-                            )}
+                                {error && (
+                                  <div className="text-red-700 text-[9px] font-mono leading-relaxed tracking-wider px-2 py-2 bg-red-50 border border-red-200 rounded text-center uppercase">
+                                    [RECOVERY RETRY] {error}
+                                  </div>
+                                )}
 
-                            <button
-                              type="submit"
-                              disabled={loading}
-                              className="w-full flex items-center justify-center gap-2 px-6 py-3.5 bg-indigo-600 hover:bg-indigo-500 text-white font-mono text-[9.5px] uppercase tracking-[0.25em] transition-all disabled:opacity-50 shadow-md rounded-xl font-bold cursor-pointer"
-                            >
-                              {loading ? (
-                                <Loader2 className="animate-spin" size={13} />
-                              ) : (
-                                'AUTHORIZE INGRESS'
-                              )}
-                            </button>
+                                {successMessage && (
+                                  <div className="text-emerald-800 text-[9px] font-mono leading-relaxed tracking-wider px-2 py-2 bg-emerald-50 border border-emerald-200 rounded text-center uppercase">
+                                    [DISPATCH SUCCESS] {successMessage}
+                                  </div>
+                                )}
 
-                            {/* FLOATING ACTION BUTTON - dynamically showing when password has input */}
-                            <AnimatePresence>
-                              {password.length > 0 && (
-                                <motion.div
-                                  initial={{ opacity: 0, scale: 0.8, y: 15 }}
-                                  animate={{ opacity: 1, scale: 1, y: 0 }}
-                                  exit={{ opacity: 0, scale: 0.8, y: 15 }}
-                                  transition={{ type: 'spring', stiffness: 300, damping: 20 }}
-                                  className="fixed bottom-6 right-6 md:absolute md:bottom-[-20px] md:right-[-20px] z-50 pointer-events-auto"
+                                <button
+                                  type="submit"
+                                  disabled={loading}
+                                  className="w-full flex items-center justify-center gap-2 px-6 py-3.5 bg-indigo-600 hover:bg-indigo-500 text-white font-mono text-[9.5px] uppercase tracking-[0.25em] transition-all disabled:opacity-50 shadow-md rounded-xl font-bold cursor-pointer"
                                 >
-                                  <button
-                                    type="submit"
-                                    title="Submit terminal auth credentials"
-                                    className="cursor-pointer relative flex items-center gap-2 px-4 py-3 bg-gradient-to-r from-indigo-600 via-indigo-500 to-indigo-600 text-white rounded-full shadow-[0_12px_24px_rgba(99,102,241,0.5)] border border-indigo-400/20 font-mono text-[10px] uppercase font-black tracking-widest active:scale-95 hover:brightness-110 select-none animate-pulse"
-                                  >
-                                    <Send size={12} />
-                                    <span>SUBMIT KEY</span>
-                                  </button>
-                                </motion.div>
-                              )}
-                            </AnimatePresence>
-                          </motion.form>
-                        )}
-                      </AnimatePresence>
+                                  {loading ? (
+                                    <Loader2 className="animate-spin" size={13} />
+                                  ) : (
+                                    'REQUEST RESET PASSCODE'
+                                  )}
+                                </button>
 
-                      <div className="text-center pt-4">
+                                <div className="text-center">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setShowForgotPassword(false);
+                                      setError(null);
+                                      setSuccessMessage(null);
+                                    }}
+                                    className="text-[9px] font-mono font-extrabold text-slate-500 uppercase tracking-widest hover:text-indigo-600 transition-colors cursor-pointer"
+                                  >
+                                    Back to login gate
+                                  </button>
+                                </div>
+                              </motion.form>
+                            ) : (
+                              <motion.form
+                                key="forgot_step_verify"
+                                initial={{ opacity: 0, y: 5 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                exit={{ opacity: 0, y: -5 }}
+                                transition={{ duration: 0.2 }}
+                                onSubmit={handleForgotPasswordVerifySubmit}
+                                className="space-y-4"
+                              >
+                                {/* COMPACT VERIFIED EMAIL badge */}
+                                <div className="flex items-center justify-between text-[9px] font-mono px-3 py-1.5 bg-emerald-50 border border-emerald-100 rounded-lg text-emerald-800 mb-2 font-bold truncate">
+                                  <span className="flex items-center gap-1.5 leading-none">
+                                    <ShieldCheck size={11} className="text-emerald-700 shrink-0" />
+                                    DESTINATION: {forgotEmail.toUpperCase()}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => setForgotStep('request')}
+                                    className="text-slate-500 hover:text-emerald-800 font-extrabold underline cursor-pointer select-none ml-2"
+                                  >
+                                    EDIT
+                                  </button>
+                                </div>
+
+                                {/* OTP Field */}
+                                <div className="bg-slate-50 border border-slate-200 focus-within:border-indigo-600 focus-within:ring-1 focus-within:ring-indigo-600 transition-all p-3 rounded-xl">
+                                  <div className="flex justify-between items-center mb-1 text-[8px] font-mono font-bold tracking-wider text-slate-500">
+                                    <span>SECURITY PASSCODE / OTP</span>
+                                    <span>6 DIGITS // REQ</span>
+                                  </div>
+                                  <div className="flex items-center">
+                                    <ShieldCheck className="text-indigo-600 mr-2.5" size={13} />
+                                    <input
+                                      type="text"
+                                      placeholder="ENTER 6-DIGIT OTP"
+                                      required
+                                      maxLength={6}
+                                      value={forgotOtp}
+                                      onChange={(e) => setForgotOtp(e.target.value)}
+                                      className="w-full bg-transparent text-slate-900 text-xs font-mono tracking-wider focus:outline-none placeholder:text-slate-400 py-0.5 uppercase"
+                                    />
+                                  </div>
+                                </div>
+
+                                {/* New Passcode */}
+                                <div className="bg-slate-50 border border-slate-200 focus-within:border-indigo-600 focus-within:ring-1 focus-within:ring-indigo-600 transition-all p-3 rounded-xl">
+                                  <div className="flex justify-between items-center mb-1 text-[8px] font-mono font-bold tracking-wider text-slate-500">
+                                    <span>NEW KEY / SECURE PASSCODE</span>
+                                    <span>REQ // MIN 6 CHARS</span>
+                                  </div>
+                                  <div className="flex items-center">
+                                    <Lock className="text-indigo-600 mr-2.5" size={13} />
+                                    <input
+                                      type="password"
+                                      placeholder="ENTER NEW SECURE PASSCODE"
+                                      required
+                                      value={forgotNewPassword}
+                                      onChange={(e) => setForgotNewPassword(e.target.value)}
+                                      className="w-full bg-transparent text-slate-900 text-xs font-mono tracking-wider focus:outline-none placeholder:text-slate-400 py-0.5 uppercase"
+                                    />
+                                  </div>
+                                </div>
+
+                                {error && (
+                                  <div className="text-red-700 text-[9px] font-mono leading-relaxed tracking-wider px-2 py-2 bg-red-50 border border-red-200 rounded text-center uppercase">
+                                    [RESET FAILED] {error}
+                                  </div>
+                                )}
+
+                                {successMessage && (
+                                  <div className="text-emerald-800 text-[9px] font-mono leading-relaxed tracking-wider px-2 py-2 bg-emerald-50 border border-emerald-200 rounded text-center uppercase">
+                                    [RESET SUCCESS] {successMessage}
+                                  </div>
+                                )}
+
+                                <button
+                                  type="submit"
+                                  disabled={loading}
+                                  className="w-full flex items-center justify-center gap-2 px-6 py-3.5 bg-indigo-600 hover:bg-indigo-500 text-white font-mono text-[9.5px] uppercase tracking-[0.25em] transition-all disabled:opacity-50 shadow-md rounded-xl font-bold cursor-pointer"
+                                >
+                                  {loading ? (
+                                    <Loader2 className="animate-spin" size={13} />
+                                  ) : (
+                                    'VERIFY & CONFIGURE NEW PASSCODE'
+                                  )}
+                                </button>
+
+                                <div className="text-center">
+                                  <button
+                                    type="button"
+                                    onClick={() => setForgotStep('request')}
+                                    className="text-[9px] font-mono font-extrabold text-slate-500 uppercase tracking-widest hover:text-indigo-600 transition-colors cursor-pointer"
+                                  >
+                                    Back to dispatch step
+                                  </button>
+                                </div>
+                              </motion.form>
+                            )}
+                          </AnimatePresence>
+                        </div>
+                      ) : (
+                        <div>
+                          {/* STANDARD SYSTEM INGRESS FORM */}
+                          <div className="flex justify-between items-center mb-6">
+                            <div>
+                              <h2 className="text-lg font-black text-slate-900 uppercase tracking-wider font-mono">
+                                System Ingress
+                              </h2>
+                              <p className="text-[9px] font-mono text-slate-500 tracking-widest uppercase mt-0.5">
+                                {loginStep === 'email' ? 'VERIFY VALID ADDRESS' : 'PROVIDE SECURE PASSKEY'}
+                              </p>
+                            </div>
+                            <button 
+                              onClick={() => {
+                                setStage('home');
+                                setLoginStep('email');
+                                setError(null);
+                                setSuccessMessage(null);
+                              }}
+                              className="text-slate-400 hover:text-slate-900 transition-colors cursor-pointer"
+                              title="Close and return to home"
+                            >
+                              <X size={16} />
+                            </button>
+                          </div>
+
+                          <AnimatePresence mode="wait">
+                            {loginStep === 'email' ? (
+                              <motion.form 
+                                key="login_step_email"
+                                initial={{ opacity: 0, x: -15 }}
+                                animate={{ opacity: 1, x: 0 }}
+                                exit={{ opacity: 0, x: 15 }}
+                                transition={{ duration: 0.25 }}
+                                onSubmit={handleCheckEmail} 
+                                className="space-y-4"
+                              >
+                                <div className="bg-slate-50 border border-slate-200 focus-within:border-indigo-600 focus-within:ring-1 focus-within:ring-indigo-600 transition-all p-3 rounded-xl">
+                                  <div className="flex justify-between items-center mb-1 text-[8px] font-mono font-bold tracking-wider text-slate-500">
+                                    <span>SYS.LOGIN / IDENTITY</span>
+                                    <span>REQ // EMAIL</span>
+                                  </div>
+                                  <div className="flex items-center">
+                                    <Mail className="text-indigo-600 mr-2.5" size={13} />
+                                    <input
+                                      type="email"
+                                      placeholder="ENTER REGISTERED EMAIL"
+                                      required
+                                      value={email}
+                                      onChange={(e) => setEmail(e.target.value)}
+                                      className="w-full bg-transparent text-slate-900 text-xs font-mono tracking-wider focus:outline-none placeholder:text-slate-400 py-0.5 uppercase"
+                                    />
+                                  </div>
+                                </div>
+
+                                {error && (
+                                  <div className="text-red-700 text-[9px] font-mono leading-relaxed tracking-wider px-2 py-2 bg-red-50 border border-red-200 rounded text-center uppercase">
+                                    [ACCESS DENIED] {error}
+                                  </div>
+                                )}
+
+                                <button
+                                  type="submit"
+                                  disabled={loading}
+                                  className="w-full flex items-center justify-center gap-2 px-6 py-3.5 bg-indigo-600 hover:bg-indigo-500 text-white font-mono text-[9.5px] uppercase tracking-[0.25em] transition-all active:scale-[0.98] disabled:opacity-50 shadow-md rounded-xl font-bold cursor-pointer"
+                                >
+                                  {loading ? (
+                                    <Loader2 className="animate-spin" size={13} />
+                                  ) : (
+                                    'IDENTIFY EMAIL ADDRESS'
+                                  )}
+                                </button>
+                              </motion.form>
+                            ) : (
+                              <motion.form 
+                                key="login_step_passcode"
+                                initial={{ opacity: 0, x: 15 }}
+                                animate={{ opacity: 1, x: 0 }}
+                                exit={{ opacity: 0, x: -15 }}
+                                transition={{ duration: 0.25 }}
+                                onSubmit={handleLoginSubmit} 
+                                className="space-y-4 relative"
+                              >
+                                {/* COMPACT VERIFIED EMAIL badge */}
+                                <div className="flex items-center justify-between text-[9px] font-mono px-3 py-1.5 bg-indigo-55 border border-indigo-100 rounded-lg text-indigo-700 mb-2">
+                                  <span className="flex items-center gap-1.5 font-bold truncate">
+                                    <ShieldCheck size={11} className="text-indigo-650" />
+                                    {email.toUpperCase()}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => setLoginStep('email')}
+                                    className="text-slate-500 hover:text-indigo-650 font-extrabold underline cursor-pointer select-none"
+                                  >
+                                    EDIT
+                                  </button>
+                                </div>
+
+                                <div className="bg-slate-50 border border-slate-200 focus-within:border-indigo-600 focus-within:ring-1 focus-within:ring-indigo-600 transition-all p-3 rounded-xl">
+                                  <div className="flex justify-between items-center mb-1 text-[8px] font-mono font-bold tracking-wider text-slate-500">
+                                    <span>SYS.KEY / PASSCODE</span>
+                                    <span>SECKEY // 0x***</span>
+                                  </div>
+                                  <div className="flex items-center">
+                                    <Lock className="text-indigo-600 mr-2.5" size={13} />
+                                    <input
+                                      type="password"
+                                      placeholder="ENTER ACCESS PASSCODE"
+                                      required
+                                      autoFocus
+                                      value={password}
+                                      onChange={(e) => setPassword(e.target.value)}
+                                      className="w-full bg-transparent text-slate-900 text-xs font-mono tracking-wider focus:outline-none placeholder:text-slate-400 py-0.5 uppercase"
+                                    />
+                                  </div>
+                                </div>
+
+                                {error && (
+                                  <div className="text-red-700 text-[9px] font-mono leading-relaxed tracking-wider px-2 py-2 bg-red-50 border border-red-200 rounded text-center uppercase">
+                                    [CREDENTIAL DENIED] {error}
+                                  </div>
+                                )}
+
+                                <button
+                                  type="submit"
+                                  disabled={loading}
+                                  className="w-full flex items-center justify-center gap-2 px-6 py-3.5 bg-indigo-600 hover:bg-indigo-500 text-white font-mono text-[9.5px] uppercase tracking-[0.25em] transition-all disabled:opacity-50 shadow-md rounded-xl font-bold cursor-pointer"
+                                >
+                                  {loading ? (
+                                    <Loader2 className="animate-spin" size={13} />
+                                  ) : (
+                                    'AUTHORIZE INGRESS'
+                                  )}
+                                </button>
+
+                                <div className="text-center mt-2.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setShowForgotPassword(true);
+                                      setForgotStep('request');
+                                      setForgotEmail(email);
+                                      setError(null);
+                                      setSuccessMessage(null);
+                                    }}
+                                    className="text-[9px] font-mono font-bold text-slate-400 hover:text-indigo-600 transition-colors cursor-pointer uppercase tracking-widest"
+                                  >
+                                    Forgot Passcode?
+                                  </button>
+                                </div>
+
+                                {/* FLOATING ACTION BUTTON - dynamically showing when password has input */}
+                                <AnimatePresence>
+                                  {password.length > 0 && (
+                                    <motion.div
+                                      initial={{ opacity: 0, scale: 0.8, y: 15 }}
+                                      animate={{ opacity: 1, scale: 1, y: 0 }}
+                                      exit={{ opacity: 0, scale: 0.8, y: 15 }}
+                                      transition={{ type: 'spring', stiffness: 300, damping: 20 }}
+                                      className="fixed bottom-6 right-6 md:absolute md:bottom-[-20px] md:right-[-20px] z-50 pointer-events-auto"
+                                    >
+                                      <button
+                                        type="submit"
+                                        title="Submit terminal auth credentials"
+                                        className="cursor-pointer relative flex items-center gap-2 px-4 py-3 bg-gradient-to-r from-indigo-600 via-indigo-500 to-indigo-600 text-white rounded-full shadow-[0_12px_24px_rgba(99,102,241,0.5)] border border-indigo-400/20 font-mono text-[10px] uppercase font-black tracking-widest active:scale-95 hover:brightness-110 select-none animate-pulse"
+                                      >
+                                        <Send size={12} />
+                                        <span>SUBMIT KEY</span>
+                                      </button>
+                                    </motion.div>
+                                  )}
+                                </AnimatePresence>
+                              </motion.form>
+                            )}
+                          </AnimatePresence>
+                        </div>
+                      )}
+
+                      <div className="text-center pt-4 border-t border-slate-50 mt-4">
                         <button
                           type="button"
                           onClick={() => {
                             setStage('signup');
+                            setShowSignupOtp(false);
                             setError(null);
                             setSuccessMessage(null);
                           }}
@@ -875,211 +1214,329 @@ export function LoginPage() {
                       transition={{ duration: 0.3 }}
                       className="w-full max-w-lg bg-white border border-slate-100 rounded-2xl p-5 md:p-6 shadow-2xl relative text-left"
                     >
-                      <div className="flex justify-between items-center mb-4">
+                      {showSignupOtp ? (
                         <div>
-                          <h2 className="text-lg font-black text-slate-900 uppercase tracking-wider font-mono">
-                            Initialize Access
-                          </h2>
-                          <p className="text-[9px] font-mono text-slate-500 tracking-widest uppercase mt-0.5">
-                            CREATE YOUR TRADER PROFILE
-                          </p>
-                        </div>
-                        <button 
-                          onClick={() => {
-                            setStage('home');
-                            setError(null);
-                            setSuccessMessage(null);
-                          }}
-                          className="text-slate-400 hover:text-slate-900 transition-colors cursor-pointer"
-                          title="Close and return to home"
-                        >
-                          <X size={16} />
-                        </button>
-                      </div>
-
-                      <form 
-                        onSubmit={handleSignupSubmit} 
-                        className="space-y-3 max-h-[62vh] overflow-y-auto pr-0.5 scrollbar-thin"
-                      >
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          {/* Email Field */}
-                          <div className="bg-slate-50 border border-slate-200 p-2.5 rounded-xl">
-                            <div className="flex justify-between items-center mb-1 text-[8px] font-mono font-bold tracking-wider text-slate-500">
-                              <span>SYS.LOGIN / EMAIL</span>
-                              <span>REQ</span>
+                          <div className="flex justify-between items-center mb-4">
+                            <div>
+                              <h2 className="text-lg font-black text-slate-900 uppercase tracking-wider font-mono">
+                                Activate Profile
+                              </h2>
+                              <p className="text-[9px] font-mono text-slate-500 tracking-widest uppercase mt-0.5 animate-pulse">
+                                CODE TRANSFER TRANSACTION
+                              </p>
                             </div>
-                            <div className="flex items-center">
-                              <Mail className="text-indigo-600 mr-2" size={12} />
-                              <input
-                                type="email"
-                                placeholder="ENTER EMAIL ADDRESS"
-                                required
-                                value={email}
-                                onChange={(e) => setEmail(e.target.value)}
-                                className="w-full bg-transparent text-slate-900 text-[11px] font-mono tracking-wider focus:outline-none placeholder:text-slate-400 py-0.5 uppercase"
-                              />
-                            </div>
-                          </div>
-
-                          {/* Password Field */}
-                          <div className="bg-slate-50 border border-slate-200 p-2.5 rounded-xl">
-                            <div className="flex justify-between items-center mb-1 text-[8px] font-mono font-bold tracking-wider text-slate-500">
-                              <span>SYS.KEY / PASSCODE</span>
-                              <span>REQ</span>
-                            </div>
-                            <div className="flex items-center">
-                              <Lock className="text-indigo-600 mr-2" size={12} />
-                              <input
-                                type="password"
-                                placeholder="CREATE SECURE KEY"
-                                required
-                                value={password}
-                                onChange={(e) => setPassword(e.target.value)}
-                                className="w-full bg-transparent text-slate-900 text-[11px] font-mono tracking-wider focus:outline-none placeholder:text-slate-400 py-0.5 uppercase"
-                              />
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          {/* Full Name */}
-                          <div className="bg-slate-50 border border-slate-200 p-2.5 rounded-xl">
-                            <div className="flex justify-between items-center mb-1 text-[8px] font-mono font-bold tracking-wider text-slate-500">
-                              <span>PROFILE / FULLNAME</span>
-                              <span>REQ</span>
-                            </div>
-                            <div className="flex items-center">
-                              <User className="text-indigo-600 mr-2" size={12} />
-                              <input
-                                type="text"
-                                placeholder="ENTER FULL NAME"
-                                required
-                                value={fullName}
-                                onChange={(e) => setFullName(e.target.value)}
-                                className="w-full bg-transparent text-slate-900 text-[11px] font-mono tracking-wider focus:outline-none placeholder:text-slate-400 py-0.5 uppercase"
-                              />
-                            </div>
-                          </div>
-
-                          {/* Username Handle */}
-                          <div className="bg-slate-50 border border-slate-200 p-2.5 rounded-xl">
-                            <div className="flex justify-between items-center mb-1 text-[8px] font-mono font-bold tracking-wider text-slate-500">
-                              <span>SYS.HANDLE / USERNAME</span>
-                              <span>REQ</span>
-                            </div>
-                            <div className="flex items-center">
-                              <AtSign className="text-indigo-600 mr-2" size={12} />
-                              <input
-                                type="text"
-                                placeholder="CHOOSE A UNIQUE HANDLE"
-                                required
-                                value={username}
-                                onChange={(e) => setUsername(e.target.value)}
-                                className="w-full bg-transparent text-slate-900 text-[11px] font-mono tracking-wider focus:outline-none placeholder:text-slate-400 py-0.5"
-                              />
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Country */}
-                        <div className="bg-slate-50 border border-slate-200 p-2.5 rounded-xl">
-                          <div className="flex justify-between items-center mb-1 text-[8px] font-mono font-bold tracking-wider text-slate-500">
-                            <span>GEOLOCATION / HOST</span>
-                            <span>GEO // REQ</span>
-                          </div>
-                          <div className="flex items-center">
-                            <Globe className="text-indigo-600 mr-2" size={12} />
-                            <select
-                              value={country}
-                              onChange={(e) => setCountry(e.target.value)}
-                              className="w-full bg-transparent text-slate-900 text-[11px] font-mono focus:outline-none py-0.5 uppercase cursor-pointer"
+                            <button 
+                              onClick={() => {
+                                setShowSignupOtp(false);
+                                setSignupOtp('');
+                                setError(null);
+                                setSuccessMessage(null);
+                              }}
+                              className="text-slate-400 hover:text-slate-900 transition-colors cursor-pointer"
+                              title="Reset registration and try again"
                             >
-                              {sortedCountries.map((c) => (
-                                <option key={c.code} value={c.name} className="bg-white text-slate-900">
-                                  {c.flag} {c.name}
-                                </option>
-                              ))}
-                            </select>
+                              <X size={16} />
+                            </button>
                           </div>
-                        </div>
 
-                        {/* Experience level */}
-                        <div className="bg-slate-50 border border-slate-200 p-2.5 rounded-xl">
-                          <div className="flex justify-between items-center mb-1.5 text-[8px] font-mono font-bold tracking-wider text-slate-500">
-                            <span>SYS.RANK / EXPERIENCE LEVEL</span>
-                            <span>CHOOSE RANK</span>
-                          </div>
-                          <div className="grid grid-cols-4 gap-1">
-                            {['Beginner', 'Intermediate', 'Advanced', 'Professional'].map((lvl) => (
+                          <form onSubmit={handleSignupVerifyOtpSubmit} className="space-y-4">
+                            <div className="flex items-center justify-between text-[9px] font-mono px-3 py-1.5 bg-emerald-50 border border-emerald-100 rounded-lg text-emerald-850 mb-2 font-bold truncate">
+                              <span className="flex items-center gap-1.5 leading-none">
+                                <ShieldCheck size={11} className="text-emerald-700 shrink-0" />
+                                DISPATCHED TO: {email.toUpperCase()}
+                              </span>
+                            </div>
+
+                            <p className="text-[10px] text-slate-500 font-mono tracking-tight leading-relaxed">
+                              A high-security 6-digit transaction authorization passcode has been successfully dispatched via Zoho to your address. Provide the credential below to authorize profile initialization.
+                            </p>
+
+                            <div className="bg-slate-50 border border-slate-200 focus-within:border-indigo-600 focus-within:ring-1 focus-within:ring-indigo-600 transition-all p-3 rounded-xl">
+                              <div className="flex justify-between items-center mb-1 text-[8px] font-mono font-bold tracking-wider text-slate-500">
+                                <span>VERIFICATION CODE / OTP</span>
+                                <span>6 DIGITS // REQ</span>
+                              </div>
+                              <div className="flex items-center">
+                                <ShieldCheck className="text-indigo-600 mr-2.5" size={13} />
+                                <input
+                                  type="text"
+                                  placeholder="ENTER 6-DIGIT OTP"
+                                  required
+                                  maxLength={6}
+                                  value={signupOtp}
+                                  onChange={(e) => setSignupOtp(e.target.value)}
+                                  className="w-full bg-transparent text-slate-900 text-xs font-mono tracking-wider focus:outline-none placeholder:text-slate-400 py-0.5 uppercase"
+                                />
+                              </div>
+                            </div>
+
+                            <AnimatePresence mode="wait">
+                              {error && (
+                                <motion.div
+                                  initial={{ opacity: 0, height: 0 }}
+                                  animate={{ opacity: 1, height: 'auto' }}
+                                  exit={{ opacity: 0, height: 0 }}
+                                  className="text-red-700 text-[9px] font-mono leading-relaxed tracking-wider px-2 py-1.5 bg-red-50 border border-red-200 rounded text-center uppercase"
+                                >
+                                  [VERIFICATION FAILED] {error}
+                                </motion.div>
+                              )}
+                              {successMessage && (
+                                <motion.div
+                                  initial={{ opacity: 0, height: 0 }}
+                                  animate={{ opacity: 1, height: 'auto' }}
+                                  exit={{ opacity: 0, height: 0 }}
+                                  className="text-emerald-800 text-[9px] font-mono leading-relaxed tracking-wider px-2 py-1.5 bg-emerald-50 border border-emerald-200 rounded text-center uppercase"
+                                >
+                                  [VERIFIED] {successMessage}
+                                </motion.div>
+                              )}
+                            </AnimatePresence>
+
+                            <button
+                              type="submit"
+                              disabled={loading}
+                              className="w-full flex items-center justify-center gap-2 px-6 py-3.5 bg-indigo-600 hover:bg-indigo-500 text-white font-mono text-[9px] uppercase tracking-[0.25em] transition-all active:scale-[0.98] disabled:opacity-50 shadow-md rounded-xl font-bold cursor-pointer"
+                            >
+                              {loading ? (
+                                <Loader2 className="animate-spin" size={12} />
+                              ) : (
+                                'VERIFY & COMPLY INITIALIZATION'
+                              )}
+                            </button>
+
+                            <div className="text-center pt-3 border-t border-slate-100 mt-3 flex justify-between text-[9px] font-mono">
                               <button
                                 type="button"
-                                key={lvl}
-                                onClick={() => setExperienceLevel(lvl)}
-                                className={`py-1 rounded text-[7.5px] font-mono tracking-wider border text-center transition-all cursor-pointer ${
-                                  experienceLevel === lvl
-                                    ? 'bg-indigo-600 text-white border-indigo-600 font-extrabold shadow-sm'
-                                    : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100 hover:text-slate-900'
-                                }`}
+                                onClick={() => {
+                                  setShowSignupOtp(false);
+                                  setSignupOtp('');
+                                  setError(null);
+                                  setSuccessMessage(null);
+                                }}
+                                className="font-bold text-slate-500 uppercase tracking-widest hover:text-indigo-600 transition-colors cursor-pointer"
                               >
-                                {lvl.toUpperCase()}
+                                Edit Profile details
                               </button>
-                            ))}
-                          </div>
+                              <button
+                                type="button"
+                                onClick={handleSignupSubmit}
+                                className="font-bold text-slate-500 uppercase tracking-widest hover:text-indigo-600 transition-colors cursor-pointer underline"
+                              >
+                                Resend Key
+                              </button>
+                            </div>
+                          </form>
                         </div>
+                      ) : (
+                        <div>
+                          <div className="flex justify-between items-center mb-4">
+                            <div>
+                              <h2 className="text-lg font-black text-slate-900 uppercase tracking-wider font-mono">
+                                Initialize Access
+                              </h2>
+                              <p className="text-[9px] font-mono text-slate-500 tracking-widest uppercase mt-0.5">
+                                CREATE YOUR TRADER PROFILE
+                              </p>
+                            </div>
+                            <button 
+                              onClick={() => {
+                                setStage('home');
+                                setError(null);
+                                setSuccessMessage(null);
+                              }}
+                              className="text-slate-400 hover:text-slate-900 transition-colors cursor-pointer"
+                              title="Close and return to home"
+                            >
+                              <X size={16} />
+                            </button>
+                          </div>
 
-                        {/* Bio */}
-                        <div className="bg-slate-50 border border-slate-200 p-2.5 rounded-xl">
-                          <div className="flex justify-between items-center mb-1 text-[8px] font-mono font-bold tracking-wider text-slate-500">
-                            <span>SYS.MOTTO / DESCRIPTION</span>
-                            <span>OPT</span>
-                          </div>
-                          <div className="flex items-center">
-                            <FileText className="text-indigo-600 mr-2" size={12} />
-                            <input
-                              type="text"
-                              placeholder="E.G. DAY TRADER / ALGO SPECIALIST"
-                              value={bio}
-                              onChange={(e) => setBio(e.target.value)}
-                              className="w-full bg-transparent text-slate-900 text-[11px] font-mono tracking-wider focus:outline-none placeholder:text-slate-400 py-0.5 uppercase"
-                            />
-                          </div>
+                          <form 
+                            onSubmit={handleSignupSubmit} 
+                            className="space-y-3 max-h-[62vh] overflow-y-auto pr-0.5 scrollbar-thin"
+                          >
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              {/* Email Field */}
+                              <div className="bg-slate-50 border border-slate-200 p-2.5 rounded-xl">
+                                <div className="flex justify-between items-center mb-1 text-[8px] font-mono font-bold tracking-wider text-slate-500">
+                                  <span>SYS.LOGIN / EMAIL</span>
+                                  <span>REQ</span>
+                                </div>
+                                <div className="flex items-center">
+                                  <Mail className="text-indigo-600 mr-2" size={12} />
+                                  <input
+                                    type="email"
+                                    placeholder="ENTER EMAIL ADDRESS"
+                                    required
+                                    value={email}
+                                    onChange={(e) => setEmail(e.target.value)}
+                                    className="w-full bg-transparent text-slate-900 text-[11px] font-mono tracking-wider focus:outline-none placeholder:text-slate-400 py-0.5 uppercase"
+                                  />
+                                </div>
+                              </div>
+
+                              {/* Password Field */}
+                              <div className="bg-slate-50 border border-slate-200 p-2.5 rounded-xl">
+                                <div className="flex justify-between items-center mb-1 text-[8px] font-mono font-bold tracking-wider text-slate-500">
+                                  <span>SYS.KEY / PASSCODE</span>
+                                  <span>REQ</span>
+                                </div>
+                                <div className="flex items-center">
+                                  <Lock className="text-indigo-600 mr-2" size={12} />
+                                  <input
+                                    type="password"
+                                    placeholder="CREATE SECURE KEY"
+                                    required
+                                    value={password}
+                                    onChange={(e) => setPassword(e.target.value)}
+                                    className="w-full bg-transparent text-slate-900 text-[11px] font-mono tracking-wider focus:outline-none placeholder:text-slate-400 py-0.5 uppercase"
+                                  />
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              {/* Full Name */}
+                              <div className="bg-slate-50 border border-slate-200 p-2.5 rounded-xl">
+                                <div className="flex justify-between items-center mb-1 text-[8px] font-mono font-bold tracking-wider text-slate-500">
+                                  <span>PROFILE / FULLNAME</span>
+                                  <span>REQ</span>
+                                </div>
+                                <div className="flex items-center">
+                                  <User className="text-indigo-600 mr-2" size={12} />
+                                  <input
+                                    type="text"
+                                    placeholder="ENTER FULL NAME"
+                                    required
+                                    value={fullName}
+                                    onChange={(e) => setFullName(e.target.value)}
+                                    className="w-full bg-transparent text-slate-900 text-[11px] font-mono tracking-wider focus:outline-none placeholder:text-slate-400 py-0.5 uppercase"
+                                  />
+                                </div>
+                              </div>
+
+                              {/* Username Handle */}
+                              <div className="bg-slate-50 border border-slate-200 p-2.5 rounded-xl">
+                                <div className="flex justify-between items-center mb-1 text-[8px] font-mono font-bold tracking-wider text-slate-500">
+                                  <span>SYS.HANDLE / USERNAME</span>
+                                  <span>REQ</span>
+                                </div>
+                                <div className="flex items-center">
+                                  <AtSign className="text-indigo-600 mr-2" size={12} />
+                                  <input
+                                    type="text"
+                                    placeholder="CHOOSE A UNIQUE HANDLE"
+                                    required
+                                    value={username}
+                                    onChange={(e) => setUsername(e.target.value)}
+                                    className="w-full bg-transparent text-slate-900 text-[11px] font-mono tracking-wider focus:outline-none placeholder:text-slate-400 py-0.5"
+                                  />
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Country */}
+                            <div className="bg-slate-50 border border-slate-200 p-2.5 rounded-xl">
+                              <div className="flex justify-between items-center mb-1 text-[8px] font-mono font-bold tracking-wider text-slate-500">
+                                <span>GEOLOCATION / HOST</span>
+                                <span>GEO // REQ</span>
+                              </div>
+                              <div className="flex items-center">
+                                <Globe className="text-indigo-600 mr-2" size={12} />
+                                <select
+                                  value={country}
+                                  onChange={(e) => setCountry(e.target.value)}
+                                  className="w-full bg-transparent text-slate-900 text-[11px] font-mono focus:outline-none py-0.5 uppercase cursor-pointer"
+                                >
+                                  {sortedCountries.map((c) => (
+                                    <option key={c.code} value={c.name} className="bg-white text-slate-900">
+                                      {c.flag} {c.name}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            </div>
+
+                            {/* Experience level */}
+                            <div className="bg-slate-50 border border-slate-200 p-2.5 rounded-xl">
+                              <div className="flex justify-between items-center mb-1.5 text-[8px] font-mono font-bold tracking-wider text-slate-500">
+                                <span>SYS.RANK / EXPERIENCE LEVEL</span>
+                                <span>CHOOSE RANK</span>
+                              </div>
+                              <div className="grid grid-cols-4 gap-1">
+                                {['Beginner', 'Intermediate', 'Advanced', 'Professional'].map((lvl) => (
+                                  <button
+                                    type="button"
+                                    key={lvl}
+                                    onClick={() => setExperienceLevel(lvl)}
+                                    className={`py-1 rounded text-[7.5px] font-mono tracking-wider border text-center transition-all cursor-pointer ${
+                                      experienceLevel === lvl
+                                        ? 'bg-indigo-600 text-white border-indigo-600 font-extrabold shadow-sm'
+                                        : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100 hover:text-slate-900'
+                                    }`}
+                                  >
+                                    {lvl.toUpperCase()}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+
+                            {/* Bio */}
+                            <div className="bg-slate-50 border border-slate-200 p-2.5 rounded-xl">
+                              <div className="flex justify-between items-center mb-1 text-[8px] font-mono font-bold tracking-wider text-slate-500">
+                                <span>SYS.MOTTO / DESCRIPTION</span>
+                                <span>OPT</span>
+                              </div>
+                              <div className="flex items-center">
+                                <FileText className="text-indigo-600 mr-2" size={12} />
+                                <input
+                                  type="text"
+                                  placeholder="E.G. DAY TRADER / ALGO SPECIALIST"
+                                  value={bio}
+                                  onChange={(e) => setBio(e.target.value)}
+                                  className="w-full bg-transparent text-slate-900 text-[11px] font-mono tracking-wider focus:outline-none placeholder:text-slate-400 py-0.5 uppercase"
+                                />
+                              </div>
+                            </div>
+
+                            <AnimatePresence mode="wait">
+                              {error && (
+                                <motion.div
+                                  initial={{ opacity: 0, height: 0 }}
+                                  animate={{ opacity: 1, height: 'auto' }}
+                                  exit={{ opacity: 0, height: 0 }}
+                                  className="text-red-700 text-[9px] font-mono leading-relaxed tracking-wider px-2 py-1.5 bg-red-50 border border-red-200 rounded text-center uppercase"
+                                >
+                                  [ERROR] {error}
+                                </motion.div>
+                              )}
+                              {successMessage && (
+                                <motion.div
+                                  initial={{ opacity: 0, height: 0 }}
+                                  animate={{ opacity: 1, height: 'auto' }}
+                                  exit={{ opacity: 0, height: 0 }}
+                                  className="text-emerald-800 text-[9px] font-mono leading-relaxed tracking-wider px-2 py-1.5 bg-emerald-50 border border-emerald-200 rounded text-center uppercase"
+                                >
+                                  [SUCCESS] {successMessage}
+                                </motion.div>
+                              )}
+                            </AnimatePresence>
+
+                            <button
+                              type="submit"
+                              disabled={loading}
+                              className="w-full flex items-center justify-center gap-2 px-6 py-3.5 bg-indigo-600 hover:bg-indigo-500 text-white font-mono text-[9px] uppercase tracking-[0.25em] transition-all active:scale-[0.98] disabled:opacity-50 shadow-md rounded-xl font-bold cursor-pointer"
+                            >
+                              {loading ? (
+                                <Loader2 className="animate-spin" size={12} />
+                              ) : (
+                                'INITIALIZE USER PROFILE'
+                              )}
+                            </button>
+                          </form>
                         </div>
-
-                        <AnimatePresence mode="wait">
-                          {error && (
-                            <motion.div
-                              initial={{ opacity: 0, height: 0 }}
-                              animate={{ opacity: 1, height: 'auto' }}
-                              exit={{ opacity: 0, height: 0 }}
-                              className="text-red-700 text-[9px] font-mono leading-relaxed tracking-wider px-2 py-1.5 bg-red-50 border border-red-200 rounded text-center uppercase"
-                            >
-                              [ERROR] {error}
-                            </motion.div>
-                          )}
-                          {successMessage && (
-                            <motion.div
-                              initial={{ opacity: 0, height: 0 }}
-                              animate={{ opacity: 1, height: 'auto' }}
-                              exit={{ opacity: 0, height: 0 }}
-                              className="text-emerald-800 text-[9px] font-mono leading-relaxed tracking-wider px-2 py-1.5 bg-emerald-50 border border-emerald-200 rounded text-center uppercase"
-                            >
-                              [SUCCESS] {successMessage}
-                            </motion.div>
-                          )}
-                        </AnimatePresence>
-
-                        <button
-                          type="submit"
-                          disabled={loading}
-                          className="w-full flex items-center justify-center gap-2 px-6 py-3.5 bg-indigo-600 hover:bg-indigo-500 text-white font-mono text-[9px] uppercase tracking-[0.25em] transition-all active:scale-[0.98] disabled:opacity-50 shadow-md rounded-xl font-bold cursor-pointer"
-                        >
-                          {loading ? (
-                            <Loader2 className="animate-spin" size={12} />
-                          ) : (
-                            'INITIALIZE USER PROFILE'
-                          )}
-                        </button>
-                      </form>
+                      )}
 
                       <div className="text-center pt-3 border-t border-slate-100 mt-3">
                         <button
