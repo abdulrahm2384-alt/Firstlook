@@ -42,261 +42,234 @@ interface PendingForgot {
 }
 const pendingForgotOtps = new Map<string, PendingForgot>();
 
-// Helper to load/save Zoho configuration
-const TOKENS_FILE = path.join(process.cwd(), "zoho-tokens.json");
-
-interface ZohoConfig {
-  accessToken?: string;
-  refreshToken?: string;
-  apiDomain?: string;
-  authServer?: string;
-  expiresAt?: number; // timestamp in ms when accessToken expires
-  accountId?: string;
-  emailAddress?: string;
+// Rate limiting to prevent spam OTP requests
+interface OtpRateLimit {
+  count: number;
+  lastRequestTime: number;
 }
+const otpRateLimits = new Map<string, OtpRateLimit>();
 
-async function loadZohoConfig(): Promise<ZohoConfig> {
-  // First try DB
-  try {
-    const dbVal = await db.getSystemConfig("zoho_config");
-    if (dbVal) {
-      return JSON.parse(dbVal);
+function checkOtpRateLimit(email: string): { allowed: boolean; message?: string } {
+  const now = Date.now();
+  const limit = otpRateLimits.get(email);
+  if (limit) {
+    const timePassed = now - limit.lastRequestTime;
+    if (timePassed < 60000) {
+      const waitSeconds = Math.ceil((60000 - timePassed) / 1000);
+      return {
+        allowed: false,
+        message: `Please wait ${waitSeconds} seconds before requesting another code.`
+      };
     }
-  } catch (err) {
-    console.warn("[Zoho Config] Error reading from DB:", err);
-  }
-
-  // Fallback to file system
-  try {
-    if (fs.existsSync(TOKENS_FILE)) {
-      const fileData = fs.readFileSync(TOKENS_FILE, "utf-8");
-      return JSON.parse(fileData);
+    
+    // Check limit inside 15-minute window (maximum 5 requests)
+    if (now - limit.lastRequestTime < 15 * 60 * 1000) {
+      if (limit.count >= 5) {
+        return {
+          allowed: false,
+          message: "Too many request attempts. Please try again after 15 minutes."
+        };
+      }
+      limit.count += 1;
+      limit.lastRequestTime = now;
+    } else {
+      limit.count = 1;
+      limit.lastRequestTime = now;
     }
-  } catch (err) {
-    console.warn("[Zoho Config] Error reading from file system:", err);
-  }
-
-  return {};
-}
-
-async function saveZohoConfig(config: ZohoConfig) {
-  // Save to DB
-  try {
-    await db.setSystemConfig("zoho_config", JSON.stringify(config));
-  } catch (err) {
-    console.warn("[Zoho Config] Error saving to DB:", err);
-  }
-
-  // Save to file system
-  try {
-    fs.writeFileSync(TOKENS_FILE, JSON.stringify(config, null, 2), "utf-8");
-  } catch (err) {
-    console.error("[Zoho Config] Error saving to file system:", err);
-  }
-}
-
-async function getValidAccessToken(): Promise<string> {
-  const config = await loadZohoConfig();
-  const clientId = process.env.ZOHO_CLIENT_ID;
-  const clientSecret = process.env.ZOHO_CLIENT_SECRET;
-
-  if (!clientId || !clientSecret) {
-    throw new Error("Zoho OAuth credentials ZOHO_CLIENT_ID or ZOHO_CLIENT_SECRET are not configured in environment variables.");
-  }
-
-  if (config.accessToken && config.expiresAt && config.expiresAt > Date.now() + 60000) {
-    return config.accessToken;
-  }
-
-  // Need to refresh
-  if (!config.refreshToken) {
-    throw new Error("Zoho accounts authorization is missing. Please authorize Zoho at /api/zoho/auth first.");
-  }
-
-  const authServer = config.authServer || "https://accounts.zoho.com";
-  console.log(`[Zoho OAuth] Refreshing access token via ${authServer}...`);
-
-  const params = new URLSearchParams();
-  params.append("refresh_token", config.refreshToken);
-  params.append("client_id", clientId);
-  params.append("client_secret", clientSecret);
-  params.append("grant_type", "refresh_token");
-
-  const response = await fetch(`${authServer}/oauth/v2/token`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded"
-    },
-    body: params.toString()
-  });
-
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`Failed to refresh Zoho access token: ${response.status} ${errText}`);
-  }
-
-  const data = await response.json() as any;
-  if (!data.access_token) {
-    throw new Error(`Zoho refresh token response was invalid: ${JSON.stringify(data)}`);
-  }
-
-  config.accessToken = data.access_token;
-  const expiresIn = data.expires_in || 3600;
-  config.expiresAt = Date.now() + (expiresIn * 1000);
-  if (data.api_domain) {
-    config.apiDomain = data.api_domain;
-  }
-
-  await saveZohoConfig(config);
-  return config.accessToken;
-}
-
-interface ZohoMailAccount {
-  accountId: string;
-  emailAddress: string;
-  status: string;
-}
-
-async function fetchPrimaryZohoAccount(accessToken: string, apiDomain: string): Promise<ZohoMailAccount> {
-  const url = `${apiDomain}/api/accounts`;
-  console.log(`[Zoho Mail API] Fetching mail accounts from: ${url}`);
-  const response = await fetch(url, {
-    method: "GET",
-    headers: {
-      "Authorization": `Zoho-oauthtoken ${accessToken}`
-    }
-  });
-
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`Failed to fetch Zoho Mail accounts: ${response.status} ${errText}`);
-  }
-
-  const resData = await response.json() as any;
-  if (!resData.data || !Array.isArray(resData.data) || resData.data.length === 0) {
-    throw new Error(`No Zoho Mail accounts found in accounts query: ${JSON.stringify(resData)}`);
-  }
-
-  const activeAccount = resData.data.find((acc: any) => acc.status === "active") || resData.data[0];
-  return {
-    accountId: activeAccount.accountId,
-    emailAddress: activeAccount.emailAddress,
-    status: activeAccount.status
-  };
-}
-
-async function sendZohoEmail(toEmail: string, subject: string, htmlContent: string): Promise<boolean> {
-  try {
-    const accessToken = await getValidAccessToken();
-    const config = await loadZohoConfig();
-    const apiDomain = config.apiDomain || "https://mail.zoho.com";
-
-    let accountId = config.accountId;
-    let fromAddress = config.emailAddress;
-
-    if (!accountId || !fromAddress) {
-      console.log("[Zoho Mail API] accountId or fromAddress not cached. Fetching primary account...");
-      const account = await fetchPrimaryZohoAccount(accessToken, apiDomain);
-      accountId = account.accountId;
-      fromAddress = account.emailAddress;
-
-      const updatedConfig = { ...config, accountId, emailAddress: fromAddress };
-      await saveZohoConfig(updatedConfig);
-    }
-
-    const sendUrl = `${apiDomain}/api/accounts/${accountId}/messages`;
-    console.log(`[Zoho Mail API] Dispatching message via: ${sendUrl} from ${fromAddress} to ${toEmail}`);
-
-    const payload = {
-      fromAddress,
-      toAddress: toEmail,
-      subject,
-      content: htmlContent
-    };
-
-    const response = await fetch(sendUrl, {
-      method: "POST",
-      headers: {
-        "Authorization": `Zoho-oauthtoken ${accessToken}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(payload)
+  } else {
+    otpRateLimits.set(email, {
+      count: 1,
+      lastRequestTime: now
     });
+  }
+  return { allowed: true };
+}
 
-    if (!response.ok) {
-      const errText = await response.text();
-      throw new Error(`Failed to send Zoho email: ${response.status} ${errText}`);
+// SMTP email sending function using Zoho Mail SMTP with optimized high-deliverability settings
+async function sendZohoEmail(
+  toEmail: string,
+  subject: string,
+  htmlContent: string,
+  textContent?: string,
+  fromName: string = "FirstLookLabs Security",
+  highPriority: boolean = false
+): Promise<boolean> {
+  const host = process.env.ZOHO_MAIL_HOST || "smtp.zoho.com";
+  const port = parseInt(process.env.ZOHO_MAIL_PORT || "465", 10);
+  const user = process.env.ZOHO_MAIL_USER;
+  const pass = process.env.ZOHO_MAIL_PASS;
+
+  if (!user || !pass) {
+    console.error("[SMTP Config Error] ZOHO_MAIL_USER or ZOHO_MAIL_PASS is not configured in environment variables.");
+    throw new Error("SMTP email configuration is missing or incomplete.");
+  }
+
+  const secure = port === 465;
+  const transporter = nodemailer.createTransport({
+    host,
+    port,
+    secure,
+    auth: {
+      user,
+      pass,
+    },
+    tls: {
+      rejectUnauthorized: false
     }
+  });
 
-    const data = await response.json() as any;
-    console.log("[Zoho Mail API] Email dispatched successfully:", data);
+  // Calculate clean text content if not supplied
+  const plainText = textContent || htmlContent.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+
+  const customHeaders: Record<string, string> = {
+    "Precedence": "transactional"
+  };
+
+  if (highPriority) {
+    customHeaders["X-Priority"] = "1";
+    customHeaders["X-MSMail-Priority"] = "High";
+    customHeaders["Importance"] = "High";
+  }
+
+  try {
+    console.log(`[SMTP Mail] Dispatching message via ${host}:${port} from ${fromName} <${user}> to ${toEmail} (HighPriority: ${highPriority})`);
+    const info = await transporter.sendMail({
+      from: `"${fromName}" <${user}>`,
+      to: toEmail,
+      replyTo: user,
+      subject,
+      text: plainText,
+      html: htmlContent,
+      headers: customHeaders,
+    });
+    console.log("[SMTP Mail] Email dispatched successfully:", info.messageId);
     return true;
   } catch (err: any) {
-    console.error("[Zoho Mail API Error] sendZohoEmail failed:", err);
+    console.error("[SMTP Mail Error] sendZohoEmail failed:", err);
     throw err;
   }
 }
 
 async function sendOtpEmail(email: string, otp: string): Promise<boolean> {
-  const subject = "Verify Your FirstLook System Handle [OTP Code]";
-  const html = `
-    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #0b0f19; color: #f3f4f6; padding: 40px 20px; text-align: center; border-radius: 12px; max-width: 500px; margin: 0 auto; border: 1px solid #1e293b;">
-      <div style="margin-bottom: 24px;">
-        <h2 style="color: #6366f1; text-transform: uppercase; letter-spacing: 0.15em; font-size: 14px; margin-bottom: 4px;">SYSTEM INGRESS</h2>
-        <h1 style="color: #ffffff; text-transform: uppercase; font-size: 22px; font-weight: 900; margin: 0; letter-spacing: 0.05em;">Verify Identity</h1>
-      </div>
-      <p style="color: #9ca3af; font-size: 13px; line-height: 1.6; max-width: 400px; margin: 0 auto 30px auto;">
-        You have requested access to the FirstLook Strategy Backtester. Enter the secure security code below to complete your profile verification.
-      </p>
-      <div style="background-color: #030712; border: 1px solid #312e81; padding: 20px; border-radius: 10px; display: inline-block; margin-bottom: 30px;">
-        <span style="font-family: 'Courier New', Courier, monospace; font-size: 36px; font-weight: bold; letter-spacing: 0.2em; color: #818cf8; padding-left: 0.2em;">${otp}</span>
-      </div>
-      <p style="color: #6b7280; font-size: 11px; margin: 0 0 10px 0;">This code is valid for exactly <strong>5 minutes</strong>. If you did not make this request, please disregard this transmission.</p>
-      <div style="border-top: 1px solid #111827; padding-top: 20px; margin-top: 30px; font-size: 10px; color: #4b5563; font-family: monospace;">
-        SECURE LOG / COCKROACH_CLUSTER // MULTI-REGION SECURITY PASSCODE
+  const subject = "Your FirstLookLabs verification code";
+  const text = `Hello,\n\nUse the following verification code to complete your registration:\n\n${otp}\n\nThis code is valid for 10 minutes.\n\nIf you did not request this email, please disregard it.\n\nFirstLookLabs Security`;
+  
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Your FirstLookLabs verification code</title>
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #fafafa; color: #111111; margin: 0; padding: 40px 20px; -webkit-font-smoothing: antialiased;">
+  <div style="max-width: 500px; margin: 0 auto; background-color: #ffffff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 40px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+    <div style="margin-bottom: 24px;">
+      <span style="font-size: 20px; font-weight: 700; color: #111111; letter-spacing: -0.5px;">FirstLookLabs</span>
+    </div>
+    
+    <p style="font-size: 15px; line-height: 1.5; color: #444444; margin: 0 0 16px 0;">Hello,</p>
+    
+    <p style="font-size: 15px; line-height: 1.5; color: #444444; margin: 0 0 24px 0;">Use the following verification code to complete your registration:</p>
+    
+    <div style="text-align: center; margin: 32px 0;">
+      <div style="display: inline-block; background-color: #f5f5f5; border: 1px solid #e0e0e0; border-radius: 6px; padding: 14px 28px; letter-spacing: 4px;">
+        <span style="font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Courier, monospace; font-size: 28px; font-weight: 700; color: #111111;">${otp}</span>
       </div>
     </div>
-  `;
-  return await sendZohoEmail(email, subject, html);
+    
+    <p style="font-size: 14px; line-height: 1.5; color: #666666; margin: 0 0 24px 0;">This code is valid for 10 minutes. After 10 minutes, you will need to request a new code.</p>
+    
+    <p style="font-size: 13px; line-height: 1.5; color: #888888; margin: 0 0 40px 0; border-top: 1px solid #f0f0f0; padding-top: 24px;">If you did not request this email, please disregard it. No further action is required.</p>
+    
+    <div style="font-size: 12px; line-height: 1.4; color: #999999;">
+      <p style="margin: 0 0 4px 0;">FirstLookLabs Security</p>
+      <p style="margin: 0;">This is an automated operational notification. Please do not reply to this email.</p>
+    </div>
+  </div>
+</body>
+</html>`;
+
+  return await sendZohoEmail(email, subject, html, text, "FirstLookLabs Security", true);
+}
+
+async function sendResetOtpEmail(email: string, otp: string): Promise<boolean> {
+  const subject = "Your FirstLookLabs verification code";
+  const text = `Hello,\n\nUse the following verification code to reset your password:\n\n${otp}\n\nThis code is valid for 10 minutes.\n\nIf you did not request a password reset, you can safely ignore this email.\n\nFirstLookLabs Security`;
+  
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Your FirstLookLabs verification code</title>
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #fafafa; color: #111111; margin: 0; padding: 40px 20px; -webkit-font-smoothing: antialiased;">
+  <div style="max-width: 500px; margin: 0 auto; background-color: #ffffff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 40px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+    <div style="margin-bottom: 24px;">
+      <span style="font-size: 20px; font-weight: 700; color: #111111; letter-spacing: -0.5px;">FirstLookLabs</span>
+    </div>
+    
+    <p style="font-size: 15px; line-height: 1.5; color: #444444; margin: 0 0 16px 0;">Hello,</p>
+    
+    <p style="font-size: 15px; line-height: 1.5; color: #444444; margin: 0 0 24px 0;">Use the following verification code to reset your password:</p>
+    
+    <div style="text-align: center; margin: 32px 0;">
+      <div style="display: inline-block; background-color: #f5f5f5; border: 1px solid #e0e0e0; border-radius: 6px; padding: 14px 28px; letter-spacing: 4px;">
+        <span style="font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Courier, monospace; font-size: 28px; font-weight: 700; color: #111111;">${otp}</span>
+      </div>
+    </div>
+    
+    <p style="font-size: 14px; line-height: 1.5; color: #666666; margin: 0 0 24px 0;">This code is valid for 10 minutes. After 10 minutes, you will need to request a new code.</p>
+    
+    <p style="font-size: 13px; line-height: 1.5; color: #888888; margin: 0 0 40px 0; border-top: 1px solid #f0f0f0; padding-top: 24px;">If you did not request a password reset, please disregard this email. Your password will remain unchanged.</p>
+    
+    <div style="font-size: 12px; line-height: 1.4; color: #999999;">
+      <p style="margin: 0 0 4px 0;">FirstLookLabs Security</p>
+      <p style="margin: 0;">This is an automated operational notification. Please do not reply to this email.</p>
+    </div>
+  </div>
+</body>
+</html>`;
+
+  return await sendZohoEmail(email, subject, html, text, "FirstLookLabs Security", true);
 }
 
 async function sendWelcomeEmail(email: string, fullName: string): Promise<boolean> {
-  const subject = "Welcome to FirstLook - Strategy Verified!";
-  const html = `
-    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #000000; color: #ffffff; padding: 40px; border-radius: 16px; max-width: 550px; margin: 0 auto; border: 1px solid rgba(99, 102, 241, 0.2); box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.1);">
-      <div style="text-align: center; margin-bottom: 30px;">
-        <h1 style="color: #6366f1; text-transform: uppercase; font-size: 24px; font-weight: 900; margin: 0; letter-spacing: 0.1em;">FIRSTLOOK MATCH</h1>
-        <p style="color: #94a3b8; font-size: 12px; text-transform: uppercase; tracking: 0.15em; margin-top: 5px;">ACCOUNT STABILIZED SUCCESSFULLY</p>
-      </div>
-      
-      <p style="font-size: 14px; color: #e2e8f0; line-height: 1.6; margin-bottom: 20px;">
-        Greetings <strong>${fullName || 'Trader'}</strong>,
-      </p>
-      
-      <p style="font-size: 13px; color: #94a3b8; line-height: 1.6; margin-bottom: 20px;">
-        Your profile is officially initialized. Welcome to the workspace! FirstLook is built to elevate your performance, help you verify strategy depth, keep historical drawing states, and calculate exact risk rewards before risking live market capital.
-      </p>
-      
-      <div style="background-color: rgb(30 27 75 / 0.4); border: 1px solid rgba(99, 102, 241, 0.15); padding: 18px; border-radius: 12px; margin-bottom: 25px;">
-        <h3 style="color: #818cf8; font-size: 13px; margin-top: 0; margin-bottom: 8px; text-transform: uppercase; font-family: monospace;">Workspace Directives</h3>
-        <ul style="color: #cbd5e1; font-size: 12px; margin: 0; padding-left: 20px; line-height: 1.7;">
-          <li>Test and review custom rules before risking capital</li>
-          <li>Maintain historical drawings & confluences</li>
-          <li>Define rules & grade setup performances</li>
-        </ul>
-      </div>
-      
-      <p style="font-size: 13px; color: #94a3b8; line-height: 1.6; margin-bottom: 30px;">
-        Our backtester is free forever. Elevate your setup today, test multiple market pairs, and master execution precision with complete visual control.
-      </p>
-      
-      <div style="text-align: center; padding-top: 20px; border-top: 1px solid rgb(30 41 59); font-size: 11px; color: #64748b; font-family: monospace;">
-        FIRSTLOOK SYSTEMS // SECURE BACKTEST LABS
-      </div>
+  const subject = "Welcome to FirstLookLabs";
+  const name = fullName || "User";
+  const text = `Hi ${name},\n\nYour FirstLookLabs account has been successfully created and verified.\n\nYou can now sign in and access your dashboard.\n\nWelcome aboard.\n\n— FirstLookLabs Security Team`;
+  
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Welcome to FirstLookLabs</title>
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, sans-serif; background-color: #ffffff; color: #111111; margin: 0; padding: 40px 20px;">
+  <div style="max-width: 500px; margin: 0 auto; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 6px; padding: 40px; box-shadow: none;">
+    <div style="margin-bottom: 24px;">
+      <span style="font-size: 18px; font-weight: 700; color: #111111; font-family: -apple-system, BlinkMacSystemFont, sans-serif;">FirstLookLabs</span>
     </div>
-  `;
+    
+    <p style="font-size: 14px; line-height: 1.6; color: #334155; margin: 0 0 16px 0;">Hi ${name},</p>
+    
+    <p style="font-size: 14px; line-height: 1.6; color: #334155; margin: 0 0 16px 0;">Your FirstLookLabs account has been successfully created and verified.</p>
+    
+    <p style="font-size: 14px; line-height: 1.6; color: #334155; margin: 0 0 16px 0;">You can now sign in and access your dashboard.</p>
+    
+    <p style="font-size: 14px; line-height: 1.6; color: #334155; margin: 0 0 32px 0;">Welcome aboard.</p>
+    
+    <div style="font-size: 12px; line-height: 1.5; color: #64748b; border-top: 1px solid #f1f5f9; padding-top: 24px;">
+      <p style="margin: 0 0 4px 0; font-weight: 600; color: #475569;">— FirstLookLabs Security Team</p>
+      <p style="margin: 0;">This is an automated operational notification. Please do not reply to this email.</p>
+    </div>
+  </div>
+</body>
+</html>`;
+
   try {
-    return await sendZohoEmail(email, subject, html);
+    return await sendZohoEmail(email, subject, html, text, "FirstLookLabs Security", false);
   } catch (err) {
     console.warn("[Zoho Mail] Welcome email failed:", err);
     return false;
@@ -304,34 +277,42 @@ async function sendWelcomeEmail(email: string, fullName: string): Promise<boolea
 }
 
 async function sendSubscriptionExpiredEmail(email: string, plan: string): Promise<boolean> {
-  const subject = `Your FirstLook ${plan.toUpperCase()} Access Has Expired`;
-  const html = `
-    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #0b0f19; color: #f3f4f6; padding: 40px 20px; text-align: center; border-radius: 12px; max-width: 500px; margin: 0 auto; border: 1px solid #1e293b;">
-      <div style="margin-bottom: 24px;">
-        <h2 style="color: #f59e0b; text-transform: uppercase; letter-spacing: 0.15em; font-size: 14px; margin-bottom: 4px;">SYSTEM ALERT</h2>
-        <h1 style="color: #ffffff; text-transform: uppercase; font-size: 22px; font-weight: 900; margin: 0; letter-spacing: 0.05em;">Subscription Expired</h1>
-      </div>
-      <p style="color: #9ca3af; font-size: 13px; line-height: 1.6; max-width: 400px; margin: 0 auto 30px auto;">
-        This notification serves as a record that your <strong>FirstLook ${plan.toUpperCase()}</strong> one-time membership has completed its 30-day active period.
-      </p>
-      <p style="color: #d1d5db; font-size: 13px; font-weight: 500; margin-bottom: 25px;">
-        Your account has been reverted back to the free <strong>BASIC</strong> tier. Locked indicators, multi-symbol watchlist allowances, and trade replays are now restricted.
-      </p>
-      <div style="background-color: #030712; border: 1px solid #d97706; padding: 15px; border-radius: 10px; display: inline-block; margin-bottom: 30px; text-align: left;">
-        <span style="font-family: monospace; font-size: 11px; color: #fbbf24; line-height: 1.5; display: block;">
-          &gt; STATUS: CONVERTED_TO_BASIC<br/>
-          &gt; LIMITS: ENGAGED<br/>
-          &gt; ACTION REQUIRED: UPGRADE WORKSPACE
-        </span>
-      </div>
-      <p style="color: #6b7280; font-size: 11px; margin: 0 0 10px 0;">To regain uninterrupted full suite workspace benefits, navigate to your platform Profile and select a monthly automatic subscription plan.</p>
-      <div style="border-top: 1px solid #111827; padding-top: 20px; margin-top: 30px; font-size: 10px; color: #4b5563; font-family: monospace;">
-        AUTO_EXPIRE_SERVICE // GATEWAY TERMINATION NOTICE
-      </div>
+  const subject = `Your FirstLookLabs ${plan.toUpperCase()} subscription has expired`;
+  const text = `Hello,\n\nThis notification confirms that your FirstLookLabs subscription has completed its active period.\n\nYour account has transitioned to the basic free plan. Locked features, multi-symbol layout slots, and historical statistics tracking are now limited.\n\nTo restore access to all features, visit your profile page to update your subscription options.\n\nFirstLookLabs Billing`;
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Your FirstLookLabs subscription has expired</title>
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #fafafa; color: #111111; margin: 0; padding: 40px 20px; -webkit-font-smoothing: antialiased;">
+  <div style="max-width: 500px; margin: 0 auto; background-color: #ffffff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 40px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+    <div style="margin-bottom: 24px;">
+      <span style="font-size: 20px; font-weight: 700; color: #111111; letter-spacing: -0.5px;">FirstLookLabs</span>
     </div>
-  `;
+    
+    <p style="font-size: 15px; line-height: 1.5; color: #444444; margin: 0 0 16px 0;">Hello,</p>
+    
+    <p style="font-size: 15px; line-height: 1.5; color: #444444; margin: 0 0 20px 0;">Your subscription has completed its 30-day active billing period. Your account has transitioned to the Basic plan.</p>
+    
+    <div style="background-color: #fffaf0; border: 1px solid #feebc8; padding: 20px; border-radius: 6px; margin-bottom: 24px;">
+      <p style="margin: 0; font-size: 13px; line-height: 1.6; color: #c05621;">
+        Status: Switched to Basic tier. To manage your account preferences and restore access to premium indicators, visit your profile subscriber settings.
+      </p>
+    </div>
+    
+    <div style="font-size: 12px; line-height: 1.4; color: #999999; border-top: 1px solid #f0f0f0; padding-top: 24px;">
+      <p style="margin: 0 0 4px 0;">FirstLookLabs Billing</p>
+      <p style="margin: 0;">This email is an automated notice. Please do not reply directly.</p>
+    </div>
+  </div>
+</body>
+</html>`;
+
   try {
-    return await sendZohoEmail(email, subject, html);
+    return await sendZohoEmail(email, subject, html, text, "FirstLookLabs Billing");
   } catch (err) {
     console.warn("[Zoho Mail] Expiration email failed:", err);
     return false;
@@ -619,122 +600,6 @@ async function startServer() {
     }
   });
 
-  app.get("/api/zoho/auth", async (req, res) => {
-    const clientId = process.env.ZOHO_CLIENT_ID;
-    const protocol = req.secure || req.headers["x-forwarded-proto"] === "https" ? "https" : "http";
-    const host = req.get("host");
-    const redirectUri = `${protocol}://${host}/api/zoho/auth/callback`;
-    
-    if (!clientId) {
-      return res.status(500).send("ZOHO_CLIENT_ID environment variable is missing.");
-    }
-
-    const authUrl = `https://accounts.zoho.com/oauth/v2/auth?response_type=code&client_id=${clientId}&scope=ZohoMail.accounts.READ,ZohoMail.messages.CREATE,ZohoMail.messages.SEND&redirect_uri=${encodeURIComponent(redirectUri)}&access_type=offline&prompt=consent`;
-    res.redirect(authUrl);
-  });
-
-  app.get("/api/zoho/auth/callback", async (req, res) => {
-    const code = req.query.code as string;
-    const authServer = (req.query["accounts-server"] as string) || "https://accounts.zoho.com";
-    
-    if (!code) {
-      return res.status(400).send("OAuth Authorization code is missing in Zoho callback query parameters.");
-    }
-
-    const clientId = process.env.ZOHO_CLIENT_ID;
-    const clientSecret = process.env.ZOHO_CLIENT_SECRET;
-    const protocol = req.secure || req.headers["x-forwarded-proto"] === "https" ? "https" : "http";
-    const host = req.get("host");
-    const redirectUri = `${protocol}://${host}/api/zoho/auth/callback`;
-
-    if (!clientId || !clientSecret) {
-      return res.status(500).send("ZOHO_CLIENT_ID or ZOHO_CLIENT_SECRET are not configured in environment variables.");
-    }
-
-    const params = new URLSearchParams();
-    params.append("code", code);
-    params.append("client_id", clientId);
-    params.append("client_secret", clientSecret);
-    params.append("redirect_uri", redirectUri);
-    params.append("grant_type", "authorization_code");
-
-    try {
-      const response = await fetch(`${authServer}/oauth/v2/token`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded"
-        },
-        body: params.toString()
-      });
-
-      if (!response.ok) {
-        const errText = await response.text();
-        return res.status(500).send(`Failed to exchange code: ${response.status} ${errText}`);
-      }
-
-      const data = await response.json() as any;
-      if (!data.access_token || !data.refresh_token) {
-        return res.status(500).send(`Zoho reply did not contain required access_token or refresh_token: ${JSON.stringify(data)}`);
-      }
-
-      const config: ZohoConfig = {
-        accessToken: data.access_token,
-        refreshToken: data.refresh_token,
-        apiDomain: data.api_domain || "https://mail.zoho.com",
-        authServer,
-        expiresAt: Date.now() + (data.expires_in || 3600) * 1000
-      };
-
-      try {
-        const pAcc = await fetchPrimaryZohoAccount(config.accessToken, config.apiDomain);
-        config.accountId = pAcc.accountId;
-        config.emailAddress = pAcc.emailAddress;
-      } catch (err: any) {
-        console.warn("[Zoho OAuth Callback] Could not fetch primary account details during callback:", err);
-      }
-
-      await saveZohoConfig(config);
-
-      res.setHeader("Content-Type", "text/html");
-      return res.send(`
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-          <meta charset="UTF-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1.0">
-          <title>Zoho Authorized Successfully</title>
-          <script src="https://cdn.tailwindcss.com"></script>
-        </head>
-        <body class="bg-slate-950 text-slate-100 flex items-center justify-center min-h-screen p-4 font-sans">
-          <div class="max-w-md w-full bg-slate-900 border border-indigo-900/40 p-8 rounded-2xl shadow-xl text-center">
-            <div class="mx-auto w-16 h-16 bg-indigo-950 border border-indigo-500/30 flex items-center justify-center rounded-full mb-6">
-              <svg class="w-8 h-8 text-indigo-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"></path>
-              </svg>
-            </div>
-            <h1 class="text-2xl font-black tracking-tight text-white uppercase mb-2">Security Core Active</h1>
-            <p class="text-indigo-400 text-xs font-mono tracking-wider uppercase mb-6">> ZOHO_MAIL_OAUTH_VERIFIED</p>
-            <p class="text-slate-400 text-sm leading-relaxed mb-6">
-              Your FirstLook Zoho Mail OAuth registration has completed successfully. Access and refresh security credentials have been securely stored in the system configuration registry.
-            </p>
-            <div class="p-4 bg-slate-950 border border-slate-800 rounded-xl mb-6 text-left font-mono text-xs text-indigo-300">
-              <p class="mb-1"><span class="text-slate-500">API DOMAIN:</span> ${config.apiDomain}</p>
-              <p class="mb-1"><span class="text-slate-500">AUTO-FROM:</span> ${config.emailAddress || 'Not Cached Yet'}</p>
-              <p><span class="text-slate-500">REFRESH TOKEN:</span> SECURE & ACTIVE</p>
-            </div>
-            <button onclick="window.close()" class="w-full py-3 bg-indigo-600 hover:bg-indigo-500 transition font-medium rounded-xl text-white outline-none">
-              Dismiss Console
-            </button>
-          </div>
-        </body>
-        </html>
-      `);
-    } catch (err: any) {
-      console.error("[Zoho Auth Callback Error]:", err);
-      return res.status(500).send(`Inner processing failure: ${err.message}`);
-    }
-  });
-
   app.post("/api/auth/signup", async (req, res) => {
     try {
       const { email, password, username, fullName, country, bio, experienceLevel, avatarUrl } = req.body;
@@ -743,6 +608,13 @@ async function startServer() {
       }
 
       const cleanEmail = email.toLowerCase().trim();
+
+      // Enforce rate limiting
+      const limitCheck = checkOtpRateLimit(cleanEmail);
+      if (!limitCheck.allowed) {
+        return res.status(429).json({ error: { message: limitCheck.message } });
+      }
+
       const existing = await db.getUserByEmail(cleanEmail);
       if (existing) {
         return res.status(400).json({ error: { message: "Email is already registered" } });
@@ -753,7 +625,7 @@ async function startServer() {
 
       pendingOtps.set(cleanEmail, {
         otp,
-        expiresAt: Date.now() + 5 * 60 * 1000,
+        expiresAt: Date.now() + 10 * 60 * 1000,
         signupData: {
           passwordHash,
           username,
@@ -786,6 +658,13 @@ async function startServer() {
       }
 
       const cleanEmail = email.toLowerCase().trim();
+
+      // Enforce rate limiting
+      const limitCheck = checkOtpRateLimit(cleanEmail);
+      if (!limitCheck.allowed) {
+        return res.status(429).json({ error: { message: limitCheck.message } });
+      }
+
       const existing = await db.getUserByEmail(cleanEmail);
       if (existing) {
         return res.status(400).json({ error: { message: "Email is already registered" } });
@@ -796,7 +675,7 @@ async function startServer() {
 
       pendingOtps.set(cleanEmail, {
         otp,
-        expiresAt: Date.now() + 5 * 60 * 1000,
+        expiresAt: Date.now() + 10 * 60 * 1000,
         signupData: {
           passwordHash,
           username,
@@ -898,6 +777,13 @@ async function startServer() {
       }
 
       const cleanEmail = email.toLowerCase().trim();
+
+      // Enforce rate limiting
+      const limitCheck = checkOtpRateLimit(cleanEmail);
+      if (!limitCheck.allowed) {
+        return res.status(429).json({ error: { message: limitCheck.message } });
+      }
+
       const user = await db.getUserByEmail(cleanEmail);
       if (!user) {
         return res.status(404).json({ error: { message: "No registered profile matches this email address." } });
@@ -906,29 +792,10 @@ async function startServer() {
       const otp = Math.floor(100000 + Math.random() * 900000).toString();
       pendingForgotOtps.set(cleanEmail, {
         otp,
-        expiresAt: Date.now() + 5 * 60 * 1000 // 5 minutes
+        expiresAt: Date.now() + 10 * 60 * 1000 // 10 minutes
       });
 
-      const messageContent = `
-        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #0b0f19; color: #f3f4f6; padding: 40px 20px; text-align: center; border-radius: 12px; max-width: 500px; margin: 0 auto; border: 1px solid #1e293b;">
-          <div style="margin-bottom: 24px;">
-            <h2 style="color: #6366f1; text-transform: uppercase; letter-spacing: 0.15em; font-size: 14px; margin-bottom: 4px;">SECURITY COMPONENT</h2>
-            <h1 style="color: #ffffff; text-transform: uppercase; font-size: 22px; font-weight: 900; margin: 0; letter-spacing: 0.05em;">Reset Credentials</h1>
-          </div>
-          <p style="color: #9ca3af; font-size: 13px; line-height: 1.6; max-width: 400px; margin: 0 auto 30px auto;">
-            You requested a passkey reset for your FirstLook Backtester account. Input the secure transaction code below to grant modification authority.
-          </p>
-          <div style="background-color: #030712; border: 1px solid #312e81; padding: 20px; border-radius: 10px; display: inline-block; margin-bottom: 30px;">
-            <span style="font-family: 'Courier New', Courier, monospace; font-size: 36px; font-weight: bold; letter-spacing: 0.2em; color: #f43f5e; padding-left: 0.2em;">${otp}</span>
-          </div>
-          <p style="color: #6b7280; font-size: 11px; margin: 0 0 10px 0;">This code is valid for exactly <strong>5 minutes</strong>.</p>
-          <div style="border-top: 1px solid #111827; padding-top: 20px; margin-top: 30px; font-size: 10px; color: #4b5563; font-family: monospace;">
-            SECURE LOG / COCKROACHDB_SECURITY // PASSWORD_RESET_OTP
-          </div>
-        </div>
-      `;
-
-      await sendZohoEmail(cleanEmail, "FirstLook Secure - Password Reset Code", messageContent);
+      await sendResetOtpEmail(cleanEmail, otp);
 
       return res.status(200).json({
         success: true,

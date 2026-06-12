@@ -165,11 +165,30 @@ export function LoginPage() {
     setSuccessMessage(null);
 
     try {
+      const cleanEmail = email.toLowerCase().trim();
+
+      // Check if email already exists in the database
+      const checkResponse = await fetch('/api/auth/check-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: cleanEmail })
+      });
+
+      if (checkResponse.ok) {
+        throw new Error('This email is already registered. Please change the email to continue.');
+      }
+
+      // If checkResponse had another issue besides 404, throw that. (404 means NOT registered, which is good!)
+      if (checkResponse.status !== 404) {
+        const checkRes = await checkResponse.json();
+        throw new Error(checkRes.error?.message || 'Failed to verify email availability.');
+      }
+
       const response = await fetch('/api/auth/register-request', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          email,
+          email: cleanEmail,
           password,
           username,
           fullName,
@@ -186,7 +205,7 @@ export function LoginPage() {
 
       if (res.requiresOtp) {
         setShowSignupOtp(true);
-        setSuccessMessage('A high-security OTP passcode has been dispatched to your email address.');
+        setSuccessMessage('A verification code has been dispatched. (Please check your spam/junk folder if you do not see it shortly)');
       } else {
         setSuccessMessage('System profile created successfully! Redirecting you to the security clearance login...');
         
@@ -253,7 +272,7 @@ export function LoginPage() {
         throw new Error(res.error?.message || 'Failed to request reset passcode');
       }
 
-      setSuccessMessage(res.message || 'A security transaction passcode has been successfully dispatched.');
+      setSuccessMessage(res.message || 'A verification passcode has been dispatched. (Please check your spam/junk folder if you do not see it shortly)');
       setForgotStep('verify');
     } catch (err: any) {
       console.error('Forgot password submission error:', err);
@@ -852,7 +871,7 @@ export function LoginPage() {
                                 className="space-y-4"
                               >
                                 <div className="text-[10px] text-slate-500 font-mono tracking-tight leading-relaxed mb-1">
-                                  Provide your system profile email format to trigger an official Zoho OTP credentials dispatch sequence.
+                                  Enter your registered email address to receive a password reset code.
                                 </div>
 
                                 <div className="bg-slate-50 border border-slate-200 focus-within:border-indigo-600 focus-within:ring-1 focus-within:ring-indigo-600 transition-all p-3 rounded-xl">
@@ -1248,7 +1267,7 @@ export function LoginPage() {
                             </div>
 
                             <p className="text-[10px] text-slate-500 font-mono tracking-tight leading-relaxed">
-                              A high-security 6-digit transaction authorization passcode has been successfully dispatched via Zoho to your address. Provide the credential below to authorize profile initialization.
+                              We sent a 6-digit verification code to your email. Enter it below to complete your registration. <strong className="text-amber-600 font-bold block mt-1 hover:text-amber-500 transition-colors">Important: If you do not see the email in your inbox, please make sure to check your Spam or Junk folder!</strong>
                             </p>
 
                             <div className="bg-slate-50 border border-slate-200 focus-within:border-indigo-600 focus-within:ring-1 focus-within:ring-indigo-600 transition-all p-3 rounded-xl">

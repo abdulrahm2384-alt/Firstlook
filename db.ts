@@ -485,14 +485,14 @@ export const db = {
   async updateUserPassword(email: string, passwordHash: string): Promise<boolean> {
     const cleanEmail = email.toLowerCase().trim();
     if (!isDbActive) {
-      const user = memUsers.find(u => u.email === cleanEmail);
+      const user = memUsers.find(u => (u.email || '').toLowerCase().trim() === cleanEmail);
       if (user) {
         user.password_hash = passwordHash;
         return true;
       }
       return false;
     }
-    const res = await pool.query('UPDATE users SET password_hash = $1 WHERE email = $2', [passwordHash, cleanEmail]);
+    const res = await pool.query('UPDATE users SET password_hash = $1 WHERE LOWER(email) = LOWER($2)', [passwordHash, cleanEmail]);
     return res.rowCount !== null && res.rowCount > 0;
   },
 
@@ -500,9 +500,9 @@ export const db = {
   async getUserByEmail(email: string) {
     const cleanEmail = email.toLowerCase().trim();
     if (!isDbActive) {
-      return memUsers.find(u => u.email === cleanEmail) || null;
+      return memUsers.find(u => (u.email || '').toLowerCase().trim() === cleanEmail) || null;
     }
-    const res = await pool.query('SELECT * FROM users WHERE email = $1', [cleanEmail]);
+    const res = await pool.query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [cleanEmail]);
     return res.rows[0] || null;
   },
 
