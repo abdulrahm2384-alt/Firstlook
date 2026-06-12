@@ -377,6 +377,218 @@ Lists administrative API requests and signature tracking logs in descending chro
 
 ---
 
+## User & Watchlist Administration Endpoints
+
+### 1. Delete Specific User
+Permanently deletes a specific user and all of their linked records (cascaded trades, drawings, preferences, watchlists, setups, journal logs, etc.).
+*   **Route:** `DELETE /api/admin/users/:userId`
+*   **Request Example:**
+    ```bash
+    curl -X DELETE -H "Authorization: Bearer YOUR_FOREX_API_SECRET" http://localhost:3000/api/admin/users/usr_uuid_1
+    ```
+*   **Response (200 OK):**
+    ```json
+    {
+      "success": true,
+      "message": "User usr_uuid_1 and all associated data have been permanently deleted successfully."
+    }
+    ```
+
+### 2. Update User Details (Dynamic and Arbitrary fields)
+Updates any core profile parameter (email, username, full_name, country, bio, experience_level, avatar_url), hashes a plain `password` dynamically if passed, or configures the subscription settings inside their preferences profile JSON.
+*   **Route:** `PUT /api/admin/users/:userId`
+*   **Request Body JSON Fields:**
+    *   `email` (optional string): New email.
+    *   `password` (optional string): Dynamically hashed on the server to `password_hash`.
+    *   `username` (optional string): Interactive handle.
+    *   `full_name` (optional string): Formal profile name.
+    *   `country` (optional string): Resident territory.
+    *   `bio` (optional string): Short biography.
+    *   `experience_level` (optional string): Skill indicator (e.g., `LEGEND`, `INTERMEDIATE`, `BEGINNER`).
+    *   `avatar_url` (optional string): Profile image URL.
+    *   `subscriptionPlan` / `preferences.subscriptionPlan` (optional string): Subscription plan type (`free`, `plus`, `premium`).
+    *   `subscriptionExpiry` / `preferences.subscriptionExpiry` (optional number MS): Expire timestamp.
+    *   `isSubscriptionRecurring` / `preferences.isSubscriptionRecurring` (optional boolean): Active renewal.
+*   **Request Example:**
+    ```bash
+    curl -X PUT -H "Authorization: Bearer YOUR_FOREX_API_SECRET" \
+         -H "Content-Type: application/json" \
+         -d '{"full_name": "New Name", "password": "securePass123", "subscriptionPlan": "premium", "subscriptionExpiry": 1783296000000}' \
+         http://localhost:3000/api/admin/users/usr_uuid_1
+    ```
+*   **Response (200 OK):**
+    ```json
+    {
+      "success": true,
+      "message": "User details updated successfully.",
+      "user": {
+        "id": "usr_uuid_1",
+        "email": "chinelo@firstlook.com",
+        "username": "chinelo_trader",
+        "full_name": "New Name",
+        "country": "Nigeria",
+        "bio": "Professional Forex journaler and technical trader.",
+        "experience_level": "LEGEND",
+        "avatar_url": "",
+        "created_at": "2026-05-17T23:06:29.000Z"
+      }
+    }
+    ```
+
+### 3. View Watchlists of All Users
+Enables administrators to view watchlist symbols and structures across the entire platform in a singular listing.
+*   **Route:** `GET /api/admin/watchlist/all`
+*   **Request Example:**
+    ```bash
+    curl -H "Authorization: Bearer YOUR_FOREX_API_SECRET" http://localhost:3000/api/admin/watchlist/all
+    ```
+*   **Response (200 OK):**
+    ```json
+    {
+      "success": true,
+      "watchlists": [
+        {
+          "userId": "usr_uuid_1",
+          "items": [
+            { "id": "eurusd", "symbol": "EURUSD", "status": "active" }
+          ]
+        }
+      ]
+    }
+    ```
+
+### 4. View User Watchlist Specifics
+Fetch the complete active watchlist item list belonging to a specific trade subscriber.
+*   **Route:** `GET /api/admin/users/:userId/watchlist`
+*   **Request Example:**
+    ```bash
+    curl -H "Authorization: Bearer YOUR_FOREX_API_SECRET" http://localhost:3000/api/admin/users/usr_uuid_1/watchlist
+    ```
+*   **Response (200 OK):**
+    ```json
+    {
+      "success": true,
+      "userId": "usr_uuid_1",
+      "watchlist": [
+        { "id": "eurusd", "symbol": "EURUSD", "status": "active" }
+      ]
+    }
+    ```
+
+### 5. Delete specific user watchlist pairs (or ALL items)
+Delete a specific symbol from a user's watchlist, or clear their watchlist entirely if no parameter is passed. All matching simulation trades will be cascaded and cleaned up dynamically.
+*   **Route:** `DELETE /api/admin/users/:userId/watchlist`
+*   **Query Parameters / Body fields:**
+    *   `symbol` (optional string): Name of symbol to delete (e.g. `EURUSD`). Case-insensitive. If not provided, clears the whole watchlist.
+    *   `prefix` (optional string): Symbol matching prefix context.
+*   **Request Example (Clear Specific Symbol):**
+    ```bash
+    curl -X DELETE -H "Authorization: Bearer YOUR_FOREX_API_SECRET" "http://localhost:3000/api/admin/users/usr_uuid_1/watchlist?symbol=EURUSD"
+    ```
+*   **Request Example (Clear Entire Watchlist):**
+    ```bash
+    curl -X DELETE -H "Authorization: Bearer YOUR_FOREX_API_SECRET" http://localhost:3000/api/admin/users/usr_uuid_1/watchlist
+    ```
+*   **Response (200 OK):**
+    ```json
+    {
+      "success": true,
+      "message": "Successfully deleted watchlist symbol EURUSD and all associated trades for user usr_uuid_1.",
+      "deletedCount": 1,
+      "remainingCount": 0,
+      "watchlist": []
+    }
+    ```
+
+### 5b. View Specific Watchlist Item Details and Statistics
+Retrieve complete performance metrics, win/loss stats, trade counts, pips yield, and session playback coordinates for an individual watchlist item of a specified user.
+*   **Route:** `GET /api/admin/users/:userId/watchlist/:watchlistId/stats`
+*   **Request Example:**
+    ```bash
+    curl -H "Authorization: Bearer YOUR_FOREX_API_SECRET" http://localhost:3000/api/admin/users/usr_uuid_1/watchlist/wl_uuid_1/stats
+    ```
+*   **Response (200 OK):**
+    ```json
+    {
+      "success": true,
+      "userId": "usr_uuid_1",
+      "watchlistId": "wl_uuid_1",
+      "found": true,
+      "item": {
+        "id": "wl_uuid_1",
+        "symbol": "EURUSD",
+        "prefix": "Backtest_Session_A",
+        "status": "completed",
+        "start_time": 1780000000,
+        "end_time": 1780086400,
+        "last_play_candle_time": 1780086400
+      },
+      "statistics": {
+        "totalTrades": 12,
+        "totalWins": 8,
+        "totalLosses": 3,
+        "totalBreakevens": 1,
+        "winRate": "66.67%",
+        "netPips": 45.2,
+        "totalRR": 18.5,
+        "averageRR": 1.54,
+        "longTradesCount": 7,
+        "shortTradesCount": 5
+      },
+      "trades": [...],
+      "sessionState": { ... }
+    }
+    ```
+
+### 5c. Delete Specific Individual Watchlist Item By ID
+Delete a specific watchlist item using its unique ID, automatically cascading to clean up all of that item's execution trades and playback backtest coordinate states permanently.
+*   **Route:** `DELETE /api/admin/users/:userId/watchlist/:watchlistId`
+*   **Request Example:**
+    ```bash
+    curl -X DELETE -H "Authorization: Bearer YOUR_FOREX_API_SECRET" http://localhost:3000/api/admin/users/usr_uuid_1/watchlist/wl_uuid_1
+    ```
+*   **Response (200 OK):**
+    ```json
+    {
+      "success": true,
+      "message": "Successfully deleted watchlist item EURUSD and all associated simulation trades & states for user usr_uuid_1.",
+      "watchlist": []
+    }
+    ```
+
+### 6. Bulk Delete Users by Email List
+Permanently delete multiple user accounts (and all associated configurations) by entering an array or a comma-separated list of email addresses.
+*   **Route:** `POST /api/admin/users/bulk-delete`
+*   **Request Body JSON Fields:**
+    *   `emails` (required array or comma-separated string): List of subscriber emails.
+*   **Request Example (Array input):**
+    ```bash
+    curl -X POST -H "Authorization: Bearer YOUR_FOREX_API_SECRET" \
+         -H "Content-Type: application/json" \
+         -d '{"emails": ["chinelo@firstlook.com", "amani@firstlook.com"]}' \
+         http://localhost:3000/api/admin/users/bulk-delete
+    ```
+*   **Response (200 OK):**
+    ```json
+    {
+      "success": true,
+      "summary": {
+        "totalProcessed": 2,
+        "successfullyDeletedCount": 2,
+        "notFoundCount": 0,
+        "failedCount": 0
+      },
+      "deleted": [
+        "chinelo@firstlook.com",
+        "amani@firstlook.com"
+      ],
+      "notFound": [],
+      "failed": []
+    }
+    ```
+
+---
+
 ## Platform Diagnostics & Troubleshooting
 
 *   **Zero-Dependency Fallback:** In the absence of an active CockroachDB cluster URL, the server operates on a fully functional, auto-seeded in-memory transaction replica. No data queries will crash or yield mock gaps during sandbox demonstrations.

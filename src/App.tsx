@@ -6118,7 +6118,7 @@ export default function App() {
                       return `${year}-${month}-${date}`;
                     };
 
-                    const maxEndVal = isWeeklyMarket ? getPastWeekFridayStr() : new Date().toISOString().split('T')[0];
+                    const maxEndVal = getPastWeekFridayStr();
 
                     return (
                       <>
@@ -6153,7 +6153,7 @@ export default function App() {
                           <div className="flex flex-col px-1">
                             <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">End Date</span>
                             <span className="text-[7px] font-bold text-indigo-600 uppercase tracking-tight mt-1">
-                              {isWeeklyMarket ? 'Latest: Past Week Friday' : 'Latest: Today'}
+                              Latest: Past Week Friday
                             </span>
                           </div>
                           <div className="relative group">

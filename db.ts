@@ -1462,11 +1462,14 @@ export const db = {
           username: u.username,
           full_name: u.full_name,
           country: u.country,
+          bio: u.bio || '',
           experience_level: u.experience_level,
+          avatar_url: u.avatar_url || '',
           created_at: u.created_at,
           plan: settings?.subscriptionPlan || 'free',
           subscription_expiry: settings?.subscriptionExpiry || null,
-          is_recurring: settings?.isSubscriptionRecurring || false
+          is_recurring: settings?.isSubscriptionRecurring || false,
+          settings: settings || null
         };
       });
       if (plan) {
@@ -1515,8 +1518,11 @@ export const db = {
         u.username, 
         u.full_name, 
         u.country, 
+        u.bio,
+        u.avatar_url,
         u.experience_level, 
         u.created_at,
+        p.settings as settings,
         COALESCE(p.settings->>'subscriptionPlan', 'free') as plan,
         (p.settings->>'subscriptionExpiry')::numeric as subscription_expiry,
         (p.settings->>'isSubscriptionRecurring')::boolean as is_recurring
@@ -1563,8 +1569,30 @@ export const db = {
     dataQuery += ` ORDER BY u.created_at DESC LIMIT $${idx} OFFSET $${idx + 1}`;
     const dataRes = await pool.query(dataQuery, [...params, limit, offset]);
 
+    const parsedUsers = dataRes.rows.map(row => {
+      let parsedSettings = null;
+      if (row.settings) {
+        parsedSettings = typeof row.settings === 'string' ? JSON.parse(row.settings) : row.settings;
+      }
+      return {
+        id: row.id,
+        email: row.email,
+        username: row.username,
+        full_name: row.full_name,
+        country: row.country,
+        bio: row.bio || '',
+        avatar_url: row.avatar_url || '',
+        experience_level: row.experience_level,
+        created_at: row.created_at,
+        plan: row.plan,
+        subscription_expiry: row.subscription_expiry ? Number(row.subscription_expiry) : null,
+        is_recurring: !!row.is_recurring,
+        settings: parsedSettings
+      };
+    });
+
     return {
-      users: dataRes.rows,
+      users: parsedUsers,
       total,
       page,
       limit,
@@ -2259,5 +2287,227 @@ export const db = {
     `, [id, data.accountId, userId, data.amount, data.notes, createdAt]);
 
     return id;
+  },
+
+  async deleteUserPermanently(userId: string): Promise<void> {
+    if (!isDbActive) {
+      // 1. Remove from memUsers
+      const userIdx = memUsers.findIndex(u => u.id === userId);
+      if (userIdx !== -1) {
+        memUsers.splice(userIdx, 1);
+      }
+      
+      // 2. Remove trades
+      for (let i = memTrades.length - 1; i >= 0; i--) {
+        if (memTrades[i].user_id === userId) {
+          memTrades.splice(i, 1);
+        }
+      }
+
+      // 3. Delete drawings
+      memDrawings.delete(userId);
+
+      // 4. Delete preferences
+      memPreferences.delete(userId);
+
+      // 5. Delete watchlist
+      memWatchlist.delete(userId);
+
+      // 6. Delete backtest sessions
+      memBacktestSessions.delete(userId);
+
+      // 7. Delete active device sessions
+      memSessions.delete(userId);
+
+      // 8. Delete setups
+      for (let i = memSetups.length - 1; i >= 0; i--) {
+        if (memSetups[i].user_id === userId) {
+          memSetups.splice(i, 1);
+        }
+      }
+
+      // 9. Delete preregistration
+      memCompetitionPreregistrations.delete(userId);
+
+      // 10. Delete support messages
+      memSupportMessages.delete(userId);
+
+      // 11. Delete journal accounts, trades, withdrawals
+      for (let i = memJournalAccounts.length - 1; i >= 0; i--) {
+        if (memJournalAccounts[i].userId === userId || memJournalAccounts[i].user_id === userId) {
+          memJournalAccounts.splice(i, 1);
+        }
+      }
+      for (let i = memJournalTrades.length - 1; i >= 0; i--) {
+        if (memJournalTrades[i].userId === userId || memJournalTrades[i].user_id === userId) {
+          memJournalTrades.splice(i, 1);
+        }
+      }
+      for (let i = memJournalWithdrawals.length - 1; i >= 0; i--) {
+        if (memJournalWithdrawals[i].userId === userId || memJournalWithdrawals[i].user_id === userId) {
+          memJournalWithdrawals.splice(i, 1);
+        }
+      }
+      return;
+    }
+
+    // CockroachDB cascades ON DELETE CASCADE for all references of user_id, 
+    // and ON DELETE SET NULL for admin_payments.
+    await pool.query('DELETE FROM users WHERE id = $1', [userId]);
+  },
+
+  async adminUpdateUser(userId: string, updates: any): Promise<any> {
+    const coreFields = ['email', 'password_hash', 'username', 'full_name', 'country', 'bio', 'experience_level', 'avatar_url'];
+    const userUpdates: Record<string, any> = {};
+    let hasUserUpdates = false;
+
+    coreFields.forEach(f => {
+      if (updates[f] !== undefined) {
+        userUpdates[f] = updates[f];
+        hasUserUpdates = true;
+      }
+    });
+
+    if (hasUserUpdates) {
+      if (!isDbActive) {
+        const user = memUsers.find(u => u.id === userId);
+        if (user) {
+          Object.assign(user, userUpdates);
+        }
+      } else {
+        const fields: string[] = [];
+        const values: any[] = [];
+        let idx = 1;
+
+        Object.entries(userUpdates).forEach(([key, val]) => {
+          fields.push(`${key} = $${idx}`);
+          values.push(val);
+          idx++;
+        });
+
+        values.push(userId);
+        await pool.query(
+          `UPDATE users SET ${fields.join(', ')} WHERE id = $${idx}`,
+          values
+        );
+      }
+    }
+
+    if (updates.settings || updates.preferences || updates.subscriptionPlan || updates.subscriptionExpiry || updates.isSubscriptionRecurring !== undefined) {
+      const settingsUpdates: any = {};
+      if (updates.settings) Object.assign(settingsUpdates, updates.settings);
+      if (updates.preferences) Object.assign(settingsUpdates, updates.preferences);
+      
+      const subFields = ['subscriptionPlan', 'subscriptionExpiry', 'isSubscriptionRecurring', 'theme', 'billingCycle'];
+      subFields.forEach(f => {
+        if (updates[f] !== undefined) {
+          settingsUpdates[f] = updates[f];
+        }
+      });
+
+      if (Object.keys(settingsUpdates).length > 0) {
+        await this.savePreferences(userId, settingsUpdates);
+      }
+    }
+
+    return await this.getUserById(userId);
+  },
+
+  async adminGetAllWatchlists(): Promise<any[]> {
+    if (!isDbActive) {
+      const results: any[] = [];
+      memWatchlist.forEach((items, userId) => {
+        results.push({ userId, items });
+      });
+      return results;
+    }
+    const res = await pool.query('SELECT user_id as "userId", items FROM user_watchlist');
+    return res.rows;
+  },
+
+  async adminGetWatchlistItemStats(userId: string, watchlistId: string): Promise<any> {
+    const watchlist = await this.getWatchlist(userId);
+    const item = watchlist.find((i: any) => i.id === watchlistId || i.symbol?.toUpperCase() === watchlistId.toUpperCase());
+    
+    if (!item) {
+      return { found: false };
+    }
+
+    const finalWatchlistId = item.id || watchlistId;
+
+    let trades: any[] = [];
+    if (!isDbActive) {
+      trades = memTrades.filter((t: any) => 
+        t.user_id === userId && 
+        (t.watchlist_id === finalWatchlistId || 
+         (t.symbol?.toUpperCase() === item.symbol?.toUpperCase() && t.prefix === item.prefix))
+      );
+    } else {
+      const res = await pool.query(
+        `SELECT * FROM user_trades 
+         WHERE user_id = $1 
+           AND (watchlist_id = $2 OR (UPPER(symbol) = UPPER($3) AND (prefix = $4 OR ($4 IS NULL AND prefix IS NULL))))`,
+        [userId, finalWatchlistId, item.symbol, item.prefix || null]
+      );
+      trades = res.rows;
+    }
+
+    let totalTrades = trades.length;
+    let totalWins = 0;
+    let totalLosses = 0;
+    let totalBreakevens = 0;
+    let netPips = 0;
+    let totalRR = 0;
+    let longTradesCount = 0;
+    let shortTradesCount = 0;
+
+    trades.forEach((t: any) => {
+      const pipsVal = parseFloat(t.pips) || 0;
+      const rrVal = parseFloat(t.rr) || 0;
+      const tStatus = (t.status || "").toUpperCase();
+      const tType = (t.type || "").toUpperCase();
+
+      netPips += pipsVal;
+      totalRR += rrVal;
+
+      if (tStatus === 'TP' || tStatus === 'WIN' || pipsVal > 0) {
+        totalWins++;
+      } else if (tStatus === 'SL' || tStatus === 'LOSS' || pipsVal < 0) {
+        totalLosses++;
+      } else {
+        totalBreakevens++;
+      }
+
+      if (tType === 'LONG' || tType === 'BUY') {
+        longTradesCount++;
+      } else if (tType === 'SHORT' || tType === 'SELL') {
+        shortTradesCount++;
+      }
+    });
+
+    const winRate = totalTrades > 0 ? ((totalWins / totalTrades) * 100).toFixed(2) + "%" : "0.00%";
+    const averageRR = totalTrades > 0 ? (totalRR / totalTrades).toFixed(2) : "0.00";
+
+    const sessions = await this.getBacktestSessions(userId);
+    const sessionState = sessions[finalWatchlistId] || sessions[`${item.symbol}_${item.prefix || ''}`] || null;
+
+    return {
+      found: true,
+      item,
+      statistics: {
+        totalTrades,
+        totalWins,
+        totalLosses,
+        totalBreakevens,
+        winRate,
+        netPips: parseFloat(netPips.toFixed(2)),
+        totalRR: parseFloat(totalRR.toFixed(2)),
+        averageRR: parseFloat(averageRR),
+        longTradesCount,
+        shortTradesCount
+      },
+      trades,
+      sessionState
+    };
   }
 };

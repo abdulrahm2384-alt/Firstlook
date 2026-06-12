@@ -150,21 +150,42 @@ const WatchlistItemRow = memo(({
   }, [trades]);
 
   const progress = useMemo(() => {
-    if (!session) return { percent: '0.00%', fraction: 0, label: '0.00%' };
-    // session.startTime and session.currentTime are in seconds. createdAt is in ms.
-    const start = session.startTime; 
-    const target = session.createdAt / 1000;
-    const cur = session.currentTime;
+    // 1. Resolve start time (in seconds)
+    const start = item.start_time || session?.startTime || 0;
     
-    const isSessionDone = session.isCompleted || item.status === 'completed' || cur >= target || (target - cur) <= 86400;
-    const p = isSessionDone ? 100 : (target > start ? Math.min(100, Math.max(0, ((cur - start) / (target - start)) * 100)) : 100);
+    // 2. Resolve end time (in seconds)
+    const end = item.end_time || session?.endTime || 0;
+    
+    // 3. Resolve current playhead time (in seconds)
+    const cur = session?.currentTime || item.last_play_candle_time || start;
+    
+    // 4. Status indicator for completion
+    const isSessionDone = session?.isCompleted || item.status === 'completed' || (end > 0 && cur >= end);
+
+    // 5. Calculate percentage (0 to 100)
+    let p = 0;
+    if (isSessionDone) {
+      p = 100;
+    } else if (end > start && start > 0) {
+      p = Math.min(100, Math.max(0, ((cur - start) / (end - start)) * 100));
+    }
+    
     const label = p > 0 && p < 0.01 ? ">0.01%" : `${p.toFixed(2)}%`;
     return {
       percent: `${p}%`,
       fraction: p,
       label
     };
-  }, [session?.currentTime, session?.startTime, session?.createdAt, session?.isCompleted, item.status]);
+  }, [
+    session?.currentTime, 
+    session?.startTime, 
+    session?.endTime, 
+    session?.isCompleted, 
+    item.start_time, 
+    item.last_play_candle_time, 
+    item.end_time, 
+    item.status
+  ]);
 
   return (
     <Reorder.Item 
@@ -172,13 +193,13 @@ const WatchlistItemRow = memo(({
       value={item}
       dragListener={false}
       dragControls={dragControls}
-      className={`relative will-change-transform transform-gpu ${isMenuOpen ? 'z-[200]' : (isExpanded ? 'z-[50]' : 'z-10')}`}
-      style={{ zIndex: isMenuOpen ? 1000 : (isExpanded ? 50 : 10) }}
+      className={`relative will-change-transform transform-gpu ${isMenuOpen ? '!z-[9999]' : (isExpanded ? 'z-[50]' : 'z-10')}`}
+      style={{ zIndex: isMenuOpen ? 9999 : (isExpanded ? 50 : 10) }}
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, scale: 0.95 }}
     >
-      <div className={`bg-white border-b border-slate-100 hover:bg-slate-50/20 transition-all duration-200 flex flex-col relative shadow-[0_1px_3px_rgba(0,0,0,0.02)] ${isMenuOpen ? 'z-[200]' : (isExpanded ? 'z-[50]' : 'z-10')}`}>
+      <div className={`bg-white border-b border-slate-100 hover:bg-slate-50/20 transition-all duration-200 flex flex-col relative shadow-[0_1px_3px_rgba(0,0,0,0.02)] ${isMenuOpen ? '!z-[9999]' : (isExpanded ? 'z-[50]' : 'z-10')}`}>
         {/* MOBILE COMPACT VIEW (hidden on desktop screens md and up) */}
         <div className="flex md:hidden gap-2 px-3 py-3 items-center hover:bg-slate-50/40 active:bg-slate-100/30 transition-all duration-200 justify-between">
           {/* Clickable Area for OnSelect + Press-and-hold Trigger */}
@@ -248,7 +269,7 @@ const WatchlistItemRow = memo(({
           </div>
 
           {/* Action Controls Menu */}
-          <div className="flex justify-end items-center ml-1 relative">
+          <div className={`flex justify-end items-center ml-1 relative ${isMenuOpen ? '!z-[9999]' : ''}`}>
             <button
               type="button"
               onClick={(e) => {
@@ -413,7 +434,7 @@ const WatchlistItemRow = memo(({
           </button>
 
           {/* Column 5: Desktop Controller Clicks (col-span-1) */}
-          <div className="col-span-1 flex items-center justify-end gap-1.5 shrink-0 relative">
+          <div className={`col-span-1 flex items-center justify-end gap-1.5 shrink-0 relative ${isMenuOpen ? '!z-[9999]' : ''}`}>
             <button
               type="button"
               onClick={() => onSelect(item.symbol, item.prefix, item.id)}
@@ -423,7 +444,7 @@ const WatchlistItemRow = memo(({
               <ChevronRight size={15} strokeWidth={3} />
             </button>
             
-            <div className="relative flex items-center">
+            <div className={`relative flex items-center ${isMenuOpen ? '!z-[9999]' : ''}`}>
               <button
                 type="button"
                 onClick={(e) => {
@@ -596,6 +617,8 @@ const WatchlistItemRow = memo(({
   return prev.item === next.item && 
          prev.session?.currentTime === next.session?.currentTime && 
          prev.session?.startTime === next.session?.startTime &&
+         prev.session?.endTime === next.session?.endTime &&
+         prev.session?.isCompleted === next.session?.isCompleted &&
          prev.isMenuOpen === next.isMenuOpen &&
          prev.setups === next.setups &&
          prev.journalTrades === next.journalTrades;

@@ -3081,6 +3081,319 @@ async function startServer() {
     }
   });
 
+  // 13. Permanently Delete User and all data
+  adminRouter.delete("/users/:userId", async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const user = await db.getUserById(userId);
+      if (!user) {
+        await db.logAdminRequest(req.baseUrl + req.path, req.method, req.query, req.ip, 404);
+        return res.status(404).json({ error: `Not Found: User with ID ${userId} does not exist.` });
+      }
+      
+      await db.deleteUserPermanently(userId);
+      await db.logAdminRequest(req.baseUrl + req.path, req.method, req.query, req.ip, 200);
+      res.json({
+        success: true,
+        message: `User ${userId} and all associated data have been permanently deleted successfully.`
+      });
+    } catch (err: any) {
+      console.error("[Admin API] delete user error:", err);
+      await db.logAdminRequest(req.baseUrl + req.path, req.method, req.query, req.ip, 500);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 14. Update user details (any field - set or unset)
+  adminRouter.put("/users/:userId", async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const user = await db.getUserById(userId);
+      if (!user) {
+        await db.logAdminRequest(req.baseUrl + req.path, req.method, req.query, req.ip, 404);
+        return res.status(404).json({ error: `Not Found: User with ID ${userId} does not exist.` });
+      }
+
+      // Hash plain password if provided
+      if (req.body.password && typeof req.body.password === "string" && req.body.password.trim() !== "") {
+        req.body.password_hash = await bcrypt.hash(req.body.password, 10);
+      }
+
+      const updatedUser = await db.adminUpdateUser(userId, req.body);
+      await db.logAdminRequest(req.baseUrl + req.path, req.method, req.query, req.ip, 200);
+      res.json({
+        success: true,
+        message: "User details updated successfully.",
+        user: {
+          id: updatedUser.id,
+          email: updatedUser.email,
+          username: updatedUser.username,
+          full_name: updatedUser.full_name,
+          country: updatedUser.country,
+          bio: updatedUser.bio,
+          experience_level: updatedUser.experience_level,
+          avatar_url: updatedUser.avatar_url,
+          created_at: updatedUser.created_at
+        }
+      });
+    } catch (err: any) {
+      console.error("[Admin API] update user error:", err);
+      await db.logAdminRequest(req.baseUrl + req.path, req.method, req.query, req.ip, 500);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 15. View all users' watchlist items
+  adminRouter.get("/watchlist/all", async (req, res) => {
+    try {
+      const watchlists = await db.adminGetAllWatchlists();
+      await db.logAdminRequest(req.baseUrl + req.path, req.method, req.query, req.ip, 200);
+      res.json({
+        success: true,
+        watchlists
+      });
+    } catch (err: any) {
+      console.error("[Admin API] get all watchlists error:", err);
+      await db.logAdminRequest(req.baseUrl + req.path, req.method, req.query, req.ip, 500);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 16. View specific user watchlist items
+  adminRouter.get("/users/:userId/watchlist", async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const user = await db.getUserById(userId);
+      if (!user) {
+        await db.logAdminRequest(req.baseUrl + req.path, req.method, req.query, req.ip, 404);
+        return res.status(404).json({ error: `Not Found: User with ID ${userId} does not exist.` });
+      }
+
+      const watchlist = await db.getWatchlist(userId);
+      await db.logAdminRequest(req.baseUrl + req.path, req.method, req.query, req.ip, 200);
+      res.json({
+        success: true,
+        userId,
+        watchlist
+      });
+    } catch (err: any) {
+      console.error("[Admin API] get specific user watchlist error:", err);
+      await db.logAdminRequest(req.baseUrl + req.path, req.method, req.query, req.ip, 500);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 16b. View specific watchlist item details and statistics
+  adminRouter.get(["/users/:userId/watchlist/:watchlistId", "/users/:userId/watchlist/:watchlistId/stats"], async (req, res) => {
+    try {
+      const { userId, watchlistId } = req.params;
+      const user = await db.getUserById(userId);
+      if (!user) {
+        await db.logAdminRequest(req.baseUrl + req.path, req.method, req.query, req.ip, 404);
+        return res.status(404).json({ error: `Not Found: User with ID ${userId} does not exist.` });
+      }
+
+      const stats = await db.adminGetWatchlistItemStats(userId, watchlistId);
+      if (!stats.found) {
+        await db.logAdminRequest(req.baseUrl + req.path, req.method, req.query, req.ip, 404);
+        return res.status(404).json({ error: `Not Found: Watchlist item or symbol '${watchlistId}' does not exist for user ${userId}.` });
+      }
+
+      await db.logAdminRequest(req.baseUrl + req.path, req.method, req.query, req.ip, 200);
+      res.json({
+        success: true,
+        userId,
+        watchlistId,
+        ...stats
+      });
+    } catch (err: any) {
+      console.error("[Admin API] get specific watchlist item stats error:", err);
+      await db.logAdminRequest(req.baseUrl + req.path, req.method, req.query, req.ip, 500);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 17. Delete specific or all watchlist items for a specific user
+  adminRouter.delete("/users/:userId/watchlist", async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const user = await db.getUserById(userId);
+      if (!user) {
+        await db.logAdminRequest(req.baseUrl + req.path, req.method, req.query, req.ip, 404);
+        return res.status(404).json({ error: `Not Found: User with ID ${userId} does not exist.` });
+      }
+
+      const symbolToDelete = (req.query.symbol || req.body.symbol || "").toString().trim().toUpperCase();
+      const prefixToDelete = (req.query.prefix || req.body.prefix || undefined);
+
+      const currentWatchlist = await db.getWatchlist(userId);
+      let updated;
+      let deletedCount = 0;
+
+      if (symbolToDelete) {
+        updated = currentWatchlist.filter((item: any) => {
+          const itemSymbol = (item.symbol || "").toUpperCase();
+          const matchSymbol = itemSymbol === symbolToDelete;
+          const matchPrefix = prefixToDelete !== undefined ? item.prefix === prefixToDelete : true;
+          
+          if (matchSymbol && matchPrefix) {
+            deletedCount++;
+            // Cascade delete trades for this watchlist item
+            if (item.id) {
+              db.deleteTradesByWatchlist(userId, item.id).catch(err => 
+                console.error(`[Admin API] Failed to cascade delete trades for watchlist ${item.id}:`, err)
+              );
+            }
+            return false; // exclude from updated list
+          }
+          return true;
+        });
+      } else {
+        deletedCount = currentWatchlist.length;
+        updated = [];
+        // Cascade delete trades for all deleted watchlist elements
+        for (const item of currentWatchlist) {
+          if (item.id) {
+            db.deleteTradesByWatchlist(userId, item.id).catch(err => 
+              console.error(`[Admin API] Failed to cascade delete trades for watchlist ${item.id}:`, err)
+            );
+          }
+        }
+      }
+
+      await db.saveWatchlist(userId, updated);
+      await db.logAdminRequest(req.baseUrl + req.path, req.method, req.query, req.ip, 200);
+      
+      res.json({
+        success: true,
+        message: symbolToDelete 
+          ? `Successfully deleted watchlist symbol ${symbolToDelete} and all associated trades for user ${userId}.`
+          : `Successfully cleared all watchlist items and associated simulated trades for user ${userId}.`,
+        deletedCount,
+        remainingCount: updated.length,
+        watchlist: updated
+      });
+    } catch (err: any) {
+      console.error("[Admin API] delete user watchlist error:", err);
+      await db.logAdminRequest(req.baseUrl + req.path, req.method, req.query, req.ip, 500);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 17b. Delete specific individual watchlist item and its trades/sessions by watchlistId
+  adminRouter.delete("/users/:userId/watchlist/:watchlistId", async (req, res) => {
+    try {
+      const { userId, watchlistId } = req.params;
+      const user = await db.getUserById(userId);
+      if (!user) {
+        await db.logAdminRequest(req.baseUrl + req.path, req.method, req.query, req.ip, 404);
+        return res.status(404).json({ error: `Not Found: User with ID ${userId} does not exist.` });
+      }
+
+      const currentWatchlist = await db.getWatchlist(userId);
+      const targetItem = currentWatchlist.find((item: any) => 
+        item.id === watchlistId || item.symbol?.toUpperCase() === watchlistId.toUpperCase()
+      );
+      
+      if (!targetItem) {
+        await db.logAdminRequest(req.baseUrl + req.path, req.method, req.query, req.ip, 404);
+        return res.status(404).json({ error: `Not Found: Watchlist item or symbol '${watchlistId}' not found for user ${userId}.` });
+      }
+
+      const actualId = targetItem.id || watchlistId;
+      const updated = currentWatchlist.filter((item: any) => 
+        item.id !== actualId && item.symbol?.toUpperCase() !== actualId.toUpperCase()
+      );
+
+      // Permanently clear associated simulation trades
+      await db.deleteTradesByWatchlist(userId, actualId);
+
+      // Clean backtest session state
+      const sessions = await db.getBacktestSessions(userId);
+      if (sessions && (sessions[actualId] || sessions[`${targetItem.symbol}_${targetItem.prefix || ''}`])) {
+        delete sessions[actualId];
+        delete sessions[`${targetItem.symbol}_${targetItem.prefix || ''}`];
+        await db.saveBacktestSessions(userId, sessions);
+      }
+
+      await db.saveWatchlist(userId, updated);
+      await db.logAdminRequest(req.baseUrl + req.path, req.method, req.query, req.ip, 200);
+
+      res.json({
+        success: true,
+        message: `Successfully deleted watchlist item ${targetItem.symbol || actualId} and all associated simulation trades & states for user ${userId}.`,
+        watchlist: updated
+      });
+    } catch (err: any) {
+      console.error("[Admin API] delete specific watchlist item error:", err);
+      await db.logAdminRequest(req.baseUrl + req.path, req.method, req.query, req.ip, 500);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 18. Delete bulk user accounts by email address lists
+  adminRouter.post("/users/bulk-delete", async (req, res) => {
+    try {
+      let emailsInput = req.body.emails;
+      if (!emailsInput) {
+        await db.logAdminRequest(req.baseUrl + req.path, req.method, req.query, req.ip, 400);
+        return res.status(400).json({ error: "Bad Request: An array or comma-separated list of 'emails' is required in the body." });
+      }
+
+      let emailList: string[] = [];
+      if (Array.isArray(emailsInput)) {
+        emailList = emailsInput.map(e => e.trim().toLowerCase());
+      } else if (typeof emailsInput === "string") {
+        emailList = emailsInput.split(",").map(e => e.trim().toLowerCase());
+      }
+
+      // Filter out empty entries
+      emailList = emailList.filter(e => e !== "");
+
+      if (emailList.length === 0) {
+        await db.logAdminRequest(req.baseUrl + req.path, req.method, req.query, req.ip, 400);
+        return res.status(400).json({ error: "Bad Request: Empty email list provided." });
+      }
+
+      const deleted: string[] = [];
+      const notFound: string[] = [];
+      const failed: string[] = [];
+
+      for (const email of emailList) {
+        try {
+          const user = await db.getUserByEmail(email);
+          if (user) {
+            await db.deleteUserPermanently(user.id);
+            deleted.push(email);
+          } else {
+            notFound.push(email);
+          }
+        } catch (err) {
+          console.error(`[Admin API] Failed to delete user with email ${email}:`, err);
+          failed.push(email);
+        }
+      }
+
+      await db.logAdminRequest(req.baseUrl + req.path, req.method, req.query, req.ip, 200);
+      res.json({
+        success: true,
+        summary: {
+          totalProcessed: emailList.length,
+          successfullyDeletedCount: deleted.length,
+          notFoundCount: notFound.length,
+          failedCount: failed.length
+        },
+        deleted,
+        notFound,
+        failed
+      });
+    } catch (err: any) {
+      console.error("[Admin API] bulk user delete error:", err);
+      await db.logAdminRequest(req.baseUrl + req.path, req.method, req.query, req.ip, 500);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // Mount Admin API router
   app.use("/api/admin", adminRouter);
 
