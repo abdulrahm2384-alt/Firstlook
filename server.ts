@@ -92,7 +92,8 @@ async function sendZohoEmail(
   htmlContent: string,
   textContent?: string,
   fromName: string = "FirstLookLabs Security",
-  highPriority: boolean = false
+  highPriority: boolean = false,
+  replyTo?: string
 ): Promise<boolean> {
   const host = process.env.ZOHO_MAIL_HOST || "smtp.zoho.com";
   const port = parseInt(process.env.ZOHO_MAIL_PORT || "465", 10);
@@ -156,7 +157,7 @@ async function sendZohoEmail(
     const info = await transporter.sendMail({
       from: `"${fromName}" <${user}>`,
       to: toEmail,
-      replyTo: user,
+      replyTo: replyTo || user,
       subject,
       text: plainText,
       html: htmlContent,
@@ -165,7 +166,44 @@ async function sendZohoEmail(
     console.log("[SMTP Mail] Email dispatched successfully:", info.messageId);
     return true;
   } catch (err: any) {
-    console.warn("[SMTP Mail Warning] sendZohoEmail failed, but continuing gracefully without throwing:", err.message || err);
+    const errMsg = err.message || String(err);
+    console.warn(`[SMTP Mail Warning] sendZohoEmail failed to deliver to ${toEmail}: ${errMsg}`);
+    
+    // Help the user diagnose Zoho and Node environment issues in the Render/Cloud logs
+    console.error("====================================================================================");
+    console.error("[SMTP DIAGNOSES] ZOHO MAIL SMTP TRANSACTION ENCOUNTERED AN ISSUE");
+    console.error(`Error details: ${errMsg}`);
+    
+    if (errMsg.includes("535") || errMsg.toLowerCase().includes("authentication") || errMsg.toLowerCase().includes("login")) {
+      console.error("\n💡 DIAGNOSTIC CORRECTION STEPS FOR ZOHO MAIL (AUTHENTICATION FAILED):");
+      console.error("1. USE AN APP-SPECIFIC PASSWORD (CRITICAL REQUIREMENT):");
+      console.error("   If you have Two-Factor Authentication (2FA) active on your Zoho account, your basic login password");
+      console.error("   is strictly rejected by SMTP servers. You MUST generate an App Password:");
+      console.error("   - Sign in to your Zoho Account panel (https://accounts.zoho.com)");
+      console.error("   - Navigate to Security -> App Passwords -> Generate New Password");
+      console.error("   - Name it (e.g. 'Render server application')");
+      console.error("   - Copy the generated 16-character code (without spaces) and use it as your ZOHO_MAIL_PASS env variable.");
+      console.error("\n2. ENABLE SMTP IN ZOHO MAIL SETTINGS:");
+      console.error("   By default, Zoho accounts might have third-party SMTP access turned off. To enable:");
+      console.error("   - Go to your Zoho Mail settings -> Mail Accounts -> IMAP/POP/SMTP");
+      console.error("   - Locate 'SMTP Access' and toggle/check it to ENABLE.");
+      console.error("\n3. VERIFY HOST REGION (ZOHO HOST):");
+      console.error("   The SMTP host depends entirely on your registration country:");
+      console.error("   - Zoho US: smtp.zoho.com");
+      console.error("   - Zoho Europe: smtp.zoho.eu");
+      console.error("   - Zoho India: smtp.zoho.in");
+      console.error("   - Zoho Australia: smtp.zoho.com.au");
+      console.error("   Make sure 'ZOHO_MAIL_HOST' matches your specific Zoho account region.");
+      console.error("\n4. ENSURE COMPLETE EMAIL IS THE USERNAME:");
+      console.error(`   Your 'ZOHO_MAIL_USER' variable must be your full email address (e.g., support@yourdomain.com), not a partial alias. Current: '${user}'`);
+    } else if (errMsg.toLowerCase().includes("timeout") || errMsg.toLowerCase().includes("conn") || errMsg.toLowerCase().includes("refused")) {
+      console.error("\n💡 DIAGNOSTIC CORRECTION STEPS FOR SMTP CONNECTION TIMEOUTS:");
+      console.error("- Verify that the server's host and port config are correct. Current configuration uses:");
+      console.error(`  Host: '${host}' | Port: ${port}`);
+      console.error("- If Port 465 is blocked by a platform firewall, try switching to Port 587 (ZOHO_MAIL_PORT=587) and make sure secure connection is disabled or handles STARTTLS correctly.");
+    }
+    console.error("====================================================================================");
+    
     return false;
   }
 }
@@ -210,7 +248,11 @@ async function sendOtpEmail(email: string, otp: string): Promise<boolean> {
 </body>
 </html>`;
 
-  return await sendZohoEmail(email, subject, html, text, "FirstLookLabs Security", true);
+  const sent = await sendZohoEmail(email, subject, html, text, "FirstLookLabs Security", true);
+  if (!sent) {
+    console.warn(`[OTP Warning Alert] Zoho Mail delivery failed for sign-up OTP. But you can inspect and copy the code right here from your Render live logs console screen to bypass signup blockage! CODE: ${otp}`);
+  }
+  return sent;
 }
 
 async function sendResetOtpEmail(email: string, otp: string): Promise<boolean> {
@@ -2180,50 +2222,8 @@ async function startServer() {
         }
       }
 
-      let apiStatusCode = 200;
-      let apiMessage = "Contact request submitted successfully.";
-      let apiTicketId = customId;
-      let externalFetchedSuccess = false;
-
-      // Contact real external data warehouse API
-      if (baseUrl) {
-        try {
-          const externalUrl = `${baseUrl}/api/contact`;
-          const externalResponse = await fetch(externalUrl, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              ...(forexApiSecret ? { "Authorization": `Bearer ${forexApiSecret}` } : {})
-            },
-            body: JSON.stringify({ fullname, usermail, subject, message })
-          });
-
-          apiStatusCode = externalResponse.status;
-          const externalData = await externalResponse.json().catch(() => ({}));
-
-          if (externalResponse.ok) {
-            externalFetchedSuccess = true;
-            apiMessage = externalData.message || "Contact request submitted successfully.";
-            apiTicketId = externalData.id || customId;
-            console.log(`[Contact API External] Dispatched with status ${apiStatusCode} OK. Ticket ID: ${apiTicketId}`);
-          } else {
-            const apiError = externalData.error || "Failed to send message.";
-            console.error(`[Contact API External Failed] Status: ${apiStatusCode}, Error: ${apiError}`);
-            return res.status(apiStatusCode).json({
-              error: `[API ${apiStatusCode} Error] ${apiError}`
-            });
-          }
-        } catch (fetchErr: any) {
-          console.error("[Contact API External Exception]", fetchErr);
-          // If the server/DNS has block issues but we want graceful backup:
-          return res.status(502).json({
-            error: `[API 502 Bad Gateway] Direct connection/DNS exception forwarding contact message. Details: ${fetchErr.message}`
-          });
-        }
-      }
-
-      // Try sending a backup support email using the existing Zoho configuration dynamically in the background (non-blocking)
-      const supportEmail = process.env.ZOHO_MAIL_USER || "support@firstlooklabs.xyz";
+      // Prepare backup support email settings using both ZOHO_MAIL_USER and custom SUPPORT_RECIPIENT_EMAIL variables
+      const supportEmail = process.env.SUPPORT_RECIPIENT_EMAIL || process.env.ZOHO_MAIL_USER || "support@firstlooklabs.xyz";
       const emailSubject = `[Contact Request] ${subject}`;
       const html = `<!DOCTYPE html>
 <html lang="en">
@@ -2237,7 +2237,7 @@ async function startServer() {
     .heading { font-size: 18px; color: #0f172a; margin: 0; font-weight: bold; }
     .meta { font-size: 13px; color: #64748b; margin-bottom: 16px; }
     .label { font-weight: bold; color: #475569; }
-    .content-box { background-color: #f1f5f9; border-radius: 6px; padding: 16px; font-size: 14px; line-height: 1.6; color: #334155; margin-white-space: pre-wrap; }
+    .content-box { background-color: #f1f5f9; border-radius: 6px; padding: 16px; font-size: 14px; line-height: 1.6; color: #334155; white-space: pre-wrap; }
     .footer { font-size: 12px; color: #94a3b8; font-style: italic; margin-top: 24px; text-align: center; }
   </style>
 </head>
@@ -2249,8 +2249,8 @@ async function startServer() {
     <div class="meta">
       <p><span class="label">From:</span> ${fullname} (&lt;${usermail}&gt;)</p>
       <p><span class="label">Date:</span> ${new Date().toUTCString()}</p>
-      <p><span class="label">Contact ID:</span> ${apiTicketId}</p>
-      <p><span class="label">API Send Type:</span> External Proxy Outpatient</p>
+      <p><span class="label">Contact ID:</span> ${customId}</p>
+      <p><span class="label">API Send Type:</span> Concurrently Synchronous</p>
     </div>
     <div class="content-box">
       <strong>Subject:</strong> ${subject}<br><br>
@@ -2264,14 +2264,84 @@ async function startServer() {
 </body>
 </html>`;
 
-      // Run out-of-band Zoho copy dispatch
-      sendZohoEmail(supportEmail, emailSubject, html, message, `FirstLook Labs Helpdesk`, false)
-        .then(() => {
-          console.log(`[Contact API] Non-blocking backup email dispatched out-of-band for ID ${apiTicketId}`);
-        })
-        .catch((emailErr) => {
-          console.warn("[Contact API Alert] Asynchronous backup email warning:", emailErr.message);
+      // Dispatch real external API call and Zoho Mail concurrently via Promise.allSettled
+      // This is a MUST for Google Cloud Run or serverless environments, securing active CPU allocation to guarantee email delivery
+      console.log(`[Contact API] Concurrently executing external database API and Zoho SMTP delivery...`);
+      
+      const [apiResult, emailResult] = await Promise.allSettled([
+        (async () => {
+          if (!baseUrl) {
+            return {
+              success: true,
+              message: "Contact request processed locally (No external data warehouse URL defined).",
+              id: customId,
+              status: 200
+            };
+          }
+
+          const externalUrl = `${baseUrl}/api/contact`;
+          const externalResponse = await fetch(externalUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...(forexApiSecret ? { "Authorization": `Bearer ${forexApiSecret}` } : {})
+            },
+            body: JSON.stringify({ fullname, usermail, subject, message })
+          });
+
+          const status = externalResponse.status;
+          const externalData = await externalResponse.json().catch(() => ({}));
+
+          if (externalResponse.ok) {
+            return {
+              success: true,
+              message: externalData.message || "Contact request submitted successfully.",
+              id: externalData.id || customId,
+              status
+            };
+          } else {
+            throw {
+              status,
+              error: externalData.error || "Failed forwarding message to the external database server."
+            };
+          }
+        })(),
+
+        sendZohoEmail(supportEmail, emailSubject, html, message, `FirstLook Labs Helpdesk`, false, usermail)
+      ]);
+
+      let apiStatusCode = 200;
+      let apiMessage = "Contact request submitted successfully.";
+      let apiTicketId = customId;
+      let externalErrorMsg: string | null = null;
+
+      // Extract results from the external API promise
+      if (apiResult.status === "fulfilled") {
+        const val = apiResult.value;
+        apiStatusCode = val.status ?? 200;
+        apiMessage = val.message;
+        apiTicketId = val.id;
+      } else {
+        const reason = apiResult.reason;
+        apiStatusCode = reason.status ?? 502;
+        externalErrorMsg = reason.error ?? "Connection or forwarding exception to external data gateway.";
+      }
+
+      // Check results from the SMTP Zoho promise
+      const emailSent = emailResult.status === "fulfilled" && emailResult.value === true;
+      if (emailSent) {
+        console.log(`[Contact API Success] Zoho Mail copy successfully transmitted to support inbox: ${supportEmail}`);
+      } else {
+        const emailErr = emailResult.status === "rejected" ? emailResult.reason : "SMTP configuration error";
+        console.warn(`[Contact API Alert] Zoho Mail copy could not be dispatched:`, emailErr);
+      }
+
+      // Return failure response if external API rejected the payload
+      if (externalErrorMsg) {
+        return res.status(apiStatusCode).json({
+          error: `[API ${apiStatusCode} Error] ${externalErrorMsg}`
         });
+      }
 
       return res.status(200).json({
         status: "success",
@@ -2313,49 +2383,8 @@ async function startServer() {
         }
       }
 
-      let apiStatusCode = 200;
-      let apiMessage = "Feedback inserted into database successfully.";
-      let apiFeedbackId = uuid;
-      let externalFetchedSuccess = false;
-
-      // Contact real external data warehouse API
-      if (baseUrl) {
-        try {
-          const externalUrl = `${baseUrl}/api/feedback`;
-          const externalResponse = await fetch(externalUrl, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              ...(forexApiSecret ? { "Authorization": `Bearer ${forexApiSecret}` } : {})
-            },
-            body: JSON.stringify({ rate, user_email, feedback })
-          });
-
-          apiStatusCode = externalResponse.status;
-          const externalData = await externalResponse.json().catch(() => ({}));
-
-          if (externalResponse.ok) {
-            externalFetchedSuccess = true;
-            apiMessage = externalData.message || "Feedback inserted into database successfully.";
-            apiFeedbackId = externalData.id || uuid;
-            console.log(`[Feedback API External] Dispatched with status ${apiStatusCode} OK. Feedback ID: ${apiFeedbackId}`);
-          } else {
-            const apiError = externalData.error || "Failed to submit feedback.";
-            console.error(`[Feedback API External Failed] Status: ${apiStatusCode}, Error: ${apiError}`);
-            return res.status(apiStatusCode).json({
-              error: `[API ${apiStatusCode} Error] ${apiError}`
-            });
-          }
-        } catch (fetchErr: any) {
-          console.error("[Feedback API External Exception]", fetchErr);
-          return res.status(502).json({
-            error: `[API 502 Bad Gateway] Direct connection/DNS exception forwarding feedback. Details: ${fetchErr.message}`
-          });
-        }
-      }
-
-      // Try sending a feedback notification email using Zoho settings
-      const supportEmail = process.env.ZOHO_MAIL_USER || "support@firstlooklabs.xyz";
+      // Prepare backup support email settings using both ZOHO_MAIL_USER and custom SUPPORT_RECIPIENT_EMAIL variables
+      const supportEmail = process.env.SUPPORT_RECIPIENT_EMAIL || process.env.ZOHO_MAIL_USER || "support@firstlooklabs.xyz";
       const emailSubject = `[User Feedback Rating] ${rate} Stars from ${user_email}`;
       const html = `<!DOCTYPE html>
 <html lang="en">
@@ -2374,7 +2403,7 @@ async function startServer() {
     <h2 class="heading">FirstLook Labs User Rating</h2>
     <div class="meta">
       <p><strong>Reviewer:</strong> ${user_email}</p>
-      <p><strong>Feedback ID:</strong> ${apiFeedbackId}</p>
+      <p><strong>Feedback ID:</strong> ${uuid}</p>
       <p><strong>Submitting Date:</strong> ${new Date().toUTCString()}</p>
     </div>
     <div class="rating-stars">
@@ -2388,14 +2417,84 @@ async function startServer() {
 </body>
 </html>`;
 
-      // Send out-of-band in background to maintain instant UI response
-      sendZohoEmail(supportEmail, emailSubject, html, feedback || `Rating: ${rate} stars`, `FirstLook Staff Alerts`, false)
-        .then(() => {
-          console.log(`[Feedback API] Non-blocking backup feedback email dispatched for ID ${apiFeedbackId}`);
-        })
-        .catch((emailErr) => {
-          console.warn("[Feedback API Alert] Asynchronous backup email warning:", emailErr.message);
+      // Dispatch real external API call and Zoho Mail concurrently via Promise.allSettled
+      // This is a MUST for Google Cloud Run or serverless environments, securing active CPU allocation to guarantee email delivery
+      console.log(`[Feedback API] Concurrently executing external database API and Zoho SMTP delivery...`);
+
+      const [apiResult, emailResult] = await Promise.allSettled([
+        (async () => {
+          if (!baseUrl) {
+            return {
+              success: true,
+              message: "Feedback processed locally (No external data warehouse URL defined).",
+              id: uuid,
+              status: 200
+            };
+          }
+
+          const externalUrl = `${baseUrl}/api/feedback`;
+          const externalResponse = await fetch(externalUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...(forexApiSecret ? { "Authorization": `Bearer ${forexApiSecret}` } : {})
+            },
+            body: JSON.stringify({ rate, user_email, feedback })
+          });
+
+          const status = externalResponse.status;
+          const externalData = await externalResponse.json().catch(() => ({}));
+
+          if (externalResponse.ok) {
+            return {
+              success: true,
+              message: externalData.message || "Feedback inserted into database successfully.",
+              id: externalData.id || uuid,
+              status
+            };
+          } else {
+            throw {
+              status,
+              error: externalData.error || "Failed sending feedback rating to the external database server."
+            };
+          }
+        })(),
+
+        sendZohoEmail(supportEmail, emailSubject, html, feedback || `Rating: ${rate} stars`, `FirstLook Staff Alerts`, false, user_email)
+      ]);
+
+      let apiStatusCode = 200;
+      let apiMessage = "Feedback inserted into database successfully.";
+      let apiFeedbackId = uuid;
+      let externalErrorMsg: string | null = null;
+
+      // Extract results from the external API promise
+      if (apiResult.status === "fulfilled") {
+        const val = apiResult.value;
+        apiStatusCode = val.status ?? 200;
+        apiMessage = val.message;
+        apiFeedbackId = val.id;
+      } else {
+        const reason = apiResult.reason;
+        apiStatusCode = reason.status ?? 502;
+        externalErrorMsg = reason.error ?? "Connection or forwarding exception to external data gateway.";
+      }
+
+      // Check results from the SMTP Zoho promise
+      const emailSent = emailResult.status === "fulfilled" && emailResult.value === true;
+      if (emailSent) {
+        console.log(`[Feedback API Success] Zoho Mail copy successfully transmitted to support inbox: ${supportEmail}`);
+      } else {
+        const emailErr = emailResult.status === "rejected" ? emailResult.reason : "SMTP configuration error";
+        console.warn(`[Feedback API Alert] Zoho Mail copy could not be dispatched:`, emailErr);
+      }
+
+      // Return failure response if external API rejected the payload
+      if (externalErrorMsg) {
+        return res.status(apiStatusCode).json({
+          error: `[API ${apiStatusCode} Error] ${externalErrorMsg}`
         });
+      }
 
       return res.status(200).json({
         status: "success",
