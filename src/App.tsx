@@ -9743,12 +9743,16 @@ export default function App() {
                               feedback: tpFeedback || ''
                             })
                           });
+                          const data = await resp.json().catch(() => ({}));
                           if (resp.ok) {
                             setShowTrustpilotPrompt(false);
-                            addNotification("Thank you so much! I have received your feedback.", "success");
+                            addNotification(data.message || "Thank you so much! I have received your feedback.", "success");
+                          } else {
+                            addNotification(data.error || "Failed to submit feedback.", "error");
                           }
-                        } catch (err) {
+                        } catch (err: any) {
                           console.error("[Submitting from popup error]", err);
+                          addNotification(`Error: ${err.message}`, "error");
                         }
                       }}
                       className="w-full bg-[#00b67a] text-white py-2 text-[10px] font-black uppercase tracking-widest hover:bg-[#009b67] rounded-xl transition-all cursor-pointer"

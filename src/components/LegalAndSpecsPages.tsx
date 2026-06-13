@@ -44,6 +44,7 @@ export const LegalAndSpecsPages: React.FC<LegalAndSpecsPagesProps> = ({
   const [showSuccessToast, setShowSuccessToast] = useState(false);
   const [submittedTicketId, setSubmittedTicketId] = useState('');
   const [contactError, setContactError] = useState<string | null>(null);
+  const [contactSuccessMsg, setContactSuccessMsg] = useState('');
 
   const handleContactSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -74,6 +75,7 @@ export const LegalAndSpecsPages: React.FC<LegalAndSpecsPagesProps> = ({
       console.log('Message sent successfully:', result);
       
       setSubmittedTicketId(result.id || '');
+      setContactSuccessMsg(result.message || 'Inquiry transmitted successfully.');
       setShowSuccessToast(true);
       setContactSubject('');
       setContactMessage('');
@@ -381,7 +383,7 @@ export const LegalAndSpecsPages: React.FC<LegalAndSpecsPagesProps> = ({
                           className="flex items-center gap-2 p-3 bg-emerald-50 border border-emerald-100 text-[#2fb071] rounded-xl"
                         >
                           <CheckCircle2 size={14} className="shrink-0" />
-                          <span className="text-[10px] font-bold">Inquiry transmitted. Ticket ID: <strong className="font-mono bg-emerald-100/40 px-1 py-0.5 rounded text-emerald-800">{submittedTicketId}</strong>. We reply within 2 hours.</span>
+                          <span className="text-[10px] font-bold">{contactSuccessMsg || "Inquiry transmitted."} Ticket ID: <strong className="font-mono bg-emerald-100/40 px-1 py-0.5 rounded text-emerald-800">{submittedTicketId}</strong>. We reply within 2 hours.</span>
                         </motion.div>
                       )}
                       {contactError && (

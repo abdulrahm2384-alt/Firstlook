@@ -184,6 +184,7 @@ export function ProfilePage({
   const [feedback, setFeedback] = useState<string>('');
   const [isSubmittingFeedback, setIsSubmittingFeedback] = useState<boolean>(false);
   const [feedbackError, setFeedbackError] = useState<string | null>(null);
+  const [feedbackSuccessMsg, setFeedbackSuccessMsg] = useState<string>('');
 
   const handleSubmitFeedback = async () => {
     if (rating === 0) return;
@@ -203,6 +204,7 @@ export function ProfilePage({
       if (!resp.ok) {
         throw new Error(data.error || 'Failed to submit rating');
       }
+      setFeedbackSuccessMsg(data.message || 'Thank you so much! I have received your feedback.');
       setHasRated(true);
     } catch (err: any) {
       console.error('Feedback submit error:', err);
@@ -1104,7 +1106,7 @@ export function ProfilePage({
                   </div>
                   <h4 className="text-[11px] font-black uppercase tracking-wider text-neutral-805">Review Submitted!</h4>
                   <p className="text-[10px] text-neutral-400 font-bold uppercase tracking-widest leading-relaxed">
-                    Thank you so much! I have received your feedback and truly appreciate your support.
+                    {feedbackSuccessMsg || "Thank you so much! I have received your feedback and truly appreciate your support."}
                   </p>
                 </motion.div>
               )}
