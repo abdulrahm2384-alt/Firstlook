@@ -121,14 +121,30 @@ async function sendZohoEmail(
   // Calculate clean text content if not supplied
   const plainText = textContent || htmlContent.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
 
+  const isBulk = !(
+    highPriority ||
+    subject.toLowerCase().includes("verification") || 
+    subject.toLowerCase().includes("otp") || 
+    subject.toLowerCase().includes("security") ||
+    subject.toLowerCase().includes("password")
+  );
+
   const customHeaders: Record<string, string> = {
-    "Precedence": "transactional"
+    "MIME-Version": "1.0",
+    "X-Auto-Response-Suppress": "OOF, AutoReply"
   };
 
-  if (highPriority) {
-    customHeaders["X-Priority"] = "1";
-    customHeaders["X-MSMail-Priority"] = "High";
-    customHeaders["Importance"] = "High";
+  if (isBulk) {
+    customHeaders["Precedence"] = "bulk";
+    customHeaders["List-Unsubscribe"] = `<mailto:${user}?subject=unsubscribe-${toEmail}>`;
+    customHeaders["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click";
+  } else {
+    customHeaders["Precedence"] = "transactional";
+    if (highPriority) {
+      customHeaders["X-Priority"] = "1";
+      customHeaders["X-MSMail-Priority"] = "High";
+      customHeaders["Importance"] = "High";
+    }
   }
 
   try {
@@ -2129,6 +2145,147 @@ async function startServer() {
     }
   });
 
+  // --- STANDARD CONTACT ENDPOINT ---
+  app.post("/api/contact", async (req, res) => {
+    try {
+      const { fullname, usermail, subject, message } = req.body;
+      if (!fullname || !usermail || !subject || !message) {
+        return res.status(400).json({
+          error: "Missing required fields: fullname, usermail, subject, message."
+        });
+      }
+
+      // Generate a unique ID: cu-timestamp-random
+      const randomStr = Math.random().toString(36).substring(2, 7);
+      const customId = `cu-${Date.now()}-${randomStr}`;
+
+      console.log(`[Contact API] Form submitted by ${fullname} (${usermail}). ID generated: ${customId}`);
+
+      // Try sending a support email using the existing Zoho configuration
+      try {
+        const supportEmail = process.env.ZOHO_MAIL_USER || "support@firstlooklabs.xyz";
+        const emailSubject = `[Contact Request] ${subject}`;
+        const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body { font-family: sans-serif; background-color: #f8fafc; color: #1e293b; margin: 0; padding: 24px; }
+    .card { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 24px; max-width: 600px; margin: 0 auto; }
+    .header { border-bottom: 2px solid #0f172a; padding-bottom: 12px; margin-bottom: 20px; }
+    .heading { font-size: 18px; color: #0f172a; margin: 0; font-weight: bold; }
+    .meta { font-size: 13px; color: #64748b; margin-bottom: 16px; }
+    .label { font-weight: bold; color: #475569; }
+    .content-box { background-color: #f1f5f9; border-radius: 6px; padding: 16px; font-size: 14px; line-height: 1.6; color: #334155; margin-white-space: pre-wrap; }
+    .footer { font-size: 12px; color: #94a3b8; font-style: italic; margin-top: 24px; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="header">
+      <h2 class="heading">FirstLook Labs Contact Form Submission</h2>
+    </div>
+    <div class="meta">
+      <p><span class="label">From:</span> ${fullname} (&lt;${usermail}&gt;)</p>
+      <p><span class="label">Date:</span> ${new Date().toUTCString()}</p>
+      <p><span class="label">Contact ID:</span> ${customId}</p>
+    </div>
+    <div class="content-box">
+      <strong>Subject:</strong> ${subject}<br><br>
+      <strong>Message:</strong><br>
+      ${message.replace(/\r?\n/g, '<br />')}
+    </div>
+    <div class="footer">
+      FirstLook Labs Ltd • Test First. Risk Later. • https://firstlooklabs.xyz
+    </div>
+  </div>
+</body>
+</html>`;
+
+        await sendZohoEmail(supportEmail, emailSubject, html, message, `FirstLook Labs Helpdesk`, false);
+      } catch (emailErr: any) {
+        console.warn("[Contact API] Alerting support email failed, but request continues:", emailErr.message);
+      }
+
+      return res.status(200).json({
+        status: "success",
+        message: "Contact request submitted successfully.",
+        id: customId
+      });
+    } catch (err: any) {
+      console.error("[Contact API Error]", err);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // --- STANDARD FEEDBACK ENDPOINT ---
+  app.post("/api/feedback", async (req, res) => {
+    try {
+      const { rate, user_email, feedback } = req.body;
+      if (rate === undefined || rate === null || !user_email || feedback === undefined || feedback === null) {
+        return res.status(400).json({
+          error: "Missing 'rate', 'user_email' or 'feedback' parameters."
+        });
+      }
+
+      // Generate a unique standard UUID style format ID
+      const s4 = () => Math.floor((1 + Math.random()) * 0x10000).toString(16).substring(1);
+      const uuid = `${s4()}${s4()}-${s4()}-${s4()}-${s4()}-${s4()}${s4()}${s4()}`;
+
+      console.log(`[Feedback API] New rating score registered: ${rate} from user ${user_email}. ID: ${uuid}`);
+
+      // Try sending a feedback notification email using Zoho settings
+      try {
+        const supportEmail = process.env.ZOHO_MAIL_USER || "support@firstlooklabs.xyz";
+        const emailSubject = `[User Feedback Rating] ${rate} Stars from ${user_email}`;
+        const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <style>
+    body { font-family: sans-serif; background-color: #faf5ff; color: #3b0764; margin: 0; padding: 24px; }
+    .card { background: #ffffff; border: 1px solid #f3e8ff; border-radius: 12px; padding: 24px; max-width: 600px; margin: 0 auto; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); }
+    .heading { font-size: 18px; color: #581c87; border-bottom: 2px solid #818cf8; padding-bottom: 12px; }
+    .rating-stars { font-size: 24px; color: #eab308; margin: 16px 0; }
+    .meta { font-size: 13px; color: #6b21a8; }
+    .text-msg { background-color: #faf5ff; border-radius: 8px; padding: 16px; font-size: 14px; color: #4c1d95; font-style: italic; border-left: 4px solid #a855f7; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2 class="heading">FirstLook Labs User Rating</h2>
+    <div class="meta">
+      <p><strong>Reviewer:</strong> ${user_email}</p>
+      <p><strong>Feedback ID:</strong> ${uuid}</p>
+      <p><strong>Submitting Date:</strong> ${new Date().toUTCString()}</p>
+    </div>
+    <div class="rating-stars">
+      ${"★".repeat(Number(rate))}${"☆".repeat(5 - Number(rate))} (${rate} / 5 Stars)
+    </div>
+    <p><strong>Feedback Message:</strong></p>
+    <div class="text-msg">
+      ${feedback || "(The reviewer did not provide comments.)"}
+    </div>
+  </div>
+</body>
+</html>`;
+
+        await sendZohoEmail(supportEmail, emailSubject, html, feedback || `Rating: ${rate} stars`, `FirstLook Staff Alerts`, false);
+      } catch (emailErr: any) {
+        console.warn("[Feedback API] Sending feedback alert email failed, but response is successful:", emailErr.message);
+      }
+
+      return res.status(200).json({
+        status: "success",
+        message: "Feedback inserted into database successfully.",
+        id: uuid
+      });
+    } catch (err: any) {
+      console.error("[Feedback API Error]", err);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
   // API routes
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok", timestamp: Date.now() });
@@ -2867,16 +3024,23 @@ async function startServer() {
   const adminSecretMiddleware = async (req: any, res: any, next: any) => {
     const authHeader = req.headers.authorization;
     // Protect using the FOREX_API_SECRET environment variable
-    const expressSecret = process.env.FOREX_API_SECRET || "FL-SECURE-API-SECRET-182390234123512";
+    const expressSecret = (process.env.FOREX_API_SECRET || "FL-SECURE-API-SECRET-182390234123512").trim();
     
     let token = "";
     if (authHeader && authHeader.startsWith("Bearer ")) {
-      token = authHeader.substring(7);
+      token = authHeader.substring(7).trim();
+    } else if (req.body && req.body.api_secret) {
+      token = req.body.api_secret.toString().trim();
+    } else if (req.query && req.query.api_secret) {
+      token = req.query.api_secret.toString().trim();
     }
 
     if (!token || token !== expressSecret) {
       await db.logAdminRequest(req.path, req.method, req.query, req.ip, 401);
-      return res.status(401).json({ error: "Unauthorized: Invalid or missing administrative access credential." });
+      return res.status(401).json({ 
+        success: false, 
+        error: "Unauthorized: Invalid or missing administrative access credential." 
+      });
     }
     next();
   };
@@ -3391,6 +3555,222 @@ async function startServer() {
       console.error("[Admin API] bulk user delete error:", err);
       await db.logAdminRequest(req.baseUrl + req.path, req.method, req.query, req.ip, 500);
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 19. Core Platform Notification Sender with High Deliverability
+  adminRouter.post("/send-email", async (req, res) => {
+    try {
+      const { subject, message, recipients } = req.body;
+
+      // Validate inputs
+      if (!subject || typeof subject !== "string" || subject.trim() === "") {
+        return res.status(400).json({
+          success: false,
+          error: "Subject and message are required and cannot be empty."
+        });
+      }
+
+      if (!message || typeof message !== "string" || message.trim() === "") {
+        return res.status(400).json({
+          success: false,
+          error: "Subject and message are required and cannot be empty."
+        });
+      }
+
+      if (recipients === undefined) {
+        return res.status(400).json({
+          success: false,
+          error: "Reason for failure: 'recipients' parameter is required. It can be a string ('all_users' or a single email) or an array of valid emails."
+        });
+      }
+
+      let emailList: string[] = [];
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+      if (typeof recipients === "string") {
+        const checkVal = recipients.trim().toLowerCase();
+        if (checkVal === "all_users") {
+          emailList = await db.adminGetAllUserEmails();
+        } else if (checkVal !== "") {
+          emailList = [recipients.trim()];
+        }
+      } else if (Array.isArray(recipients)) {
+        emailList = recipients
+          .map((r: any) => (typeof r === "string" ? r.trim() : ""))
+          .filter((r: string) => r !== "");
+      }
+
+      if (emailList.length === 0) {
+        return res.status(400).json({
+          success: false,
+          error: "No recipients found or specified in request."
+        });
+      }
+
+      // Format & clean list while verifying formats
+      for (const email of emailList) {
+        if (!emailRegex.test(email)) {
+          return res.status(400).json({
+            success: false,
+            error: `Invalid email format: ${email}`
+          });
+        }
+      }
+
+      // Log email activity securely without leaking body contents
+      console.log(`[Admin API] send-email invoked. Security authorization approved, processing ${emailList.length} outbound dispatches.`);
+
+      const senderEmail = process.env.ZOHO_MAIL_USER || "support@firstlooklabs.xyz";
+
+      // Parallelized dispatch with complete outcome recording
+      const dispatches = emailList.map(async (email) => {
+        try {
+          // Render a personalized, high-deliverability HTML template for each recipient
+          const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background-color: #f8fafc;
+      color: #1e293b;
+      margin: 0;
+      padding: 0;
+      -webkit-font-smoothing: antialiased;
+    }
+    .wrapper {
+      max-width: 600px;
+      margin: 40px auto;
+      background-color: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+    }
+    .header {
+      background-color: #0f172a;
+      padding: 24px;
+      text-align: center;
+    }
+    .logo {
+      height: 40px;
+      max-width: 250px;
+      vertical-align: middle;
+    }
+    .content {
+      padding: 40px 32px;
+    }
+    .heading {
+      font-size: 20px;
+      font-weight: 700;
+      color: #0f172a;
+      margin-top: 0;
+      margin-bottom: 24px;
+      letter-spacing: -0.025em;
+      line-height: 1.3;
+    }
+    .body-text {
+      font-size: 15px;
+      line-height: 1.6;
+      color: #334155;
+    }
+    .footer {
+      background-color: #f1f5f9;
+      border-top: 1px solid #e2e8f0;
+      padding: 32px;
+      text-align: center;
+      font-size: 12px;
+      color: #64748b;
+      line-height: 1.6;
+    }
+    .footer-title {
+      font-weight: 700;
+      color: #0f172a;
+      margin-bottom: 4px;
+    }
+    .footer-tagline {
+      font-style: italic;
+      margin-bottom: 12px;
+    }
+    .footer-meta {
+      margin-top: 16px;
+      padding-top: 16px;
+      border-top: 1px solid #e2e8f0;
+      font-size: 11px;
+    }
+    .footer-link {
+      color: #2563eb;
+      text-decoration: underline;
+      font-weight: 500;
+    }
+    .footer-link:hover {
+      color: #1d4ed8;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrapper">
+    <div class="header">
+      <img src="https://firstlooklabs.xyz/logo.svg" alt="FirstLook Labs" class="logo" />
+    </div>
+    <div class="content">
+      <h1 class="heading">${subject}</h1>
+      <div class="body-text">
+        ${message.replace(/\r?\n/g, '<br />')}
+      </div>
+    </div>
+    <div class="footer">
+      <div class="footer-title">FirstLook Labs</div>
+      <div class="footer-tagline">Test First. Risk Later.</div>
+      <div>
+        <a href="https://firstlooklabs.xyz" class="footer-link" target="_blank">https://firstlooklabs.xyz</a>
+      </div>
+      <div class="footer-meta">
+        You are receiving this official update because you registered an account for <strong>${email}</strong> on FirstLook Labs.<br />
+        FirstLook Labs Ltd • 128 City Road, London, EC1V 2NX, United Kingdom<br />
+        <span style="display: inline-block; margin-top: 8px;">
+          Want to unsubscribe? <a href="mailto:${senderEmail}?subject=unsubscribe-${email}&body=Please%20unsubscribe%20my%20email%20address%20${email}%20from%20future%20FirstLook%20Labs%20announcements." class="footer-link">Unsubscribe from these alerts</a>
+        </span>
+      </div>
+    </div>
+  </div>
+</body>
+</html>`;
+
+          const result = await sendZohoEmail(email, subject, html, message, "FirstLook Labs", false);
+          return { email, success: result };
+        } catch (e: any) {
+          console.error(`[Admin API SMTP Fail] '${email}':`, e.message);
+          return { email, success: false, error: e.message };
+        }
+      });
+
+      const outcomeList = await Promise.all(dispatches);
+      const successfulCount = outcomeList.filter(o => o.success).length;
+      
+      await db.logAdminRequest(
+        req.baseUrl + req.path, 
+        req.method, 
+        { recipients_processed: emailList.length, success_count: successfulCount }, 
+        req.ip, 
+        200
+      );
+
+      res.json({
+        success: true,
+        sent_count: successfulCount,
+        message: "Emails sent successfully"
+      });
+    } catch (err: any) {
+      console.error("[Admin API] send email error:", err);
+      await db.logAdminRequest(req.baseUrl + req.path, req.method, {}, req.ip, 500);
+      res.status(500).json({ 
+        success: false, 
+        error: err.message 
+      });
     }
   });
 

@@ -9734,15 +9734,13 @@ export default function App() {
                     <button
                       onClick={async () => {
                         try {
-                          const resp = await fetch('/api/feedback/trustpilot', {
+                          const resp = await fetch('/api/feedback', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({
-                              rating: tpRating,
-                              feedback: tpFeedback,
-                              email: session?.user?.email || 'guest@firstlook.com',
-                              name: session?.user?.username || session?.user?.fullName || 'FirstLook Trader',
-                              userId: session?.user?.id || 'guest-id'
+                              rate: tpRating,
+                              user_email: session?.user?.email || 'guest@firstlook.com',
+                              feedback: tpFeedback || ''
                             })
                           });
                           if (resp.ok) {

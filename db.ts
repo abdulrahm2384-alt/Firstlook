@@ -2509,5 +2509,13 @@ export const db = {
       trades,
       sessionState
     };
+  },
+
+  async adminGetAllUserEmails(): Promise<string[]> {
+    if (!isDbActive) {
+      return memUsers.map(u => u.email);
+    }
+    const res = await pool.query('SELECT email FROM users');
+    return res.rows.map(row => row.email);
   }
 };

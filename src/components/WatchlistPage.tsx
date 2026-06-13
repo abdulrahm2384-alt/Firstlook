@@ -1686,8 +1686,11 @@ export function WatchlistPage({
                     <h3 className="text-[11.5px] font-black uppercase tracking-wider text-slate-100">
                       FirstLook Support
                     </h3>
-                    <p className="text-[8.5px] font-semibold text-slate-400 uppercase tracking-widest">
-                      Direct Helpdesk Inbox
+                    <p className="text-[8.5px] font-semibold text-slate-400 uppercase tracking-widest flex flex-col">
+                      <span>Direct Helpdesk Inbox</span>
+                      <a href="mailto:support@firstlooklabs.xyz" className="text-emerald-400 hover:text-emerald-300 underline lowercase font-mono tracking-normal mt-0.5" title="Email support directly">
+                        support@firstlooklabs.xyz
+                      </a>
                     </p>
                   </div>
                 </div>

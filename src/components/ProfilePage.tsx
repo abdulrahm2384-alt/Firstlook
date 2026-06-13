@@ -190,15 +190,13 @@ export function ProfilePage({
     setIsSubmittingFeedback(true);
     setFeedbackError(null);
     try {
-      const resp = await fetch('/api/feedback/trustpilot', {
+      const resp = await fetch('/api/feedback', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          rating,
-          feedback,
-          email: user?.email || 'guest@firstlook.com',
-          name: user?.username || user?.fullName || 'FirstLook Trader',
-          userId: user?.id || 'guest-id'
+          rate: rating,
+          user_email: user?.email || 'guest@firstlook.com',
+          feedback: feedback || ''
         })
       });
       const data = await resp.json();
@@ -208,7 +206,7 @@ export function ProfilePage({
       setHasRated(true);
     } catch (err: any) {
       console.error('Feedback submit error:', err);
-      setFeedbackError(err.message || 'Error occurred while contacting Trustpilot API');
+      setFeedbackError(err.message || 'Error occurred while submitting feedback');
     } finally {
       setIsSubmittingFeedback(false);
     }

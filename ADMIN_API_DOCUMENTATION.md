@@ -587,6 +587,41 @@ Permanently delete multiple user accounts (and all associated configurations) by
     }
     ```
 
+### 7. Send Secure Emails via Zoho Mail
+Securely send formatted transactional or notification HTML emails using Zoho Mail settings to specific users or broadcast to all registered users simultaneously.
+*   **Route:** `POST /api/admin/send-email`
+*   **Request Body JSON Fields:**
+    *   `api_secret` (required string): Valid secret auth key. You can also specify this in the standard `Authorization: Bearer <secret>` header instead.
+    *   `subject` (required string): Headline and topic of the message. Cannot be empty.
+    *   `message` (required string): Body text content of the message. Newlines are automatically translated to break tags `<br />`. Cannot be empty.
+    *   `recipients` (required string or array): Single email address (e.g. `"test@demo.com"`), array of email addresses (e.g. `["e1@demo.com", "e2@demo.com"]`), or the special string `"all_users"` to automatically deliver to every user account saved in the platform database.
+*   **Request Example (Broadcast to all users):**
+    ```bash
+    curl -X POST -H "Content-Type: application/json" \
+         -d '{
+               "api_secret": "YOUR_FOREX_API_SECRET",
+               "subject": "Platform Maintenance Scheduled",
+               "message": "Hello FirstLook Labs members,\n\nWe have scheduled an optimization block. No user downtime is expected.\n\nThank you!",
+               "recipients": "all_users"
+             }' \
+         http://localhost:3000/api/admin/send-email
+    ```
+*   **Response (200 OK):**
+    ```json
+    {
+      "success": true,
+      "sent_count": 150,
+      "message": "Emails sent successfully"
+    }
+    ```
+*   **Response (400 Bad Request / 401 Unauthorized):**
+    ```json
+    {
+      "success": false,
+      "error": "Subject and message are required and cannot be empty."
+    }
+    ```
+
 ---
 
 ## Platform Diagnostics & Troubleshooting

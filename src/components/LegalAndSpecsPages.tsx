@@ -42,20 +42,48 @@ export const LegalAndSpecsPages: React.FC<LegalAndSpecsPagesProps> = ({
   const [contactMessage, setContactMessage] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showSuccessToast, setShowSuccessToast] = useState(false);
+  const [submittedTicketId, setSubmittedTicketId] = useState('');
+  const [contactError, setContactError] = useState<string | null>(null);
 
-  const handleContactSubmit = (e: React.FormEvent) => {
+  const handleContactSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!contactEmail || !contactMessage) return;
     
     setIsSubmitting(true);
-    // Simulate real database-bound support node delivery
-    setTimeout(() => {
-      setIsSubmitting(false);
+    setContactError(null);
+    try {
+      const response = await fetch('/api/contact', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          fullname: contactName || 'Anonymous',
+          usermail: contactEmail,
+          subject: contactSubject || 'Direct Helpdesk Inquiry',
+          message: contactMessage,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to send message.');
+      }
+
+      const result = await response.json();
+      console.log('Message sent successfully:', result);
+      
+      setSubmittedTicketId(result.id || '');
       setShowSuccessToast(true);
       setContactSubject('');
       setContactMessage('');
-      setTimeout(() => setShowSuccessToast(false), 5000);
-    }, 1200);
+      setTimeout(() => setShowSuccessToast(false), 9000);
+    } catch (err: any) {
+      console.error('Contact submit error:', err);
+      setContactError(err.message || 'Error occurred while sending message.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const menuItems = [
@@ -239,12 +267,32 @@ export const LegalAndSpecsPages: React.FC<LegalAndSpecsPagesProps> = ({
                   </p>
                 </div>
 
-                <div className="p-4 bg-indigo-50/50 border border-indigo-100/60 rounded-2xl">
-                  <span className="text-[9.5px] font-black uppercase tracking-widest text-indigo-700 block mb-1">Direct Workspace Support Node</span>
-                  <p className="text-[11px] text-slate-600 leading-relaxed font-semibold">
-                    You can contact and text our support team directly online within the Watchlist page of the application using our integrated real-time assistance widget. 
-                  </p>
-                </div>
+                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                   <div className="p-4 bg-indigo-50/50 border border-indigo-100/60 rounded-2xl flex flex-col justify-between">
+                     <div>
+                       <span className="text-[9.5px] font-black uppercase tracking-widest text-indigo-700 block mb-1">Direct Live Assistance</span>
+                       <p className="text-[11px] text-slate-600 leading-relaxed font-semibold">
+                         You can contact and text our support team directly online within the Watchlist page of the application using our integrated real-time assistance widget.
+                       </p>
+                     </div>
+                   </div>
+
+                   <div className="p-4 bg-emerald-50/50 border border-emerald-100/60 rounded-2xl flex flex-col justify-between">
+                     <div>
+                       <span className="text-[9.5px] font-black uppercase tracking-widest text-[#3bca84] block mb-1">Direct Helpdesk Email</span>
+                       <p className="text-[11px] text-slate-600 leading-relaxed font-semibold">
+                         Need direct assistance via email? Shoot an inquiry to our support staff anytime at:
+                       </p>
+                       <a 
+                         href="mailto:support@firstlooklabs.xyz" 
+                         className="inline-flex items-center gap-1.5 text-xs font-black text-[#2e9e67] hover:text-[#21724a] underline mt-2"
+                       >
+                         <Mail size={12} />
+                         support@firstlooklabs.xyz
+                       </a>
+                     </div>
+                   </div>
+                 </div>
 
                 {/* Form */}
                 <form onSubmit={handleContactSubmit} className="space-y-4 pt-2">
@@ -333,7 +381,17 @@ export const LegalAndSpecsPages: React.FC<LegalAndSpecsPagesProps> = ({
                           className="flex items-center gap-2 p-3 bg-emerald-50 border border-emerald-100 text-[#2fb071] rounded-xl"
                         >
                           <CheckCircle2 size={14} className="shrink-0" />
-                          <span className="text-[10px] font-bold">Inquiry transmitted successfully. We reply within 2 hours.</span>
+                          <span className="text-[10px] font-bold">Inquiry transmitted. Ticket ID: <strong className="font-mono bg-emerald-100/40 px-1 py-0.5 rounded text-emerald-800">{submittedTicketId}</strong>. We reply within 2 hours.</span>
+                        </motion.div>
+                      )}
+                      {contactError && (
+                        <motion.div
+                          initial={{ opacity: 0, x: 20 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          exit={{ opacity: 0, x: 20 }}
+                          className="flex items-center gap-2 p-3 bg-rose-50 border border-rose-100 text-rose-600 rounded-xl"
+                        >
+                          <span className="text-[10px] font-bold">⚠️ {contactError}</span>
                         </motion.div>
                       )}
                     </AnimatePresence>
