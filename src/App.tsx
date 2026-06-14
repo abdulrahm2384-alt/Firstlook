@@ -2036,7 +2036,8 @@ export default function App() {
     const sessionKey = activeItem.id || (activeItem.prefix ? `${activeItem.symbol}_${activeItem.prefix}` : activeItem.symbol);
     const linkedSession = backtestSessions[sessionKey];
     const start_time = activeItem.start_time || linkedSession?.startTime || historicalData[0]?.time;
-    const end_time = activeItem.end_time || linkedSession?.endTime || historicalData[historicalData.length - 1]?.time;
+    // Allow end_time to be undefined to prevent permanently locking an ongoing dynamic session to the initial final candle of the current load
+    const end_time = activeItem.end_time || linkedSession?.endTime || undefined;
 
     const currentPlayoutTime = isReplayMode ? (replayCurrentTime || 0) : (simCurrentTime || 0);
     // Find the last candle played or rendered
@@ -2058,7 +2059,8 @@ export default function App() {
     }
 
     let progressFraction = 0;
-    const denom = end_time - start_time;
+    const local_end_time = end_time || (historicalData && historicalData.length > 0 ? historicalData[historicalData.length - 1].time : start_time);
+    const denom = local_end_time - start_time;
     if (denom > 0) {
       progressFraction = Math.max(0, Math.min(1, (last_play_candle_time - start_time) / denom));
     }
@@ -2538,10 +2540,10 @@ export default function App() {
       const sessionData = backtestSessionsRef.current[timeSessionKey];
       if (!sessionData) return;
 
-      const finishTrigger = Math.floor(sessionData.createdAt / 1000);
-      let isCompleted = simCurrentTime >= finishTrigger;
+      const finishTrigger = sessionData.endTime || Math.floor(sessionData.createdAt / 1000);
+      let isCompleted = sessionData.endTime ? (simCurrentTime >= sessionData.endTime) : false;
       
-      if (!isCompleted) {
+      if (!isCompleted && sessionData.endTime) {
         // If within one day (86400s) of target trigger, or have played up to or past the final historical candle
         const isCloseToEnd = (finishTrigger - simCurrentTime) <= 86400;
         let reachedLastCandle = false;
@@ -3656,6 +3658,7 @@ export default function App() {
             status: item.status || 'ongoing'
           };
           
+          // Keep user-specified start and end times intact for backtesting simulation play boundary.
           if (updatedItem.timeSync && updatedItem.lastCandlePlayAt && updatedItem.lastSimulationTime) {
             const elapsedMs = Date.now() - updatedItem.lastCandlePlayAt;
             if (elapsedMs > 0) {
@@ -5193,7 +5196,9 @@ export default function App() {
         }
       } else if (!isReplayMode) {
         const timeframeSeconds = selectedTimeframe.seconds;
-        const sessionKey = currentSessionKey || '';
+        const activeItem = watchlistRef.current.find(i => i.id === (activeWatchlistItemId || '')) ||
+                           (selectedSymbol ? watchlistRef.current.find(i => i.symbol === selectedSymbol && (i.prefix || null) === (activePrefix || null)) : null);
+        const sessionKey = simTimeSessionKeyRef.current || currentSessionKey || activeItem?.id || '';
         const session = sessionKey ? (backtestSessionsRef.current[sessionKey] || (selectedSymbol ? backtestSessionsRef.current[activePrefix ? `${selectedSymbol}_${activePrefix}` : selectedSymbol] : null)) : null;
         
         if (!session) {
@@ -5205,7 +5210,7 @@ export default function App() {
         // We look up from sessionCurrentTimesRef first, then fall back to session's own currentTime / startTime.
         const current = sessionCurrentTimesRef.current?.[sessionKey] || session.currentTime || session.startTime;
 
-        let endTime: number | null = session?.endTime || null;
+        let endTime: number | null = activeItem?.end_time || session?.endTime || null;
 
         let endLimitTime = historicalDataRef.current[historicalDataRef.current.length - 1]?.time || 0;
         if (endTime && endTime < endLimitTime) {
