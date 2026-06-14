@@ -82,7 +82,7 @@ import { FavoriteDrawingsToolbar } from './components/FavoriteDrawingsToolbar';
 import { DrawingSettingsBox } from './components/DrawingSettingsBox';
 import { TradeDetailsCard } from './components/TradeDetailsCard';
 import { TradingCalendar } from './components/TradingCalendar';
-import { IndicatorsModal } from './components/IndicatorsModal';
+import { TechnicalIndicatorsModal } from './components/TechnicalIndicatorsModal';
 import { ColorPicker } from './components/ColorPicker';
 import { IndicatorSettings } from './components/IndicatorSettings';
 import { SetupModal } from './components/SetupModal';
@@ -8330,7 +8330,7 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      <IndicatorsModal 
+      <TechnicalIndicatorsModal 
         isOpen={isIndicatorsOpen}
         onClose={() => setIsIndicatorsOpen(false)}
         activeIndicators={indicators}
