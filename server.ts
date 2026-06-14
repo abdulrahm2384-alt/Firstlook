@@ -86,6 +86,7 @@ function checkOtpRateLimit(email: string): { allowed: boolean; message?: string 
 }
 
 // SMTP email sending function using Zoho Mail SMTP with optimized high-deliverability settings
+// Enhances cloud hosting compatibility (Render, Heroku, etc.) by forcing IPv4 and adding automatic port fallbacks (465 <-> 587)
 async function sendZohoEmail(
   toEmail: string,
   subject: string,
@@ -96,7 +97,6 @@ async function sendZohoEmail(
   replyTo?: string
 ): Promise<boolean> {
   const host = process.env.ZOHO_MAIL_HOST || "smtp.zoho.com";
-  const port = parseInt(process.env.ZOHO_MAIL_PORT || "465", 10);
   const user = process.env.ZOHO_MAIL_USER;
   const pass = process.env.ZOHO_MAIL_PASS;
 
@@ -106,22 +106,42 @@ async function sendZohoEmail(
     return true;
   }
 
-  const secure = port === 465;
-  const transporter = nodemailer.createTransport({
-    host,
-    port,
-    secure,
-    auth: {
-      user,
-      pass,
-    },
-    tls: {
-      rejectUnauthorized: false
-    },
-    connectionTimeout: 5000,
-    greetingTimeout: 5000,
-    socketTimeout: 5000
-  });
+  const configPort = parseInt(process.env.ZOHO_MAIL_PORT || "465", 10);
+  const configSecure = configPort === 465;
+
+  // Build sequential connection configurations to try
+  const attempts: Array<{
+    description: string;
+    port: number;
+    secure: boolean;
+    requireTLS: boolean;
+  }> = [
+    {
+      description: `Primary Configured Port (${host}:${configPort}, secure: ${configSecure})`,
+      port: configPort,
+      secure: configSecure,
+      requireTLS: configPort === 587
+    }
+  ];
+
+  // If primary is port 465, add port 587 (STARTTLS) as backup
+  if (configPort === 465) {
+    attempts.push({
+      description: `Backup STARTTLS Port (${host}:587, secure: false, requireTLS: true)`,
+      port: 587,
+      secure: false,
+      requireTLS: true
+    });
+  } 
+  // If primary is port 587, add port 465 (SSL) as backup
+  else if (configPort === 587) {
+    attempts.push({
+      description: `Backup SSL/TLS Port (${host}:465, secure: true, requireTLS: false)`,
+      port: 465,
+      secure: true,
+      requireTLS: false
+    });
+  }
 
   // Calculate clean text content if not supplied
   const plainText = textContent || htmlContent.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
@@ -152,60 +172,85 @@ async function sendZohoEmail(
     }
   }
 
-  try {
-    console.log(`[SMTP Mail] Dispatching message via ${host}:${port} from ${fromName} <${user}> to ${toEmail} (HighPriority: ${highPriority})`);
-    const info = await transporter.sendMail({
-      from: `"${fromName}" <${user}>`,
-      to: toEmail,
-      replyTo: replyTo || user,
-      subject,
-      text: plainText,
-      html: htmlContent,
-      headers: customHeaders,
-    });
-    console.log("[SMTP Mail] Email dispatched successfully:", info.messageId);
-    return true;
-  } catch (err: any) {
-    const errMsg = err.message || String(err);
-    console.warn(`[SMTP Mail Warning] sendZohoEmail failed to deliver to ${toEmail}: ${errMsg}`);
-    
-    // Help the user diagnose Zoho and Node environment issues in the Render/Cloud logs
-    console.error("====================================================================================");
-    console.error("[SMTP DIAGNOSES] ZOHO MAIL SMTP TRANSACTION ENCOUNTERED AN ISSUE");
-    console.error(`Error details: ${errMsg}`);
-    
-    if (errMsg.includes("535") || errMsg.toLowerCase().includes("authentication") || errMsg.toLowerCase().includes("login")) {
-      console.error("\n💡 DIAGNOSTIC CORRECTION STEPS FOR ZOHO MAIL (AUTHENTICATION FAILED):");
-      console.error("1. USE AN APP-SPECIFIC PASSWORD (CRITICAL REQUIREMENT):");
-      console.error("   If you have Two-Factor Authentication (2FA) active on your Zoho account, your basic login password");
-      console.error("   is strictly rejected by SMTP servers. You MUST generate an App Password:");
-      console.error("   - Sign in to your Zoho Account panel (https://accounts.zoho.com)");
-      console.error("   - Navigate to Security -> App Passwords -> Generate New Password");
-      console.error("   - Name it (e.g. 'Render server application')");
-      console.error("   - Copy the generated 16-character code (without spaces) and use it as your ZOHO_MAIL_PASS env variable.");
-      console.error("\n2. ENABLE SMTP IN ZOHO MAIL SETTINGS:");
-      console.error("   By default, Zoho accounts might have third-party SMTP access turned off. To enable:");
-      console.error("   - Go to your Zoho Mail settings -> Mail Accounts -> IMAP/POP/SMTP");
-      console.error("   - Locate 'SMTP Access' and toggle/check it to ENABLE.");
-      console.error("\n3. VERIFY HOST REGION (ZOHO HOST):");
-      console.error("   The SMTP host depends entirely on your registration country:");
-      console.error("   - Zoho US: smtp.zoho.com");
-      console.error("   - Zoho Europe: smtp.zoho.eu");
-      console.error("   - Zoho India: smtp.zoho.in");
-      console.error("   - Zoho Australia: smtp.zoho.com.au");
-      console.error("   Make sure 'ZOHO_MAIL_HOST' matches your specific Zoho account region.");
-      console.error("\n4. ENSURE COMPLETE EMAIL IS THE USERNAME:");
-      console.error(`   Your 'ZOHO_MAIL_USER' variable must be your full email address (e.g., support@yourdomain.com), not a partial alias. Current: '${user}'`);
-    } else if (errMsg.toLowerCase().includes("timeout") || errMsg.toLowerCase().includes("conn") || errMsg.toLowerCase().includes("refused")) {
-      console.error("\n💡 DIAGNOSTIC CORRECTION STEPS FOR SMTP CONNECTION TIMEOUTS:");
-      console.error("- Verify that the server's host and port config are correct. Current configuration uses:");
-      console.error(`  Host: '${host}' | Port: ${port}`);
-      console.error("- If Port 465 is blocked by a platform firewall, try switching to Port 587 (ZOHO_MAIL_PORT=587) and make sure secure connection is disabled or handles STARTTLS correctly.");
+  let finalError: any = null;
+
+  for (const attempt of attempts) {
+    try {
+      console.log(`[SMTP Mail] Attempting send to ${toEmail} via ${attempt.description}...`);
+      
+      const transporter = nodemailer.createTransport({
+        host,
+        port: attempt.port,
+        secure: attempt.secure,
+        requireTLS: attempt.requireTLS,
+        family: 4, // CRITICAL: Force IPv4. Render/cloud hosts default to IPv6, which Zoho blocks or spf-rejects.
+        auth: {
+          user,
+          pass,
+        },
+        tls: {
+          rejectUnauthorized: false // Avoid SSL certificate validation issues on cloud load balancers/firewalls
+        },
+        connectionTimeout: 8000, // Slightly longer timeout for serverless wakeups
+        greetingTimeout: 8000,
+        socketTimeout: 8000
+      } as any);
+
+      const info = await transporter.sendMail({
+        from: `"${fromName}" <${user}>`,
+        to: toEmail,
+        replyTo: replyTo || user,
+        subject,
+        text: plainText,
+        html: htmlContent,
+        headers: customHeaders,
+      });
+
+      console.log(`[SMTP Mail Success] Email dispatched successfully via port ${attempt.port}! MessageId:`, info.messageId);
+      return true;
+    } catch (err: any) {
+      finalError = err;
+      const errMsg = err.message || String(err);
+      console.warn(`[SMTP Mail Alert] ${attempt.description} failed to deliver to ${toEmail}: ${errMsg}`);
     }
-    console.error("====================================================================================");
-    
-    return false;
   }
+
+  // If we reach this point, all SMTP configurations failed. Log comprehensive diagnostics.
+  const errMsg = finalError?.message || String(finalError);
+  console.error("====================================================================================");
+  console.error("[SMTP DIAGNOSES] ALL ZOHO MAIL SMTP ENGINES FAILED TO TRANSMIT MESSAGE");
+  console.error(`Last encounter error details: ${errMsg}`);
+  
+  if (errMsg.includes("535") || errMsg.toLowerCase().includes("authentication") || errMsg.toLowerCase().includes("login")) {
+    console.error("\n💡 DIAGNOSTIC CORRECTION STEPS FOR ZOHO MAIL (AUTHENTICATION FAILED):");
+    console.error("1. USE AN APP-SPECIFIC PASSWORD (CRITICAL REQUIREMENT):");
+    console.error("   If you have Two-Factor Authentication (2FA) active on your Zoho account, your basic login password");
+    console.error("   is strictly rejected by SMTP servers. You MUST generate an App Password:");
+    console.error("   - Sign in to your Zoho Account panel (https://accounts.zoho.com)");
+    console.error("   - Navigate to Security -> App Passwords -> Generate New Password");
+    console.error("   - Name it (e.g. 'Render server application')");
+    console.error("   - Copy the generated 16-character code (without spaces) and use it as your ZOHO_MAIL_PASS env variable.");
+    console.error("\n2. ENABLE SMTP IN ZOHO MAIL SETTINGS:");
+    console.error("   By default, Zoho accounts might have third-party SMTP access turned off. To enable:");
+    console.error("   - Go to your Zoho Mail settings -> Mail Accounts -> IMAP/POP/SMTP");
+    console.error("   - Locate 'SMTP Access' and toggle/check it to ENABLE.");
+    console.error("\n3. VERIFY HOST REGION (ZOHO HOST):");
+    console.error("   The SMTP host depends entirely on your registration country:");
+    console.error("   - Zoho US: smtp.zoho.com");
+    console.error("   - Zoho Europe: smtp.zoho.eu");
+    console.error("   - Zoho India: smtp.zoho.in");
+    console.error("   - Zoho Australia: smtp.zoho.com.au");
+    console.error("   Make sure 'ZOHO_MAIL_HOST' matches your specific Zoho account region.");
+    console.error("\n4. ENSURE COMPLETE EMAIL IS THE USERNAME:");
+    console.error(`   Your 'ZOHO_MAIL_USER' variable must be your full email address (e.g., support@yourdomain.com), not a partial alias. Current: '${user}'`);
+  } else if (errMsg.toLowerCase().includes("timeout") || errMsg.toLowerCase().includes("conn") || errMsg.toLowerCase().includes("refused")) {
+    console.error("\n💡 DIAGNOSTIC CORRECTION STEPS FOR SMTP CONNECTION TIMEOUTS:");
+    console.error("- Verify that Render environment variables are deployed and matches your domain account.");
+    console.error("- Confirm with Zoho support if your Zoho organization has restricted SMTP sending by IP range.");
+  }
+  console.error("====================================================================================");
+  
+  return false;
 }
 
 async function sendOtpEmail(email: string, otp: string): Promise<boolean> {
