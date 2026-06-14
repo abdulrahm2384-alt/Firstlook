@@ -87,6 +87,8 @@ function checkOtpRateLimit(email: string): { allowed: boolean; message?: string 
 
 // SMTP email sending function using Zoho Mail SMTP with optimized high-deliverability settings
 // Enhances cloud hosting compatibility (Render, Heroku, etc.) by forcing IPv4 and adding automatic port fallbacks (465 <-> 587)
+// If RESEND_API_KEY is configured in the environment variables, we will route delivery through Resend's HTTPS REST API.
+// This completely avoids connection timeout issues caused by cloud firewalls blocking ports 25, 465, and 587 on Render Free tier!
 async function sendZohoEmail(
   toEmail: string,
   subject: string,
@@ -96,6 +98,44 @@ async function sendZohoEmail(
   highPriority: boolean = false,
   replyTo?: string
 ): Promise<boolean> {
+  // 1. Web API routing check: (Guaranteed delivery on platforms with blocked port configurations)
+  if (process.env.RESEND_API_KEY) {
+    const resendApiKey = process.env.RESEND_API_KEY.trim();
+    console.log(`[Email Route] RESEND_API_KEY detected! Bypassing blocked physical TCP ports and dispatching via Resend's secure HTTPS API (Port 443)...`);
+    try {
+      const fromEmail = (process.env.RESEND_FROM_EMAIL || "onboarding@resend.dev").trim();
+      const plainText = textContent || htmlContent.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+      
+      const payload = {
+        from: `"${fromName}" <${fromEmail}>`,
+        to: [toEmail],
+        subject: subject,
+        html: htmlContent,
+        text: plainText,
+        reply_to: replyTo ? [replyTo] : undefined
+      };
+      
+      const response = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${resendApiKey}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+      });
+      
+      const responseData: any = await response.json();
+      if (response.ok && responseData.id) {
+        console.log(`[Resend API Success] Email successfully transmitted to ${toEmail}! MessageId: ${responseData.id}`);
+        return true;
+      } else {
+        console.error(`[Resend API Fail] Dispatch parameters rejected: ${JSON.stringify(responseData)}`);
+      }
+    } catch (resendErr: any) {
+      console.error(`[Resend API Error] Web pipeline failed: ${resendErr.message}. Cascading back to standard SMTP.`);
+    }
+  }
+
   const host = (process.env.ZOHO_MAIL_HOST || "smtp.zoho.com").trim();
   const user = process.env.ZOHO_MAIL_USER ? process.env.ZOHO_MAIL_USER.trim() : undefined;
   const pass = process.env.ZOHO_MAIL_PASS ? process.env.ZOHO_MAIL_PASS.trim() : undefined;
@@ -2565,17 +2605,56 @@ async function startServer() {
     };
 
     try {
-      pushLog("SYSTEM", "Starting SMTP diagnostics...");
+      pushLog("SYSTEM", "Starting App Mailer diagnostics...");
       
       const host = (process.env.ZOHO_MAIL_HOST || "smtp.zoho.com").trim();
       const user = process.env.ZOHO_MAIL_USER ? process.env.ZOHO_MAIL_USER.trim() : undefined;
       const pass = process.env.ZOHO_MAIL_PASS ? process.env.ZOHO_MAIL_PASS.trim() : undefined;
       const portVal = (process.env.ZOHO_MAIL_PORT || "465").trim();
       const port = parseInt(portVal, 10);
+      const recipient = (req.query.recipient as string) || (user || "abdulrahmon2384@gmail.com");
       
       const maskedPass = pass ? `${pass.slice(0, 2)}...${pass.slice(-2)} (length: ${pass.length})` : "NOT_CONFIGURED";
-      pushLog("SYSTEM", `Environment check: HOST='${host}', USER='${user}', PORT='${portVal}', PASS='${maskedPass}'`);
+      pushLog("SYSTEM", `Environment SMTP check: HOST='${host}', USER='${user}', PORT='${portVal}', PASS='${maskedPass}'`);
       
+      // 1. Check Resend API Route (Guaranteed bypass for port-blocked hosts like Render Free tier)
+      if (process.env.RESEND_API_KEY) {
+        const key = process.env.RESEND_API_KEY.trim();
+        const maskedKey = `${key.slice(0, 5)}...${key.slice(-4)} (length: ${key.length})`;
+        pushLog("RESEND_CHECK", `Resend config detected: RESEND_API_KEY='${maskedKey}'`);
+        
+        try {
+          const fromEmail = (process.env.RESEND_FROM_EMAIL || "onboarding@resend.dev").trim();
+          pushLog("RESEND_SEND", `Attempting Resend API test dispatch to: ${recipient} from: ${fromEmail}...`);
+          
+          const response = await fetch("https://api.resend.com/emails", {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${key}`,
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              from: `"FirstLook Labs" <${fromEmail}>`,
+              to: [recipient],
+              subject: `FirstLook Resend Diagnostic Alert - ${new Date().toLocaleTimeString()}`,
+              text: `HTTPS email dispatch diagnostic completed successfully.`,
+              html: `<p>HTTPS REST API email dispatch has succeeded!</p><ul><li><b>From:</b> ${fromEmail}</li><li><b>Host Environment:</b> Render / Cloud Run</li></ul>`
+            })
+          });
+          
+          const responseData: any = await response.json();
+          if (response.ok && responseData.id) {
+            pushLog("RESEND_SEND_SUCCESS", `Resend API test email successfully delivered! MessageId: ${responseData.id}`);
+          } else {
+            pushLog("RESEND_SEND_FAIL", `Resend rejected payload: ${JSON.stringify(responseData)}`);
+          }
+        } catch (resendErr: any) {
+          pushLog("RESEND_SEND_ERROR", `Resend API throw error: ${resendErr.message}`);
+        }
+      } else {
+        pushLog("RESEND_CHECK", "Resend configuration is empty (RESEND_API_KEY is not configured). Standard physical port SMTP remains active.");
+      }
+
       if (!user) {
         pushLog("ERROR", "ZOHO_MAIL_USER is missing in the environment variables!");
       }
@@ -2593,7 +2672,6 @@ async function startServer() {
         pushLog("DNS_ERROR", `Failed to resolve host ${host}: ${dnsErr.message}`);
       }
 
-      const recipient = (req.query.recipient as string) || (user || "abdulrahmon2384@gmail.com");
       pushLog("SYSTEM", `Target recipient for test email stream: ${recipient}`);
 
       // Setup custom nodemailer logger to capture connection logs
@@ -2655,7 +2733,7 @@ async function startServer() {
 
       res.status(200).json({
         success: true,
-        message: "SMTP Diagnostic completed.",
+        message: "Diagnostics completed.",
         targetRecipient: recipient,
         diagnostics: smtpLogs
       });
