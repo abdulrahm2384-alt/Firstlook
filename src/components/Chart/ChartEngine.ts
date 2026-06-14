@@ -171,8 +171,8 @@ export class ChartEngine {
     [DrawingType.RECTANGLE]: { strokeColor: '#2962ff73', fillColor: '#2962ff73', lineWidth: 1 },
     [DrawingType.BRUSH]: { color: '#2962ff73', lineWidth: 2 },
     [DrawingType.PATH]: { color: '#2962ff73', lineWidth: 2 },
-    [DrawingType.LONG_POSITION]: { profitColor: '#00695c73', lossColor: '#c6282873', opacity: 0.45 },
-    [DrawingType.SHORT_POSITION]: { profitColor: '#00695c73', lossColor: '#c6282873', opacity: 0.45 },
+    [DrawingType.LONG_POSITION]: { profitColor: '#00695c', lossColor: '#c62828', opacity: 0.45 },
+    [DrawingType.SHORT_POSITION]: { profitColor: '#00695c', lossColor: '#c62828', opacity: 0.45 },
   };
 
   private readonly PADDING_RIGHT: number = 60; // Standardized padding for chart area
@@ -780,30 +780,22 @@ export class ChartEngine {
               points = [coords];
             } else if (this.currentDrawingType === DrawingType.LONG_POSITION || this.currentDrawingType === DrawingType.SHORT_POSITION) {
               const isLong = this.currentDrawingType === DrawingType.LONG_POSITION;
-              const settings = this.lastUsedSettings[this.currentDrawingType!];
               
-              let targetDist: number;
-              let stopDist: number;
-              let duration: number;
+              // ALWAYS calculate dynamic defaults based on the currently visible price range of the active chart viewport
+              // This guarantees perfect proportions regardless of timeframe (1m to Daily) or instrument (Crypto, Forex, Gold, etc.)
+              const visiblePriceRange = (this.cachedMaxP - this.cachedMinP) || (coords.price * 0.05);
+              const targetDist = visiblePriceRange * 0.12; 
+              const stopDist = targetDist * 0.5;
+              const visibleBars = (this.canvasWidth - this.sidebarWidth - 20) / this.zoom;
+              const duration = (visibleBars * this.avgInterval) * 0.15;
+              
+              let adjustedCoords = { ...coords };
 
-              if (settings?.targetDist && settings?.stopDist) {
-                targetDist = settings.targetDist;
-                stopDist = settings.stopDist;
-                duration = settings.duration || (30 * this.avgInterval);
-              } else {
-                // Calculate dynamic defaults
-                const visiblePriceRange = (this.cachedMaxP - this.cachedMinP) || (coords.price * 0.05);
-                targetDist = visiblePriceRange * 0.12; 
-                stopDist = targetDist * 0.5;
-                const visibleBars = (this.canvasWidth - this.sidebarWidth - 20) / this.zoom;
-                duration = (visibleBars * this.avgInterval) * 0.15;
-              }
+              const tPrice = adjustedCoords.price + (isLong ? 1 : -1) * targetDist;
+              const sPrice = adjustedCoords.price - (isLong ? 1 : -1) * stopDist;
+              const endTime = adjustedCoords.time + duration;
               
-              const tPrice = coords.price + (isLong ? 1 : -1) * targetDist;
-              const sPrice = coords.price - (isLong ? 1 : -1) * stopDist;
-              const endTime = coords.time + duration;
-              
-              points = [coords, { ...coords, price: tPrice, time: endTime }, { ...coords, price: sPrice, time: endTime }];
+              points = [adjustedCoords, { ...adjustedCoords, price: tPrice, time: endTime }, { ...adjustedCoords, price: sPrice, time: endTime }];
             } else {
               points = [coords, coords];
             }
@@ -979,53 +971,74 @@ export class ChartEngine {
           const isTriggered = drawing.isTriggered;
           const isApproved = drawing.isPipelineApproved;
 
-          if (this.draggingPointIdx === -1) {
-            if (isTriggered && (drawing.type === DrawingType.LONG_POSITION || drawing.type === DrawingType.SHORT_POSITION)) {
-              // Lock overall drawing movement once triggered
-              return;
-            }
-            // Whole drawing dragging
-            const timeDelta = coords.time - this.dragStartCoords.time;
-            const priceDelta = coords.price - this.dragStartCoords.price;
-            
-            if (!isNaN(timeDelta) && !isNaN(priceDelta)) {
-              drawing.points = this.initialPoints.map(p => ({
-                time: p.time + timeDelta,
-                price: p.price + priceDelta
-              }));
-              this.refreshPlacedAt(drawing);
-            }
-          } else if (this.draggingPointIdx >= 0) {
-            // Individual point dragging
-            if (drawing.type === DrawingType.LONG_POSITION || drawing.type === DrawingType.SHORT_POSITION) {
-              const p0 = drawing.points[0];
-              const p1 = drawing.points[1];
-              const p2 = drawing.points[2] || { ...p0 };
-              const lastPrice = this.data[this.data.length - 1]?.close || p0.price;
-
-              if (this.draggingPointIdx === 0 || this.draggingPointIdx === 10) {
-                // Dragging Entry Side or Label
-                // idx 0 -> Left Handle (Vertical + Start Time)
-                // idx 10 -> Entry Line (Vertical Only)
-                
-                if (isTriggered) {
-                  if (this.draggingPointIdx === 0) {
-                    // Start time can be resized/widened even when triggered/active/approved, but price is locked
-                    const minT = Math.min(p0.time, p1.time);
-                    if (p0.time === minT) p0.time = coords.time;
-                    else p1.time = coords.time;
-                    if (drawing.points[2]) drawing.points[2].time = Math.max(p0.time, p1.time);
+            if (this.draggingPointIdx === -1) {
+              if (isTriggered && (drawing.type === DrawingType.LONG_POSITION || drawing.type === DrawingType.SHORT_POSITION)) {
+                // Lock overall drawing movement once triggered
+                return;
+              }
+              // Whole drawing dragging
+              const timeDelta = coords.time - this.dragStartCoords.time;
+              let priceDelta = coords.price - this.dragStartCoords.price;
+              
+              if (!isNaN(timeDelta) && !isNaN(priceDelta)) {
+                if ((drawing.type === DrawingType.LONG_POSITION || drawing.type === DrawingType.SHORT_POSITION) && drawing.isQuickTrade) {
+                  const isLong = drawing.type === DrawingType.LONG_POSITION;
+                  const lastPrice = this.data[this.data.length - 1]?.close || this.initialPoints[0].price;
+                  const projectedEntryPrice = this.initialPoints[0].price + priceDelta;
+                  if (isLong && projectedEntryPrice > lastPrice) {
+                    priceDelta = lastPrice - this.initialPoints[0].price;
+                  } else if (!isLong && projectedEntryPrice < lastPrice) {
+                    priceDelta = lastPrice - this.initialPoints[0].price;
                   }
-                  return;
                 }
 
-                if (!isTriggered) {
-                  const priceDelta = coords.price - p0.price;
-                  drawing.points[0].price = coords.price;
-                  drawing.points[1].price = p1.price + priceDelta;
-                  if (drawing.points[2]) drawing.points[2].price = p2.price + priceDelta;
-                  this.refreshPlacedAt(drawing);
-                }
+                drawing.points = this.initialPoints.map(p => ({
+                  time: p.time + timeDelta,
+                  price: p.price + priceDelta
+                }));
+                this.refreshPlacedAt(drawing);
+              }
+            } else if (this.draggingPointIdx >= 0) {
+              // Individual point dragging
+              if (drawing.type === DrawingType.LONG_POSITION || drawing.type === DrawingType.SHORT_POSITION) {
+                const p0 = drawing.points[0];
+                const p1 = drawing.points[1];
+                const p2 = drawing.points[2] || { ...p0 };
+                const lastPrice = this.data[this.data.length - 1]?.close || p0.price;
+
+                if (this.draggingPointIdx === 0 || this.draggingPointIdx === 10) {
+                  // Dragging Entry Side or Label
+                  // idx 0 -> Left Handle (Vertical + Start Time)
+                  // idx 10 -> Entry Line (Vertical Only)
+                  
+                  if (isTriggered) {
+                    if (this.draggingPointIdx === 0) {
+                      // Start time can be resized/widened even when triggered/active/approved, but price is locked
+                      const minT = Math.min(p0.time, p1.time);
+                      if (p0.time === minT) p0.time = coords.time;
+                      else p1.time = coords.time;
+                      if (drawing.points[2]) drawing.points[2].time = Math.max(p0.time, p1.time);
+                    }
+                    return;
+                  }
+
+                  if (!isTriggered) {
+                    let targetPrice = coords.price;
+                    const isLong = drawing.type === DrawingType.LONG_POSITION;
+                    if (drawing.isQuickTrade) {
+                      if (isLong && targetPrice > lastPrice) {
+                        targetPrice = lastPrice;
+                      } else if (!isLong && targetPrice < lastPrice) {
+                        targetPrice = lastPrice;
+                      }
+                    }
+
+                    const priceDelta = targetPrice - p0.price;
+                    drawing.points[0].price = targetPrice;
+                    drawing.points[1].price = p1.price + priceDelta;
+                    if (drawing.points[2]) drawing.points[2].price = p2.price + priceDelta;
+                    this.refreshPlacedAt(drawing);
+                  }
                 
                 // If it was the handle (0), also update start time
                 if (this.draggingPointIdx === 0) {
@@ -3910,7 +3923,7 @@ export class ChartEngine {
 
             const profitColor = d.settings.profitColor || '#00695c';
             const lossColor = d.settings.lossColor || '#c62828';
-            const baseOpacity = d.settings.opacity || 0.3;
+            const baseOpacity = d.settings.opacity !== undefined ? d.settings.opacity : 0.45;
 
             // Helper to ensure we have a color with specified opacity
             const getColorWithAlpha = (c: string, alpha: number) => {

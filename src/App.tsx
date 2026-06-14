@@ -2852,9 +2852,12 @@ export default function App() {
   ]);
   
   const viewportTimerRef = useRef<any>(null);
+  const lastViewportValuesRef = useRef<Record<string, any>>({});
   const handleViewportChange = useCallback((v: any) => {
     const key = activeWatchlistItemId || (selectedSymbol ? (activePrefix ? `${selectedSymbol}_${activePrefix}` : selectedSymbol) : null);
     if (!key) return;
+    
+    lastViewportValuesRef.current[key] = v;
     
     // Use a ref to avoid stale closure and immediate state updates
     if (viewportTimerRef.current) clearTimeout(viewportTimerRef.current);
@@ -4512,6 +4515,12 @@ export default function App() {
   useEffect(() => {
     if (!selectedSymbol) return;
     
+    const key = activeWatchlistItemId || (selectedSymbol ? (activePrefix ? `${selectedSymbol}_${activePrefix}` : selectedSymbol) : null);
+    let targetTimeframeId = selectedTimeframe.id;
+    if (key && symbolViewStates[key]?.timeframeId) {
+      targetTimeframeId = symbolViewStates[key].timeframeId;
+    }
+
     const sessionData = currentSessionKey ? backtestSessions[currentSessionKey] : null;
 
     if (sessionData) {
@@ -4583,7 +4592,7 @@ export default function App() {
         timeToLoad = simCurrentTimeRef.current || sessionData.currentTime || sessionData.startTime;
       }
 
-      loadMarketData(selectedSymbol, selectedTimeframe.id, timeToLoad, activeWatchlistItem?.dataSource, activeWatchlistItem?.marketType);
+      loadMarketData(selectedSymbol, targetTimeframeId, timeToLoad, activeWatchlistItem?.dataSource, activeWatchlistItem?.marketType);
       setIsSimulating(!isMobile);
     } else {
       lastLoadedSessionKeyRef.current = null;
@@ -4603,7 +4612,7 @@ export default function App() {
         const source = activeItem?.dataSource || activeWatchlistItem?.dataSource;
         const marketType = activeItem?.marketType || activeWatchlistItem?.marketType;
 
-        loadMarketData(selectedSymbol, selectedTimeframe.id, timeToLoad, source, marketType);
+        loadMarketData(selectedSymbol, targetTimeframeId, timeToLoad, source, marketType);
       } else {
         lastLoadedReplayTradeIdRef.current = null;
       }
@@ -4743,6 +4752,42 @@ export default function App() {
     const isDifferentPair = clickedWatchlistItemId !== currentChartId;
 
     if (isDifferentPair) {
+      // Flush previous pair's zoom/pan viewport and playhead/indicators state instantly before transitioning
+      const prevKey = currentChartId || (selectedSymbol ? (activePrefix ? `${selectedSymbol}_${activePrefix}` : selectedSymbol) : null);
+      if (prevKey && selectedTimeframe) {
+        if (viewportTimerRef.current) clearTimeout(viewportTimerRef.current);
+        const lastPendingV = lastViewportValuesRef.current[prevKey];
+        
+        setSymbolViewStates(prev => {
+          const existingSymbolState = prev[prevKey] || { timeframeId: selectedTimeframe.id };
+          const updatedTimeframeStates = {
+            ...(existingSymbolState.timeframeStates || {}),
+            [selectedTimeframe.id]: {
+              timeframeId: selectedTimeframe.id,
+              simCurrentTime: simCurrentTimeRef.current,
+              replayCurrentTime: replayCurrentTimeRef.current,
+              indicators: indicators
+            }
+          };
+
+          const newState = {
+            ...prev,
+            [prevKey]: {
+              ...existingSymbolState,
+              timeframeId: selectedTimeframe.id,
+              timeframeStates: updatedTimeframeStates,
+              ...(lastPendingV ? { viewport: lastPendingV } : {})
+            }
+          };
+
+          if (session?.user?.id) {
+            persistenceService.savePreferences(session.user.id, { symbolViewStates: newState }).catch(() => {});
+          }
+
+          return newState;
+        });
+      }
+
       // 1. Completely clear all previous chart cache (IndexedDB and memory cache)
       clearAllLocalChartCaches().catch(() => {});
 
@@ -5652,24 +5697,33 @@ export default function App() {
     const lastCandle = activeCandles[activeCandles.length - 1];
     const currentPrice = lastCandle.close;
 
-    // 10 pips below for Buy/Long, 5 pips above for Sell/Short
-    const pipMultiplier = getPipMultiplier(chartSymbol, currentPrice);
+    // ALWAYS calculate dynamic defaults derived from the active visible range of the candles
+    // This provides perfect visual size proportions across any timeframe or asset (Crypto, Forex, Gold, etc.)
+    const highs = activeCandles.map(c => c.high);
+    const lows = activeCandles.map(c => c.low);
+    const maxP = Math.max(...highs, currentPrice);
+    const minP = Math.min(...lows, currentPrice);
+    const visiblePriceRange = (maxP - minP) || (currentPrice * 0.05);
+
     let entryPrice = currentPrice;
     let stopPrice = currentPrice;
     let targetPrice = currentPrice;
 
+    // We set the entry offset to 2% of the visible range to draw below for Buy/Long and above for Sell/Short
+    const entryOffset = visiblePriceRange * 0.02;
+    const targetOffset = visiblePriceRange * 0.12;
+    const stopOffset = visiblePriceRange * 0.06;
+
     if (direction === 'buy') {
-      // 10 pips below current price
-      entryPrice = currentPrice - 10 * pipMultiplier;
-      // Default long setup parameters (20 pips risk, 40 pips target: R:R = 2.0)
-      stopPrice = entryPrice - 20 * pipMultiplier;
-      targetPrice = entryPrice + 40 * pipMultiplier;
+      // Long entry is guaranteed to be below current price
+      entryPrice = currentPrice - entryOffset;
+      stopPrice = entryPrice - stopOffset;
+      targetPrice = entryPrice + targetOffset;
     } else {
-      // 5 pips above current price
-      entryPrice = currentPrice + 5 * pipMultiplier;
-      // Default short setup parameters (20 pips risk, 40 pips target: R:R = 2.0)
-      stopPrice = entryPrice + 20 * pipMultiplier;
-      targetPrice = entryPrice - 40 * pipMultiplier;
+      // Short entry is guaranteed to be above current price
+      entryPrice = currentPrice + entryOffset;
+      stopPrice = entryPrice + stopOffset;
+      targetPrice = entryPrice - targetOffset;
     }
 
     // Time extension window: calculate interval from last 2 candles
@@ -5697,13 +5751,17 @@ export default function App() {
         { time: candle1.time + duration, price: stopPrice }
       ],
       isPipelineApproved: true,
+      isQuickTrade: true,
       approvedAt: Date.now(),
       approvedPrice: currentPrice,
       placedAt: candle1.time,
       settings: {
         realizedAt: new Date().toISOString(),
         setupGrade: grade,
-        confluences: associatedSetup ? (associatedSetup.confluences || []) : []
+        confluences: associatedSetup ? (associatedSetup.confluences || []) : [],
+        profitColor: '#00695c',
+        lossColor: '#c62828',
+        opacity: 0.45
       }
     };
 

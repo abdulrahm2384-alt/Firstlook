@@ -43,4 +43,5 @@ export interface Drawing {
   initialStopPrice?: number; // Initial Stop Loss on trigger
   status?: 'active' | 'won' | 'lost';
   statusAt?: number; // timestamp
+  isQuickTrade?: boolean;
 }
