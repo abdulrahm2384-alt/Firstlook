@@ -303,31 +303,130 @@ async function sendOtpEmail(email: string, otp: string): Promise<boolean> {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Your FirstLookLabs verification code</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background-color: #f8fafc;
+      color: #1e293b;
+      margin: 0;
+      padding: 0;
+      -webkit-font-smoothing: antialiased;
+    }
+    .wrapper {
+      max-width: 600px;
+      margin: 40px auto;
+      background-color: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+    }
+    .header {
+      background-color: #0f172a;
+      padding: 24px;
+      text-align: center;
+    }
+    .logo {
+      height: 40px;
+      max-width: 250px;
+      vertical-align: middle;
+    }
+    .content {
+      padding: 40px 32px;
+    }
+    .heading {
+      font-size: 20px;
+      font-weight: 700;
+      color: #0f172a;
+      margin-top: 0;
+      margin-bottom: 24px;
+      letter-spacing: -0.025em;
+      line-height: 1.3;
+    }
+    .body-text {
+      font-size: 15px;
+      line-height: 1.6;
+      color: #334155;
+    }
+    .otp-container {
+      text-align: center;
+      margin: 32px 0;
+    }
+    .otp-code {
+      display: inline-block;
+      background-color: #f1f5f9;
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      padding: 16px 32px;
+      letter-spacing: 4px;
+      font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Courier, monospace;
+      font-size: 28px;
+      font-weight: 850;
+      color: #0f172a;
+    }
+    .footer {
+      background-color: #f1f5f9;
+      border-top: 1px solid #e2e8f0;
+      padding: 32px;
+      text-align: center;
+      font-size: 12px;
+      color: #64748b;
+      line-height: 1.6;
+    }
+    .footer-title {
+      font-weight: 700;
+      color: #0f172a;
+      margin-bottom: 4px;
+    }
+    .footer-tagline {
+      font-style: italic;
+      margin-bottom: 12px;
+    }
+    .footer-meta {
+      margin-top: 16px;
+      padding-top: 16px;
+      border-top: 1px solid #e2e8f0;
+      font-size: 11px;
+    }
+    .footer-link {
+      color: #2563eb;
+      text-decoration: underline;
+      font-weight: 500;
+    }
+    .footer-link:hover {
+      color: #1d4ed8;
+    }
+  </style>
 </head>
-<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #fafafa; color: #111111; margin: 0; padding: 40px 20px; -webkit-font-smoothing: antialiased;">
-  <div style="max-width: 500px; margin: 0 auto; background-color: #ffffff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 40px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
-    <div style="margin-bottom: 24px;">
-      <span style="font-size: 20px; font-weight: 700; color: #111111; letter-spacing: -0.5px;">FirstLookLabs</span>
+<body>
+  <div class="wrapper">
+    <div class="header">
+      <img src="https://firstlooklabs.xyz/logo.svg" alt="FirstLook Labs" class="logo" />
+      <span style="vertical-align: middle; font-size: 22px; font-weight: 800; color: #ffffff; margin-left: 8px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; letter-spacing: -0.025em;">FirstLook</span>
     </div>
-    
-    <p style="font-size: 15px; line-height: 1.5; color: #444444; margin: 0 0 16px 0;">Hello,</p>
-    
-    <p style="font-size: 15px; line-height: 1.5; color: #444444; margin: 0 0 24px 0;">Use the following verification code to complete your registration:</p>
-    
-    <div style="text-align: center; margin: 32px 0;">
-      <div style="display: inline-block; background-color: #f5f5f5; border: 1px solid #e0e0e0; border-radius: 6px; padding: 14px 28px; letter-spacing: 4px;">
-        <span style="font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Courier, monospace; font-size: 28px; font-weight: 700; color: #111111;">${otp}</span>
+    <div class="content">
+      <h1 class="heading">Verification Code</h1>
+      <div class="body-text">
+        <p>Hello,</p>
+        <p>Use the following verification code to complete your registration:</p>
+        <div class="otp-container">
+          <div class="otp-code">${otp}</div>
+        </div>
+        <p>This code is valid for 10 minutes. After 10 minutes, you will need to request a new code.</p>
+        <p style="margin-top: 24px; border-top: 1px solid #f1f5f9; padding-top: 24px; font-size: 13px; color: #64748b;">
+          If you did not request this email, please disregard it. No further action is required.
+        </p>
       </div>
     </div>
-    
-    <p style="font-size: 14px; line-height: 1.5; color: #666666; margin: 0 0 24px 0;">This code is valid for 10 minutes. After 10 minutes, you will need to request a new code.</p>
-    
-    <p style="font-size: 13px; line-height: 1.5; color: #888888; margin: 0 0 40px 0; border-top: 1px solid #f0f0f0; padding-top: 24px;">If you did not request this email, please disregard it. No further action is required.</p>
-    
-    <div style="font-size: 12px; line-height: 1.4; color: #999999;">
-      <p style="margin: 0 0 4px 0;">FirstLookLabs Security</p>
-      <p style="margin: 0;">This is an automated operational notification. Please do not reply to this email.</p>
+    <div class="footer">
+      <div class="footer-title">FirstLook Labs</div>
+      <div class="footer-tagline">Test First. Risk Later.</div>
+      <div>
+        <a href="https://firstlooklabs.xyz" class="footer-link" target="_blank">https://firstlooklabs.xyz</a>
+      </div>
+      <div class="footer-meta">
+        FirstLook Security • Automated Operational Notification
+      </div>
     </div>
   </div>
 </body>
@@ -350,31 +449,130 @@ async function sendResetOtpEmail(email: string, otp: string): Promise<boolean> {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Your FirstLookLabs verification code</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background-color: #f8fafc;
+      color: #1e293b;
+      margin: 0;
+      padding: 0;
+      -webkit-font-smoothing: antialiased;
+    }
+    .wrapper {
+      max-width: 600px;
+      margin: 40px auto;
+      background-color: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+    }
+    .header {
+      background-color: #0f172a;
+      padding: 24px;
+      text-align: center;
+    }
+    .logo {
+      height: 40px;
+      max-width: 250px;
+      vertical-align: middle;
+    }
+    .content {
+      padding: 40px 32px;
+    }
+    .heading {
+      font-size: 20px;
+      font-weight: 700;
+      color: #0f172a;
+      margin-top: 0;
+      margin-bottom: 24px;
+      letter-spacing: -0.025em;
+      line-height: 1.3;
+    }
+    .body-text {
+      font-size: 15px;
+      line-height: 1.6;
+      color: #334155;
+    }
+    .otp-container {
+      text-align: center;
+      margin: 32px 0;
+    }
+    .otp-code {
+      display: inline-block;
+      background-color: #f1f5f9;
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      padding: 16px 32px;
+      letter-spacing: 4px;
+      font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Courier, monospace;
+      font-size: 28px;
+      font-weight: 850;
+      color: #0f172a;
+    }
+    .footer {
+      background-color: #f1f5f9;
+      border-top: 1px solid #e2e8f0;
+      padding: 32px;
+      text-align: center;
+      font-size: 12px;
+      color: #64748b;
+      line-height: 1.6;
+    }
+    .footer-title {
+      font-weight: 700;
+      color: #0f172a;
+      margin-bottom: 4px;
+    }
+    .footer-tagline {
+      font-style: italic;
+      margin-bottom: 12px;
+    }
+    .footer-meta {
+      margin-top: 16px;
+      padding-top: 16px;
+      border-top: 1px solid #e2e8f0;
+      font-size: 11px;
+    }
+    .footer-link {
+      color: #2563eb;
+      text-decoration: underline;
+      font-weight: 500;
+    }
+    .footer-link:hover {
+      color: #1d4ed8;
+    }
+  </style>
 </head>
-<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #fafafa; color: #111111; margin: 0; padding: 40px 20px; -webkit-font-smoothing: antialiased;">
-  <div style="max-width: 500px; margin: 0 auto; background-color: #ffffff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 40px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
-    <div style="margin-bottom: 24px;">
-      <span style="font-size: 20px; font-weight: 700; color: #111111; letter-spacing: -0.5px;">FirstLookLabs</span>
+<body>
+  <div class="wrapper">
+    <div class="header">
+      <img src="https://firstlooklabs.xyz/logo.svg" alt="FirstLook Labs" class="logo" />
+      <span style="vertical-align: middle; font-size: 22px; font-weight: 800; color: #ffffff; margin-left: 8px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; letter-spacing: -0.025em;">FirstLook</span>
     </div>
-    
-    <p style="font-size: 15px; line-height: 1.5; color: #444444; margin: 0 0 16px 0;">Hello,</p>
-    
-    <p style="font-size: 15px; line-height: 1.5; color: #444444; margin: 0 0 24px 0;">Use the following verification code to reset your password:</p>
-    
-    <div style="text-align: center; margin: 32px 0;">
-      <div style="display: inline-block; background-color: #f5f5f5; border: 1px solid #e0e0e0; border-radius: 6px; padding: 14px 28px; letter-spacing: 4px;">
-        <span style="font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Courier, monospace; font-size: 28px; font-weight: 700; color: #111111;">${otp}</span>
+    <div class="content">
+      <h1 class="heading">Reset Password</h1>
+      <div class="body-text">
+        <p>Hello,</p>
+        <p>Use the following verification code to reset your password:</p>
+        <div class="otp-container">
+          <div class="otp-code">${otp}</div>
+        </div>
+        <p>This code is valid for 10 minutes. After 10 minutes, you will need to request a new code.</p>
+        <p style="margin-top: 24px; border-top: 1px solid #f1f5f9; padding-top: 24px; font-size: 13px; color: #64748b;">
+          If you did not request a password reset, please disregard this email. Your password will remain unchanged.
+        </p>
       </div>
     </div>
-    
-    <p style="font-size: 14px; line-height: 1.5; color: #666666; margin: 0 0 24px 0;">This code is valid for 10 minutes. After 10 minutes, you will need to request a new code.</p>
-    
-    <p style="font-size: 13px; line-height: 1.5; color: #888888; margin: 0 0 40px 0; border-top: 1px solid #f0f0f0; padding-top: 24px;">If you did not request a password reset, please disregard this email. Your password will remain unchanged.</p>
-    
-    <div style="font-size: 12px; line-height: 1.4; color: #999999;">
-      <p style="margin: 0 0 4px 0;">FirstLookLabs Security</p>
-      <p style="margin: 0;">This is an automated operational notification. Please do not reply to this email.</p>
+    <div class="footer">
+      <div class="footer-title">FirstLook Labs</div>
+      <div class="footer-tagline">Test First. Risk Later.</div>
+      <div>
+        <a href="https://firstlooklabs.xyz" class="footer-link" target="_blank">https://firstlooklabs.xyz</a>
+      </div>
+      <div class="footer-meta">
+        FirstLook Security • Automated Operational Notification
+      </div>
     </div>
   </div>
 </body>
@@ -393,25 +591,110 @@ async function sendWelcomeEmail(email: string, fullName: string): Promise<boolea
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Welcome to FirstLookLabs</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background-color: #f8fafc;
+      color: #1e293b;
+      margin: 0;
+      padding: 0;
+      -webkit-font-smoothing: antialiased;
+    }
+    .wrapper {
+      max-width: 600px;
+      margin: 40px auto;
+      background-color: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+    }
+    .header {
+      background-color: #0f172a;
+      padding: 24px;
+      text-align: center;
+    }
+    .logo {
+      height: 40px;
+      max-width: 250px;
+      vertical-align: middle;
+    }
+    .content {
+      padding: 40px 32px;
+    }
+    .heading {
+      font-size: 20px;
+      font-weight: 700;
+      color: #0f172a;
+      margin-top: 0;
+      margin-bottom: 24px;
+      letter-spacing: -0.025em;
+      line-height: 1.3;
+    }
+    .body-text {
+      font-size: 15px;
+      line-height: 1.6;
+      color: #334155;
+    }
+    .footer {
+      background-color: #f1f5f9;
+      border-top: 1px solid #e2e8f0;
+      padding: 32px;
+      text-align: center;
+      font-size: 12px;
+      color: #64748b;
+      line-height: 1.6;
+    }
+    .footer-title {
+      font-weight: 700;
+      color: #0f172a;
+      margin-bottom: 4px;
+    }
+    .footer-tagline {
+      font-style: italic;
+      margin-bottom: 12px;
+    }
+    .footer-meta {
+      margin-top: 16px;
+      padding-top: 16px;
+      border-top: 1px solid #e2e8f0;
+      font-size: 11px;
+    }
+    .footer-link {
+      color: #2563eb;
+      text-decoration: underline;
+      font-weight: 500;
+    }
+    .footer-link:hover {
+      color: #1d4ed8;
+    }
+  </style>
 </head>
-<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, sans-serif; background-color: #ffffff; color: #111111; margin: 0; padding: 40px 20px;">
-  <div style="max-width: 500px; margin: 0 auto; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 6px; padding: 40px; box-shadow: none;">
-    <div style="margin-bottom: 24px;">
-      <span style="font-size: 18px; font-weight: 700; color: #111111; font-family: -apple-system, BlinkMacSystemFont, sans-serif;">FirstLookLabs</span>
+<body>
+  <div class="wrapper">
+    <div class="header">
+      <img src="https://firstlooklabs.xyz/logo.svg" alt="FirstLook Labs" class="logo" />
+      <span style="vertical-align: middle; font-size: 22px; font-weight: 800; color: #ffffff; margin-left: 8px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; letter-spacing: -0.025em;">FirstLook</span>
     </div>
-    
-    <p style="font-size: 14px; line-height: 1.6; color: #334155; margin: 0 0 16px 0;">Hi ${name},</p>
-    
-    <p style="font-size: 14px; line-height: 1.6; color: #334155; margin: 0 0 16px 0;">Your FirstLookLabs account has been successfully created and verified.</p>
-    
-    <p style="font-size: 14px; line-height: 1.6; color: #334155; margin: 0 0 16px 0;">You can now sign in and access your dashboard.</p>
-    
-    <p style="font-size: 14px; line-height: 1.6; color: #334155; margin: 0 0 32px 0;">Welcome aboard.</p>
-    
-    <div style="font-size: 12px; line-height: 1.5; color: #64748b; border-top: 1px solid #f1f5f9; padding-top: 24px;">
-      <p style="margin: 0 0 4px 0; font-weight: 600; color: #475569;">— FirstLookLabs Security Team</p>
-      <p style="margin: 0;">This is an automated operational notification. Please do not reply to this email.</p>
+    <div class="content">
+      <h1 class="heading">Welcome to FirstLook Labs!</h1>
+      <div class="body-text">
+        <p>Hi ${name},</p>
+        <p>Your FirstLook account has been successfully created and verified.</p>
+        <p>You can now sign in and access your diagnostic simulation dashboard, trading structures, and advanced features.</p>
+        <p style="margin-top: 24px; margin-bottom: 0; font-weight: 600; color: #0f172a;">Welcome aboard,</p>
+        <p style="margin-top: 4px; color: #64748b; font-style: italic;">— FirstLook Team</p>
+      </div>
+    </div>
+    <div class="footer">
+      <div class="footer-title">FirstLook Labs</div>
+      <div class="footer-tagline">Test First. Risk Later.</div>
+      <div>
+        <a href="https://firstlooklabs.xyz" class="footer-link" target="_blank">https://firstlooklabs.xyz</a>
+      </div>
+      <div class="footer-meta">
+        FirstLook Security • Automated Operational Notification
+      </div>
     </div>
   </div>
 </body>
@@ -434,27 +717,120 @@ async function sendSubscriptionExpiredEmail(email: string, plan: string): Promis
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Your FirstLookLabs subscription has expired</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background-color: #f8fafc;
+      color: #1e293b;
+      margin: 0;
+      padding: 0;
+      -webkit-font-smoothing: antialiased;
+    }
+    .wrapper {
+      max-width: 600px;
+      margin: 40px auto;
+      background-color: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+    }
+    .header {
+      background-color: #0f172a;
+      padding: 24px;
+      text-align: center;
+    }
+    .logo {
+      height: 40px;
+      max-width: 250px;
+      vertical-align: middle;
+    }
+    .content {
+      padding: 40px 32px;
+    }
+    .heading {
+      font-size: 20px;
+      font-weight: 700;
+      color: #c05621;
+      margin-top: 0;
+      margin-bottom: 24px;
+      letter-spacing: -0.025em;
+      line-height: 1.3;
+    }
+    .body-text {
+      font-size: 15px;
+      line-height: 1.6;
+      color: #334155;
+    }
+    .notice-box {
+      background-color: #fffaf0;
+      border: 1px solid #feebc8;
+      padding: 20px;
+      border-radius: 8px;
+      margin: 24px 0;
+    }
+    .footer {
+      background-color: #f1f5f9;
+      border-top: 1px solid #e2e8f0;
+      padding: 32px;
+      text-align: center;
+      font-size: 12px;
+      color: #64748b;
+      line-height: 1.6;
+    }
+    .footer-title {
+      font-weight: 700;
+      color: #0f172a;
+      margin-bottom: 4px;
+    }
+    .footer-tagline {
+      font-style: italic;
+      margin-bottom: 12px;
+    }
+    .footer-meta {
+      margin-top: 16px;
+      padding-top: 16px;
+      border-top: 1px solid #e2e8f0;
+      font-size: 11px;
+    }
+    .footer-link {
+      color: #2563eb;
+      text-decoration: underline;
+      font-weight: 500;
+    }
+    .footer-link:hover {
+      color: #1d4ed8;
+    }
+  </style>
 </head>
-<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #fafafa; color: #111111; margin: 0; padding: 40px 20px; -webkit-font-smoothing: antialiased;">
-  <div style="max-width: 500px; margin: 0 auto; background-color: #ffffff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 40px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
-    <div style="margin-bottom: 24px;">
-      <span style="font-size: 20px; font-weight: 700; color: #111111; letter-spacing: -0.5px;">FirstLookLabs</span>
+<body>
+  <div class="wrapper">
+    <div class="header">
+      <img src="https://firstlooklabs.xyz/logo.svg" alt="FirstLook Labs" class="logo" />
+      <span style="vertical-align: middle; font-size: 22px; font-weight: 800; color: #ffffff; margin-left: 8px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; letter-spacing: -0.025em;">FirstLook</span>
     </div>
-    
-    <p style="font-size: 15px; line-height: 1.5; color: #444444; margin: 0 0 16px 0;">Hello,</p>
-    
-    <p style="font-size: 15px; line-height: 1.5; color: #444444; margin: 0 0 20px 0;">Your subscription has completed its 30-day active billing period. Your account has transitioned to the Basic plan.</p>
-    
-    <div style="background-color: #fffaf0; border: 1px solid #feebc8; padding: 20px; border-radius: 6px; margin-bottom: 24px;">
-      <p style="margin: 0; font-size: 13px; line-height: 1.6; color: #c05621;">
-        Status: Switched to Basic tier. To manage your account preferences and restore access to premium indicators, visit your profile subscriber settings.
-      </p>
+    <div class="content">
+      <h1 class="heading">Subscription Expired</h1>
+      <div class="body-text">
+        <p>Hello,</p>
+        <p>Your subscription has completed its 30-day active billing period. Your account has transitioned to the Basic plan.</p>
+        <div class="notice-box">
+          <p style="margin: 0; font-size: 14px; line-height: 1.6; color: #c05621; font-weight: 600;">
+            Status: Switched to Basic tier. To manage your account preferences and restore access to premium indicators, please visit your profile subscriber settings.
+          </p>
+        </div>
+        <p>If you have any questions or feedback, feel free to contact our support team.</p>
+      </div>
     </div>
-    
-    <div style="font-size: 12px; line-height: 1.4; color: #999999; border-top: 1px solid #f0f0f0; padding-top: 24px;">
-      <p style="margin: 0 0 4px 0;">FirstLookLabs Billing</p>
-      <p style="margin: 0;">This email is an automated notice. Please do not reply directly.</p>
+    <div class="footer">
+      <div class="footer-title">FirstLook Labs</div>
+      <div class="footer-tagline">Test First. Risk Later.</div>
+      <div>
+        <a href="https://firstlooklabs.xyz" class="footer-link" target="_blank">https://firstlooklabs.xyz</a>
+      </div>
+      <div class="footer-meta">
+        FirstLook Billing • Automated Operational Notification
+      </div>
     </div>
   </div>
 </body>
@@ -2618,6 +2994,7 @@ async function startServer() {
       pushLog("SYSTEM", `Environment SMTP check: HOST='${host}', USER='${user}', PORT='${portVal}', PASS='${maskedPass}'`);
       
       // 1. Check Resend API Route (Guaranteed bypass for port-blocked hosts like Render Free tier)
+      let resendSuccessful = false;
       if (process.env.RESEND_API_KEY) {
         const key = process.env.RESEND_API_KEY.trim();
         const maskedKey = `${key.slice(0, 5)}...${key.slice(-4)} (length: ${key.length})`;
@@ -2645,6 +3022,7 @@ async function startServer() {
           const responseData: any = await response.json();
           if (response.ok && responseData.id) {
             pushLog("RESEND_SEND_SUCCESS", `Resend API test email successfully delivered! MessageId: ${responseData.id}`);
+            resendSuccessful = true;
           } else {
             pushLog("RESEND_SEND_FAIL", `Resend rejected payload: ${JSON.stringify(responseData)}`);
           }
@@ -2655,86 +3033,97 @@ async function startServer() {
         pushLog("RESEND_CHECK", "Resend configuration is empty (RESEND_API_KEY is not configured). Standard physical port SMTP remains active.");
       }
 
-      if (!user) {
-        pushLog("ERROR", "ZOHO_MAIL_USER is missing in the environment variables!");
-      }
-      if (!pass) {
-        pushLog("ERROR", "ZOHO_MAIL_PASS is missing in the environment variables!");
-      }
+      const testAll = req.query.test_all === "true";
       
-      // DNS Resolution check
-      pushLog("DNS", `Resolving host: ${host}`);
-      try {
-        const dnsPromises = require("dns").promises;
-        const ips = await dnsPromises.resolve4(host);
-        pushLog("DNS", `Resolved IPv4 addresses for ${host}: ${JSON.stringify(ips)}`);
-      } catch (dnsErr: any) {
-        pushLog("DNS_ERROR", `Failed to resolve host ${host}: ${dnsErr.message}`);
-      }
-
-      pushLog("SYSTEM", `Target recipient for test email stream: ${recipient}`);
-
-      // Setup custom nodemailer logger to capture connection logs
-      const customMailerLogger = {
-        info: (obj: any, msg?: string) => pushLog("NODEMAILER_INFO", (msg || "") + " " + (obj && typeof obj === 'object' ? JSON.stringify(obj) : String(obj))),
-        warn: (obj: any, msg?: string) => pushLog("NODEMAILER_WARN", (msg || "") + " " + (obj && typeof obj === 'object' ? JSON.stringify(obj) : String(obj))),
-        error: (obj: any, msg?: string) => pushLog("NODEMAILER_ERROR", (msg || "") + " " + (obj && typeof obj === 'object' ? JSON.stringify(obj) : String(obj))),
-        debug: (obj: any, msg?: string) => pushLog("NODEMAILER_DEBUG", (msg || "") + " " + (obj && typeof obj === 'object' ? JSON.stringify(obj) : String(obj)))
-      };
-
-      const secure = port === 465;
-      pushLog("SMTP_CONN", `Creating nodemailer transport with Port: ${port}, Secure: ${secure}, Force IPv4: true`);
-
-      const transporter = nodemailer.createTransport({
-        host,
-        port,
-        secure,
-        auth: {
-          user,
-          pass,
-        },
-        tls: {
-          rejectUnauthorized: false
-        },
-        connectionTimeout: 10000,
-        greetingTimeout: 10000,
-        socketTimeout: 10000,
-        debug: true,
-        logger: customMailerLogger as any
-      } as any);
-
-      pushLog("SMTP_CONN", "Verifying transporter connection...");
-      try {
-        await transporter.verify();
-        pushLog("SMTP_CONN_SUCCESS", "Transporter verification succeeded! SMTP handshake is 100% healthy.");
-      } catch (verifyErr: any) {
-        pushLog("SMTP_CONN_FAIL", `Transporter verification failed: ${verifyErr.message}`);
-        if (verifyErr.stack) {
-          pushLog("SMTP_CONN_FAIL_STACK", verifyErr.stack);
+      if (resendSuccessful && !testAll) {
+        pushLog("SYSTEM", "Skipping Zoho SMTP connection test since Resend is active and worked perfectly! Actual email delivery is 100% HEALTHY.");
+        pushLog("SYSTEM", "Note: Zoho's physical SMTP connection is blocked by the host platform's output firewall. This is completely bypassed by Resend's secure HTTPS API.");
+        pushLog("SYSTEM", "To force Zoho SMTP testing anyway, add '?test_all=true' to the URL query string.");
+      } else {
+        if (!user) {
+          pushLog("ERROR", "ZOHO_MAIL_USER is missing in the environment variables!");
         }
-      }
+        if (!pass) {
+          pushLog("ERROR", "ZOHO_MAIL_PASS is missing in the environment variables!");
+        }
+        
+        // DNS Resolution check
+        pushLog("DNS", `Resolving host: ${host}`);
+        try {
+          const dnsPromises = require("dns").promises;
+          const ips = await dnsPromises.resolve4(host);
+          pushLog("DNS", `Resolved IPv4 addresses for ${host}: ${JSON.stringify(ips)}`);
+        } catch (dnsErr: any) {
+          pushLog("DNS_ERROR", `Failed to resolve host ${host}: ${dnsErr.message}`);
+        }
 
-      pushLog("SMTP_SEND", `Attempting test mail send to: ${recipient}...`);
-      try {
-        const mailInfo = await transporter.sendMail({
-          from: `"FirstLook SMTP Diagnostic" <${user}>`,
-          to: recipient,
-          subject: `FirstLook SMTP Diagnostic Alert - ${new Date().toLocaleTimeString()}`,
-          text: `SMTP diagnostic run completed successfully from environment:\nHost: ${host}\nPort: ${port}\nTime: ${new Date().toISOString()}`,
-          html: `<p>SMTP diagnostic run completed successfully!</p><ul><li><b>Host:</b> ${host}</li><li><b>Port:</b> ${port}</li><li><b>User:</b> ${user}</li></ul>`
-        });
-        pushLog("SMTP_SEND_SUCCESS", `Test email successfully delivered! MessageId: ${mailInfo.messageId}`);
-      } catch (sendErr: any) {
-        pushLog("SMTP_SEND_FAIL", `Test send failed: ${sendErr.message}`);
-        if (sendErr.stack) {
-          pushLog("SMTP_SEND_FAIL_STACK", sendErr.stack);
+        pushLog("SYSTEM", `Target recipient for test email stream: ${recipient}`);
+
+        // Setup custom nodemailer logger to capture connection logs
+        const customMailerLogger = {
+          info: (obj: any, msg?: string) => pushLog("NODEMAILER_INFO", (msg || "") + " " + (obj && typeof obj === 'object' ? JSON.stringify(obj) : String(obj))),
+          warn: (obj: any, msg?: string) => pushLog("NODEMAILER_WARN", (msg || "") + " " + (obj && typeof obj === 'object' ? JSON.stringify(obj) : String(obj))),
+          error: (obj: any, msg?: string) => pushLog("NODEMAILER_ERROR", (msg || "") + " " + (obj && typeof obj === 'object' ? JSON.stringify(obj) : String(obj))),
+          debug: (obj: any, msg?: string) => pushLog("NODEMAILER_DEBUG", (msg || "") + " " + (obj && typeof obj === 'object' ? JSON.stringify(obj) : String(obj)))
+        };
+
+        const secure = port === 465;
+        pushLog("SMTP_CONN", `Creating nodemailer transport with Port: ${port}, Secure: ${secure}, Force IPv4: true`);
+
+        const transporter = nodemailer.createTransport({
+          host,
+          port,
+          secure,
+          auth: {
+            user,
+            pass,
+          },
+          tls: {
+            rejectUnauthorized: false
+          },
+          connectionTimeout: 10000,
+          greetingTimeout: 10000,
+          socketTimeout: 10000,
+          debug: true,
+          logger: customMailerLogger as any
+        } as any);
+
+        pushLog("SMTP_CONN", "Verifying transporter connection...");
+        try {
+          await transporter.verify();
+          pushLog("SMTP_CONN_SUCCESS", "Transporter verification succeeded! SMTP handshake is 100% healthy.");
+        } catch (verifyErr: any) {
+          pushLog("SMTP_CONN_FAIL", `Transporter verification failed: ${verifyErr.message}`);
+          if (verifyErr.stack) {
+            pushLog("SMTP_CONN_FAIL_STACK", verifyErr.stack);
+          }
+        }
+
+        pushLog("SMTP_SEND", `Attempting test mail send to: ${recipient}...`);
+        try {
+          const mailInfo = await transporter.sendMail({
+            from: `"FirstLook SMTP Diagnostic" <${user}>`,
+            to: recipient,
+            subject: `FirstLook SMTP Diagnostic Alert - ${new Date().toLocaleTimeString()}`,
+            text: `SMTP diagnostic run completed successfully from environment:\nHost: ${host}\nPort: ${port}\nTime: ${new Date().toISOString()}`,
+            html: `<p>SMTP diagnostic run completed successfully!</p><ul><li><b>Host:</b> ${host}</li><li><b>Port:</b> ${port}</li><li><b>User:</b> ${user}</li></ul>`
+          });
+          pushLog("SMTP_SEND_SUCCESS", `Test email successfully delivered! MessageId: ${mailInfo.messageId}`);
+        } catch (sendErr: any) {
+          pushLog("SMTP_SEND_FAIL", `Test send failed: ${sendErr.message}`);
+          if (sendErr.stack) {
+            pushLog("SMTP_SEND_FAIL_STACK", sendErr.stack);
+          }
         }
       }
 
       res.status(200).json({
         success: true,
-        message: "Diagnostics completed.",
+        message: resendSuccessful 
+          ? "Diagnostics completed. RESEND DELIVERY SUCCEEDED! Your production emails are 100% active and working. Zoho SMTP test was skipped (which is normal on Render)."
+          : "Diagnostics completed. Standard SMTP diagnostics performed.",
         targetRecipient: recipient,
+        resendSucceeded: resendSuccessful,
         diagnostics: smtpLogs
       });
     } catch (endpointErr: any) {
@@ -4171,6 +4560,7 @@ async function startServer() {
   <div class="wrapper">
     <div class="header">
       <img src="https://firstlooklabs.xyz/logo.svg" alt="FirstLook Labs" class="logo" />
+      <span style="vertical-align: middle; font-size: 22px; font-weight: 800; color: #ffffff; margin-left: 8px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; letter-spacing: -0.025em;">FirstLook</span>
     </div>
     <div class="content">
       <h1 class="heading">${subject}</h1>
@@ -4186,7 +4576,6 @@ async function startServer() {
       </div>
       <div class="footer-meta">
         You are receiving this official update because you registered an account for <strong>${email}</strong> on FirstLook Labs.<br />
-        FirstLook Labs Ltd • 128 City Road, London, EC1V 2NX, United Kingdom<br />
         <span style="display: inline-block; margin-top: 8px;">
           Want to unsubscribe? <a href="mailto:${senderEmail}?subject=unsubscribe-${email}&body=Please%20unsubscribe%20my%20email%20address%20${email}%20from%20future%20FirstLook%20Labs%20announcements." class="footer-link">Unsubscribe from these alerts</a>
         </span>
