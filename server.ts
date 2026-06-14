@@ -96,9 +96,9 @@ async function sendZohoEmail(
   highPriority: boolean = false,
   replyTo?: string
 ): Promise<boolean> {
-  const host = process.env.ZOHO_MAIL_HOST || "smtp.zoho.com";
-  const user = process.env.ZOHO_MAIL_USER;
-  const pass = process.env.ZOHO_MAIL_PASS;
+  const host = (process.env.ZOHO_MAIL_HOST || "smtp.zoho.com").trim();
+  const user = process.env.ZOHO_MAIL_USER ? process.env.ZOHO_MAIL_USER.trim() : undefined;
+  const pass = process.env.ZOHO_MAIL_PASS ? process.env.ZOHO_MAIL_PASS.trim() : undefined;
 
   if (!user || !pass) {
     console.warn("[SMTP Config Warning] ZOHO_MAIL_USER or ZOHO_MAIL_PASS is not configured in environment variables.");
@@ -106,7 +106,7 @@ async function sendZohoEmail(
     return true;
   }
 
-  const configPort = parseInt(process.env.ZOHO_MAIL_PORT || "465", 10);
+  const configPort = parseInt((process.env.ZOHO_MAIL_PORT || "465").trim(), 10);
   const configSecure = configPort === 465;
 
   // Build sequential connection configurations to try
@@ -2555,6 +2555,118 @@ async function startServer() {
   // API routes
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok", timestamp: Date.now() });
+  });
+
+  app.get("/api/debug-smtp", async (req, res) => {
+    const smtpLogs: string[] = [];
+    const pushLog = (level: string, message: string) => {
+      const timestamp = new Date().toISOString();
+      smtpLogs.push(`[${timestamp}] [${level}] ${message}`);
+    };
+
+    try {
+      pushLog("SYSTEM", "Starting SMTP diagnostics...");
+      
+      const host = (process.env.ZOHO_MAIL_HOST || "smtp.zoho.com").trim();
+      const user = process.env.ZOHO_MAIL_USER ? process.env.ZOHO_MAIL_USER.trim() : undefined;
+      const pass = process.env.ZOHO_MAIL_PASS ? process.env.ZOHO_MAIL_PASS.trim() : undefined;
+      const portVal = (process.env.ZOHO_MAIL_PORT || "465").trim();
+      const port = parseInt(portVal, 10);
+      
+      const maskedPass = pass ? `${pass.slice(0, 2)}...${pass.slice(-2)} (length: ${pass.length})` : "NOT_CONFIGURED";
+      pushLog("SYSTEM", `Environment check: HOST='${host}', USER='${user}', PORT='${portVal}', PASS='${maskedPass}'`);
+      
+      if (!user) {
+        pushLog("ERROR", "ZOHO_MAIL_USER is missing in the environment variables!");
+      }
+      if (!pass) {
+        pushLog("ERROR", "ZOHO_MAIL_PASS is missing in the environment variables!");
+      }
+      
+      // DNS Resolution check
+      pushLog("DNS", `Resolving host: ${host}`);
+      try {
+        const dnsPromises = require("dns").promises;
+        const ips = await dnsPromises.resolve4(host);
+        pushLog("DNS", `Resolved IPv4 addresses for ${host}: ${JSON.stringify(ips)}`);
+      } catch (dnsErr: any) {
+        pushLog("DNS_ERROR", `Failed to resolve host ${host}: ${dnsErr.message}`);
+      }
+
+      const recipient = (req.query.recipient as string) || (user || "abdulrahmon2384@gmail.com");
+      pushLog("SYSTEM", `Target recipient for test email stream: ${recipient}`);
+
+      // Setup custom nodemailer logger to capture connection logs
+      const customMailerLogger = {
+        info: (obj: any, msg?: string) => pushLog("NODEMAILER_INFO", (msg || "") + " " + (obj && typeof obj === 'object' ? JSON.stringify(obj) : String(obj))),
+        warn: (obj: any, msg?: string) => pushLog("NODEMAILER_WARN", (msg || "") + " " + (obj && typeof obj === 'object' ? JSON.stringify(obj) : String(obj))),
+        error: (obj: any, msg?: string) => pushLog("NODEMAILER_ERROR", (msg || "") + " " + (obj && typeof obj === 'object' ? JSON.stringify(obj) : String(obj))),
+        debug: (obj: any, msg?: string) => pushLog("NODEMAILER_DEBUG", (msg || "") + " " + (obj && typeof obj === 'object' ? JSON.stringify(obj) : String(obj)))
+      };
+
+      const secure = port === 465;
+      pushLog("SMTP_CONN", `Creating nodemailer transport with Port: ${port}, Secure: ${secure}, Force IPv4: true`);
+
+      const transporter = nodemailer.createTransport({
+        host,
+        port,
+        secure,
+        auth: {
+          user,
+          pass,
+        },
+        tls: {
+          rejectUnauthorized: false
+        },
+        connectionTimeout: 10000,
+        greetingTimeout: 10000,
+        socketTimeout: 10000,
+        debug: true,
+        logger: customMailerLogger as any
+      } as any);
+
+      pushLog("SMTP_CONN", "Verifying transporter connection...");
+      try {
+        await transporter.verify();
+        pushLog("SMTP_CONN_SUCCESS", "Transporter verification succeeded! SMTP handshake is 100% healthy.");
+      } catch (verifyErr: any) {
+        pushLog("SMTP_CONN_FAIL", `Transporter verification failed: ${verifyErr.message}`);
+        if (verifyErr.stack) {
+          pushLog("SMTP_CONN_FAIL_STACK", verifyErr.stack);
+        }
+      }
+
+      pushLog("SMTP_SEND", `Attempting test mail send to: ${recipient}...`);
+      try {
+        const mailInfo = await transporter.sendMail({
+          from: `"FirstLook SMTP Diagnostic" <${user}>`,
+          to: recipient,
+          subject: `FirstLook SMTP Diagnostic Alert - ${new Date().toLocaleTimeString()}`,
+          text: `SMTP diagnostic run completed successfully from environment:\nHost: ${host}\nPort: ${port}\nTime: ${new Date().toISOString()}`,
+          html: `<p>SMTP diagnostic run completed successfully!</p><ul><li><b>Host:</b> ${host}</li><li><b>Port:</b> ${port}</li><li><b>User:</b> ${user}</li></ul>`
+        });
+        pushLog("SMTP_SEND_SUCCESS", `Test email successfully delivered! MessageId: ${mailInfo.messageId}`);
+      } catch (sendErr: any) {
+        pushLog("SMTP_SEND_FAIL", `Test send failed: ${sendErr.message}`);
+        if (sendErr.stack) {
+          pushLog("SMTP_SEND_FAIL_STACK", sendErr.stack);
+        }
+      }
+
+      res.status(200).json({
+        success: true,
+        message: "SMTP Diagnostic completed.",
+        targetRecipient: recipient,
+        diagnostics: smtpLogs
+      });
+    } catch (endpointErr: any) {
+      pushLog("CRITICAL_CRASH", `Endpoint threw a critical error: ${endpointErr.message}`);
+      res.status(500).json({
+        success: false,
+        error: endpointErr.message,
+        diagnostics: smtpLogs
+      });
+    }
   });
 
   app.get("/api/competitions/status", async (req, res) => {
