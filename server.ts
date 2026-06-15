@@ -3256,7 +3256,7 @@ async function startServer() {
         signal: controller.signal,
         headers: { 
           'Accept': 'application/json',
-          'User-Agent': 'FirstLook-Trading-App/1.0 (Contact: support@example.com)',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
           ...headers 
         } 
       });
@@ -3296,45 +3296,91 @@ async function startServer() {
   async function discoverSymbols() {
     console.log("[Discovery] Starting symbol discovery for all exchanges...");
     const sources = [
-      { id: 'binance', url: 'https://api.binance.com/api/v3/exchangeInfo' },
-      { id: 'okx', url: 'https://www.okx.com/api/v5/public/instruments?instType=SPOT' },
-      { id: 'bybit', url: 'https://api.bybit.com/v5/market/instruments-info?category=spot' },
-      { id: 'kraken', url: 'https://api.kraken.com/0/public/AssetPairs' }
+      { 
+        id: 'binance', 
+        urls: [
+          'https://api.binance.com/api/v3/exchangeInfo',
+          'https://api-gcp.binance.com/api/v3/exchangeInfo',
+          'https://api1.binance.com/api/v3/exchangeInfo'
+        ] 
+      },
+      { 
+        id: 'okx', 
+        urls: [
+          'https://aws.okx.com/api/v5/public/instruments?instType=SPOT',
+          'https://www.okx.com/api/v5/public/instruments?instType=SPOT',
+          'https://okx.com/api/v5/public/instruments?instType=SPOT'
+        ] 
+      },
+      { 
+        id: 'bybit', 
+        urls: [
+          'https://api.bybit.com/v5/market/instruments-info?category=spot',
+          'https://api.bytick.com/v5/market/instruments-info?category=spot'
+        ] 
+      },
+      { 
+        id: 'kraken', 
+        urls: [
+          'https://api.kraken.com/0/public/AssetPairs'
+        ] 
+      }
     ];
 
     for (const source of sources) {
-      try {
-        const response = await fetch(source.url, { headers: { 'User-Agent': 'FirstLook-App/1.0' } });
-        if (!response.ok) continue;
-        const data = await response.json() as any;
-        const symbols = new Set<string>();
+      let success = false;
+      for (const url of source.urls) {
+        try {
+          const response = await fetch(url, { 
+            headers: { 
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+              'Accept': 'application/json'
+            } 
+          });
+          if (!response.ok) continue;
+          const data = await response.json() as any;
+          const symbols = new Set<string>();
 
-        if (source.id === 'binance') {
-          data.symbols.forEach((s: any) => {
-            if (s.status === 'TRADING') symbols.add(`${s.baseAsset}/${s.quoteAsset}`.toUpperCase());
-          });
-        } else if (source.id === 'okx') {
-          data.data.forEach((s: any) => {
-            if (s.state === 'live') symbols.add(`${s.baseCcy}/${s.quoteCcy}`.toUpperCase());
-          });
-        } else if (source.id === 'bybit') {
-          data.result.list.forEach((s: any) => {
-            if (s.status === 'Trading') symbols.add(`${s.baseCoin}/${s.quoteCoin}`.toUpperCase());
-          });
-        } else if (source.id === 'kraken') {
-           if (data.result) {
-             Object.values(data.result).forEach((p: any) => {
-               if (p.wsname && p.wsname.includes('/')) {
-                 symbols.add(p.wsname.toUpperCase());
-               }
-             });
-           }
+          if (source.id === 'binance') {
+            if (data && data.symbols) {
+              data.symbols.forEach((s: any) => {
+                if (s.status === 'TRADING') symbols.add(`${s.baseAsset}/${s.quoteAsset}`.toUpperCase());
+              });
+            }
+          } else if (source.id === 'okx') {
+            if (data && data.data) {
+              data.data.forEach((s: any) => {
+                if (s.state === 'live') symbols.add(`${s.baseCcy}/${s.quoteCcy}`.toUpperCase());
+              });
+            }
+          } else if (source.id === 'bybit') {
+            if (data && data.result && data.result.list) {
+              data.result.list.forEach((s: any) => {
+                if (s.status === 'Trading') symbols.add(`${s.baseCoin}/${s.quoteCoin}`.toUpperCase());
+              });
+            }
+          } else if (source.id === 'kraken') {
+             if (data && data.result) {
+               Object.values(data.result).forEach((p: any) => {
+                 if (p.wsname && p.wsname.includes('/')) {
+                   symbols.add(p.wsname.toUpperCase());
+                 }
+               });
+             }
+          }
+
+          if (symbols.size > 0) {
+            supportedSymbolsMap.set(source.id, symbols);
+            console.log(`[Discovery] ${source.id} success from ${url}: ${symbols.size} symbols loaded.`);
+            success = true;
+            break; // Break the URL loop to move to the next exchange
+          }
+        } catch (err: any) {
+          console.error(`[Discovery] Failed to load symbols for ${source.id} from ${url}:`, err.message || err);
         }
-
-        supportedSymbolsMap.set(source.id, symbols);
-        console.log(`[Discovery] ${source.id}: ${symbols.size} symbols loaded.`);
-      } catch (err) {
-        console.error(`[Discovery] Failed to load symbols for ${source.id}:`, err);
+      }
+      if (!success) {
+        console.warn(`[Discovery] All URL options failed for ${source.id}`);
       }
     }
 
@@ -3654,16 +3700,26 @@ async function startServer() {
 
     const sources: string[] = [];
 
-    supportedSymbolsMap.forEach((symbols, sourceId) => {
-      if (symbols.has(uppercaseSymbol)) {
+    const cryptoExchanges = ['binance', 'okx', 'bybit'];
+    cryptoExchanges.forEach(sourceId => {
+      const symbolsSet = supportedSymbolsMap.get(sourceId);
+      if (symbolsSet && symbolsSet.size > 0) {
+        if (symbolsSet.has(uppercaseSymbol)) {
+          sources.push(sourceId);
+        }
+      } else {
+        // Fallback: If discovery failed entirely (meaning size is 0 or undefined due to DC blocking),
+        // we assume the pair is supported on this giant crypto exchange as a robust backup
         sources.push(sourceId);
       }
     });
-    
-    // If no sources found in discovery, return common ones as fallback
-    if (sources.length === 0) {
-      sources.push('binance', 'okx');
-    }
+
+    // Also add any other discovered sources (like kraken) if matching
+    supportedSymbolsMap.forEach((symbols, sourceId) => {
+      if (!cryptoExchanges.includes(sourceId) && symbols.has(uppercaseSymbol)) {
+        sources.push(sourceId);
+      }
+    });
 
     let finalSources = sources;
     if (dukaUnsupported.includes(cleanSym)) {
@@ -3781,14 +3837,47 @@ async function startServer() {
       if (after) apiParams.append('after', after as string);
       if (before) apiParams.append('before', before as string);
 
-      // OKX uses history-candles for historical data. 
-      // Spot, Futures, Swaps all use the same endpoint but different instId formats.
-      const url = `https://www.okx.com/api/v5/market/history-candles?${apiParams.toString()}`;
+      // We define multiple OKX endpoints to try in sequence to bypass CDN or IP-specific blocking.
+      // Prioritize aws.okx.com as it routes via stable cloud pathways optimized for global server-to-server connections.
+      const okxEndpoints = [
+        'https://aws.okx.com',
+        'https://www.okx.com',
+        'https://okx.com'
+      ];
+
+      let lastError: any = null;
+      const pathsToTry = (after || before) 
+        ? ['/api/v5/market/history-candles'] 
+        : ['/api/v5/market/candles', '/api/v5/market/history-candles'];
+
+      for (const base of okxEndpoints) {
+        for (const endpointPath of pathsToTry) {
+          const url = `${base}${endpointPath}?${apiParams.toString()}`;
+          try {
+            const data = await proxyRequest('OKX', url);
+            if (data && data.code === "0") {
+              return res.json(data);
+            }
+            if (data && data.msg) {
+              lastError = { status: 400, message: data.msg };
+            }
+          } catch (err: any) {
+            console.warn(`[Proxy] OKX failover endpoint ${base} (${endpointPath}) unsuccessful:`, err.message || err);
+            lastError = err;
+          }
+        }
+      }
+
+      if (lastError) {
+        const status = lastError.status || 500;
+        const message = lastError.message || String(lastError);
+        return res.status(status).json({ error: `OKX proxy failed: ${message}`, details: lastError });
+      }
       
-      const data = await proxyRequest('OKX', url);
-      res.json(data);
+      throw new Error('All OKX proxy endpoints failed');
     } catch (error: any) {
-      res.status(error.status || 500).json({ error: "OKX fetch failed", details: error.message });
+      console.error('[Proxy] OKX error:', error);
+      res.status(500).json({ error: 'Internal proxy error fetching from OKX' });
     }
   });
 
@@ -3817,12 +3906,32 @@ async function startServer() {
       if (start) apiParams.append('start', start as string);
       if (end) apiParams.append('end', end as string);
 
-      const url = `https://api.bybit.com/v5/market/kline?${apiParams.toString()}`;
-      
-      const data = await proxyRequest('Bybit', url);
-      res.json(data);
+      const bybitBases = [
+        'https://api.bybit.com',
+        'https://api.bytick.com'
+      ];
+
+      let lastError: any = null;
+      for (const base of bybitBases) {
+        const url = `${base}/v5/market/kline?${apiParams.toString()}`;
+        try {
+          const data = await proxyRequest('Bybit', url);
+          return res.json(data);
+        } catch (err: any) {
+          console.warn(`[Proxy] Bybit failover endpoint ${base} unsuccessful:`, err.message || err);
+          lastError = err;
+        }
+      }
+
+      if (lastError) {
+        const status = lastError.status || 500;
+        const message = lastError.message || String(lastError);
+        return res.status(status).json({ error: `Bybit proxy failed: ${message}`, details: lastError });
+      }
+      throw new Error('All Bybit proxy endpoints failed');
     } catch (error: any) {
-      res.status(error.status || 500).json({ error: "Bybit fetch failed", details: error.message });
+      console.error('[Proxy] Bybit error:', error);
+      res.status(500).json({ error: 'Internal proxy error fetching from Bybit' });
     }
   });
 

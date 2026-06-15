@@ -175,8 +175,30 @@ export async function validateSymbolSupport(symbol: string, source: string, mark
         }
       }
       
-      const res = await fetch(`/api/binance?symbol=${binanceSymbol}&interval=1h&limit=1&marketType=${marketType}`);
-      return res.ok;
+      try {
+        const res = await fetch(`/api/binance?symbol=${binanceSymbol}&interval=1h&limit=1&marketType=${marketType}`);
+        if (res.ok) return true;
+      } catch (err) {
+        console.warn(`[validateSymbolSupport] Binance proxy query failed. Trying direct fallback...`, err);
+      }
+
+      // Live client-side direct fallback
+      let directBase = `https://api.binance.com`;
+      let directEndpoint = `/api/v3/klines`;
+      if (marketType === 'usdt-futures') {
+        directBase = `https://fapi.binance.com`;
+        directEndpoint = `/fapi/v1/klines`;
+      } else if (marketType === 'coin-futures') {
+        directBase = `https://dapi.binance.com`;
+        directEndpoint = `/dapi/v1/klines`;
+      }
+      try {
+        const directRes = await fetch(`${directBase}${directEndpoint}?symbol=${binanceSymbol}&interval=1h&limit=1`);
+        return directRes.ok;
+      } catch (e) {
+        console.warn(`[validateSymbolSupport Fallback] Binance direct validation failed:`, e);
+        return false;
+      }
     }
     
     if (normSource === 'okx') {
@@ -187,13 +209,59 @@ export async function validateSymbolSupport(symbol: string, source: string, mark
           okxSymbol += '-SWAP';
         }
       }
-      const res = await fetch(`/api/okx?instId=${okxSymbol}&bar=1h&limit=1&marketType=${marketType}`);
-      return res.ok;
+      try {
+        const res = await fetch(`/api/okx?instId=${okxSymbol}&bar=1h&limit=1&marketType=${marketType}`);
+        if (res.ok) return true;
+      } catch (err) {
+        console.warn(`[validateSymbolSupport] OKX proxy query failed. Trying direct fallback...`, err);
+      }
+
+      // Live client-side direct fallback for OKX
+      try {
+        const okxBases = ['https://aws.okx.com', 'https://www.okx.com', 'https://okx.com'];
+        for (const base of okxBases) {
+          try {
+            const directRes = await fetch(`${base}/api/v5/market/candles?instId=${okxSymbol}&bar=1H&limit=1`);
+            if (directRes.ok) {
+              const data = await directRes.json();
+              if (data && data.code === "0") return true;
+            }
+          } catch (okxErr) {
+            // Move to next
+          }
+        }
+        return false;
+      } catch (e) {
+        return false;
+      }
     }
     
     if (normSource === 'bybit') {
-      const res = await fetch(`/api/bybit?symbol=${normalizedSymbol}&interval=60&limit=1&marketType=${marketType}`);
-      return res.ok;
+      try {
+        const res = await fetch(`/api/bybit?symbol=${normalizedSymbol}&interval=60&limit=1&marketType=${marketType}`);
+        if (res.ok) return true;
+      } catch (err) {
+        console.warn(`[validateSymbolSupport] Bybit proxy query failed. Trying direct fallback...`, err);
+      }
+
+      // Live client-side direct fallback for Bybit
+      try {
+        const bybitBases = ['https://api.bybit.com', 'https://api.bytick.com'];
+        for (const base of bybitBases) {
+          try {
+            const directRes = await fetch(`${base}/v5/market/kline?symbol=${normalizedSymbol}&interval=60&limit=1`);
+            if (directRes.ok) {
+              const json = await directRes.json();
+              if (json.retCode === 0 || json.retCode === "0") return true;
+            }
+          } catch (bbErr) {
+            // Move to next
+          }
+        }
+        return false;
+      } catch (e) {
+        return false;
+      }
     }
     
     if (normSource === 'kraken') {
@@ -230,6 +298,57 @@ export async function validateSymbolSupport(symbol: string, source: string, mark
   }
 }
 
+async function fetchFromOkxProxyOrDirect(queryParams: URLSearchParams): Promise<any> {
+  const proxyUrl = `/api/okx?${queryParams.toString()}`;
+  try {
+    const response = await fetch(proxyUrl);
+    if (response.ok) {
+      const data = await response.json();
+      if (data && data.data) return data;
+    }
+    throw new Error(`Proxy status: ${response.status}`);
+  } catch (proxyErr) {
+    console.warn("[Proxy OKX Fallback] OKX proxy failed. Trying direct client-side fallback...", proxyErr);
+    
+    // Fallback directly to native OKX endpoints
+    const okxBases = [
+      'https://aws.okx.com',
+      'https://www.okx.com',
+      'https://okx.com'
+    ];
+    
+    const after = queryParams.get('after');
+    const before = queryParams.get('before');
+    const pathsToTry = (after || before) 
+      ? ['/api/v5/market/history-candles'] 
+      : ['/api/v5/market/candles', '/api/v5/market/history-candles'];
+
+    // Clone and strip 'marketType' which isn't recognized by native OKX API
+    const directParams = new URLSearchParams(queryParams);
+    directParams.delete('marketType');
+
+    for (const base of okxBases) {
+      for (const endpointPath of pathsToTry) {
+        const directUrl = `${base}${endpointPath}?${directParams.toString()}`;
+        try {
+          const res = await fetch(directUrl);
+          if (res.ok) {
+            const data = await res.json();
+            if (data && data.code === "0" && data.data) {
+              console.log(`[Proxy OKX Fallback] Successfully fetched directly from ${base}${endpointPath}`);
+              return data;
+            }
+          }
+        } catch (directErr) {
+          console.warn(`[Proxy OKX Fallback] Direct fetch from ${base}${endpointPath} failed:`, directErr);
+        }
+      }
+    }
+    
+    throw proxyErr;
+  }
+}
+
 async function fetchOkxData(symbol: string, timeframeId: string, limit: number, endTime?: number, startTime?: number, marketType?: string): Promise<Candle[]> {
   // OKX uses BASE-QUOTE for spot
   let okxSymbol = symbol.replace('/', '-').toUpperCase();
@@ -257,35 +376,128 @@ async function fetchOkxData(symbol: string, timeframeId: string, limit: number, 
   const msEndTime = normalizeTimestampToMs(endTime);
   const msStartTime = normalizeTimestampToMs(startTime);
 
-  const queryParams = new URLSearchParams({
-    instId: okxSymbol,
-    bar,
-    limit: Math.min(limit, 100).toString(),
-    marketType: marketType || 'spot'
-  });
-  
-  if (msEndTime) {
-     queryParams.append('after', msEndTime.toString());
-  }
+  const tfSeconds = getTimeframeSeconds(timeframeId);
+  const allRawCandles: any[] = [];
 
   try {
-    const response = await fetch(`/api/okx?${queryParams.toString()}`);
-    if (!response.ok) throw new Error(`OKX error: ${response.status}`);
-    const contentType = response.headers.get('content-type');
-    if (!contentType || !contentType.includes('application/json')) {
-      throw new Error(`OKX response is not JSON (received: ${contentType || 'none'})`);
+    if (msEndTime) {
+      // 1. Fetching PAST data (going backward from msEndTime)
+      let currentAfter = msEndTime + 1000;
+      let fetchedCount = 0;
+      const maxPages = Math.ceil(limit / 100);
+
+      for (let p = 0; p < maxPages; p++) {
+        const queryParams = new URLSearchParams({
+          instId: okxSymbol,
+          bar,
+          limit: Math.min(limit - fetchedCount, 100).toString(),
+          after: currentAfter.toString(),
+          marketType: marketType || 'spot'
+        });
+        
+        let json;
+        try {
+          json = await fetchFromOkxProxyOrDirect(queryParams);
+        } catch (err) {
+          console.warn(`OKX page ${p} fetch failed:`, err);
+          break;
+        }
+        const data = json.data || [];
+        if (data.length === 0) break;
+
+        allRawCandles.push(...data);
+        fetchedCount += data.length;
+
+        // The oldest candle is the last item in OKX's newest-first response. We set currentAfter to its timestamp to get older candles on next iteration.
+        const oldestCandleTimestamp = parseInt(data[data.length - 1][0]);
+        if (isNaN(oldestCandleTimestamp)) break;
+        currentAfter = oldestCandleTimestamp;
+
+        if (data.length < 100) break;
+      }
+    } else if (msStartTime) {
+      // 2. Fetching FUTURE data (going forward starting from msStartTime)
+      // Since OKX's history-candles endpoint returns the absolute newest candles first,
+      // to avoid receiving the global newest candles and creating massive gaps,
+      // we load sequentially in forward-sliding chunks. Each chunk defines chunkEndTimeMs = currentStart + chunkSpan
+      // and passes after = chunkEndTimeMs to fetch candles going backward down to currentStart.
+      let currentStartTime = msStartTime;
+      let fetchedCount = 0;
+      const targetCount = limit;
+      const maxPages = Math.ceil(targetCount / 100);
+
+      for (let p = 0; p < maxPages; p++) {
+        const chunkSize = Math.min(targetCount - fetchedCount, 100);
+        const chunkEndTimeMs = currentStartTime + (chunkSize * tfSeconds * 1000);
+        
+        const queryParams = new URLSearchParams({
+          instId: okxSymbol,
+          bar,
+          limit: chunkSize.toString(),
+          after: (chunkEndTimeMs + 1000).toString(),
+          marketType: marketType || 'spot'
+        });
+
+        let json;
+        try {
+          json = await fetchFromOkxProxyOrDirect(queryParams);
+        } catch (err) {
+          console.warn(`OKX future page ${p} fetch failed:`, err);
+          break;
+        }
+        const data = json.data || [];
+        if (data.length === 0) break;
+
+        allRawCandles.push(...data);
+        fetchedCount += data.length;
+
+        // Move the sliding window forward
+        const newestCandleTimestamp = parseInt(data[0][0]);
+        if (!isNaN(newestCandleTimestamp) && newestCandleTimestamp > currentStartTime) {
+          currentStartTime = newestCandleTimestamp + tfSeconds * 1000;
+        } else {
+          currentStartTime = chunkEndTimeMs + tfSeconds * 1000;
+        }
+
+        if (data.length < chunkSize) break;
+      }
+    } else {
+      // 3. Current newest candles
+      const queryParams = new URLSearchParams({
+        instId: okxSymbol,
+        bar,
+        limit: Math.min(limit, 100).toString(),
+        marketType: marketType || 'spot'
+      });
+      const json = await fetchFromOkxProxyOrDirect(queryParams);
+      allRawCandles.push(...(json.data || []));
     }
-    const json = await response.json();
-    const data = json.data || [];
-    
-    return data.map((d: any) => ({
+
+    let candles = allRawCandles.map((d: any) => ({
       time: Math.floor(parseInt(d[0]) / 1000),
       open: parseFloat(d[1]),
       high: parseFloat(d[2]),
       low: parseFloat(d[3]),
       close: parseFloat(d[4]),
       volume: parseFloat(d[5]),
-    })).filter((c: any) => !isNaN(c.time) && !isNaN(c.open)).sort((a: any, b: any) => a.time - b.time);
+    })).filter((c: any) => !isNaN(c.time) && !isNaN(c.open));
+
+    // Remove duplicates by timestamp
+    const seen = new Set<number>();
+    candles = candles.filter((c: any) => {
+      if (seen.has(c.time)) return false;
+      seen.add(c.time);
+      return true;
+    });
+
+    if (endTime) {
+      candles = candles.filter((c: any) => c.time <= endTime);
+    }
+    if (startTime) {
+      candles = candles.filter((c: any) => c.time >= startTime);
+    }
+
+    return candles.sort((a: any, b: any) => a.time - b.time);
   } catch (err) {
     console.error('OKX fetch error:', err);
     return [];
@@ -310,13 +522,14 @@ async function fetchBybitData(symbol: string, timeframeId: string, limit: number
     marketType: marketType || 'spot'
   });
 
-  if (msStartTime && msEndTime) {
+  if (msStartTime) {
     queryParams.append('start', msStartTime.toString());
-    queryParams.append('end', msEndTime.toString());
-  } else if (msEndTime) {
+  }
+  if (msEndTime) {
     queryParams.append('end', msEndTime.toString());
   }
 
+  let list: any[] = [];
   try {
     const response = await fetch(`/api/bybit?${queryParams.toString()}`);
     if (!response.ok) throw new Error(`Bybit error: ${response.status}`);
@@ -325,20 +538,57 @@ async function fetchBybitData(symbol: string, timeframeId: string, limit: number
       throw new Error(`Bybit response is not JSON (received: ${contentType || 'none'})`);
     }
     const json = await response.json();
-    const list = json.result?.list || [];
-    
-    return list.map((d: any) => ({
-      time: Math.floor(parseInt(d[0]) / 1000),
-      open: parseFloat(d[1]),
-      high: parseFloat(d[2]),
-      low: parseFloat(d[3]),
-      close: parseFloat(d[4]),
-      volume: parseFloat(d[5]),
-    })).filter((c: any) => !isNaN(c.time) && !isNaN(c.open)).sort((a: any, b: any) => a.time - b.time);
+    list = json.result?.list || [];
   } catch (err) {
-    console.error('Bybit fetch error:', err);
-    return [];
+    console.warn("[Proxy Bybit Fallback] Bybit proxy failed. Trying direct client-side fallback...", err);
+    
+    // Direct client fallback
+    const bybitBases = [
+      'https://api.bybit.com',
+      'https://api.bytick.com'
+    ];
+    
+    const directParams = new URLSearchParams({
+      symbol: bbSymbol,
+      interval,
+      limit: Math.min(limit, 200).toString()
+    });
+    if (msStartTime) directParams.append('start', msStartTime.toString());
+    if (msEndTime) directParams.append('end', msEndTime.toString());
+
+    let directSuccess = false;
+    for (const base of bybitBases) {
+      const url = `${base}/v5/market/kline?${directParams.toString()}`;
+      try {
+        const resp = await fetch(url);
+        if (resp.ok) {
+          const json = await resp.json();
+          if (json.result?.list) {
+            list = json.result.list;
+            directSuccess = true;
+            console.log(`[Proxy Bybit Fallback] Successfully fetched directly from Bybit: ${base}`);
+            break;
+          }
+        }
+      } catch (directErr) {
+        console.warn(`[Proxy Bybit Fallback] Direct fetch from ${base} failed:`, directErr);
+      }
+    }
+
+    if (!directSuccess) {
+      console.error('Bybit fetch error (both proxy and direct failed):', err);
+      return [];
+    }
   }
+
+  return list.map((d: any) => ({
+    time: Math.floor(parseInt(d[0]) / 1000),
+    open: parseFloat(d[1]),
+    high: parseFloat(d[2]),
+    low: parseFloat(d[3]),
+    close: parseFloat(d[4]),
+    volume: parseFloat(d[5]),
+  })).filter((c: any) => !isNaN(c.time) && !isNaN(c.open)).sort((a: any, b: any) => a.time - b.time);
 }
 
 async function fetchKrakenData(symbol: string, timeframeId: string, limit: number, endTime?: number, startTime?: number): Promise<Candle[]> {
@@ -428,6 +678,7 @@ async function fetchBinanceData(symbol: string, timeframeId: string, limit: numb
   if (msStartTime) queryParams.append('startTime', msStartTime.toString());
 
   let url = `/api/binance?${queryParams.toString()}`;
+  let data: any = null;
   
   try {
     const fetchWithRetry = async (url: string, retries: number = 3): Promise<Response> => {
@@ -447,23 +698,58 @@ async function fetchBinanceData(symbol: string, timeframeId: string, limit: numb
       throw new Error('All retries failed');
     };
 
-    const response = await fetchWithRetry(url);
-    if (!response.ok) {
-      const respData = await response.json().catch(() => ({}));
-      // Extract better error message from proxy response
-      const apiError = respData.message || respData.msg || respData.error || `Proxy error ${response.status}`;
+    try {
+      const response = await fetchWithRetry(url);
+      if (!response.ok) {
+        throw new Error(`Proxy error code ${response.status}`);
+      }
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        throw new Error(`Proxy response not JSON`);
+      }
+      data = await response.json();
+    } catch (proxyError) {
+      console.warn("[Proxy Binance Fallback] Proxy failed. Trying direct client fallback...", proxyError);
       
-      throw new Error(`Binance fetch error: ${apiError}`);
-    }
-    
-    const contentType = response.headers.get('content-type');
-    if (!contentType || !contentType.includes('application/json')) {
-      const text = await response.text();
-      console.error(`Binance fetch error: Expected JSON but got ${contentType}. Body snippet: ${text.substring(0, 200)}`);
-      throw new Error(`Binance fetch error: Expected JSON but got ${contentType}.`);
-    }
+      let directBases = [`https://api.binance.com`, `https://api-gcp.binance.com`, `https://api1.binance.com` ];
+      let directEndpoint = `/api/v3/klines`;
 
-    const data = await response.json();
+      if (marketType === 'usdt-futures') {
+        directBases = [`https://fapi.binance.com` ];
+        directEndpoint = `/fapi/v1/klines`;
+      } else if (marketType === 'coin-futures') {
+        directBases = [`https://dapi.binance.com` ];
+        directEndpoint = `/dapi/v1/klines`;
+      }
+
+      const directParams = new URLSearchParams({
+        symbol: normalizedSymbol,
+        interval,
+        limit: Math.min(limit, 1000).toString()
+      });
+      if (msEndTime) directParams.append('endTime', msEndTime.toString());
+      if (msStartTime) directParams.append('startTime', msStartTime.toString());
+
+      let success = false;
+      for (const base of directBases) {
+        const directUrl = `${base}${directEndpoint}?${directParams.toString()}`;
+        try {
+          const directResp = await fetch(directUrl);
+          if (directResp.ok) {
+            data = await directResp.json();
+            success = true;
+            console.log(`[Proxy Binance Fallback] Direct fetch successful from ${base}`);
+            break;
+          }
+        } catch (directErr) {
+          console.warn(`[Proxy Binance Fallback] Direct fetch from ${base} failed:`, directErr);
+        }
+      }
+
+      if (!success) {
+        throw proxyError;
+      }
+    }
     
     return data.map((d: any) => ({
       time: Math.floor(d[0] / 1000),
@@ -475,7 +761,7 @@ async function fetchBinanceData(symbol: string, timeframeId: string, limit: numb
     })).filter((c: any) => !isNaN(c.time) && !isNaN(c.open) && !isNaN(c.high) && !isNaN(c.low) && !isNaN(c.close));
   } catch (error) {
     const isNetworkError = error instanceof TypeError && error.message === 'Failed to fetch';
-    const message = isNetworkError ? `Network error: Could not reach the proxy server at ${url}. Please check your connection or wait for the server to restart.` : (error instanceof Error ? error.message : String(error));
+    const message = isNetworkError ? `Network error: Could not reach the proxy server or Binance API.` : (error instanceof Error ? error.message : String(error));
     console.error('Binance fetch error:', message);
     throw new Error(`Binance fetch error: ${message}`);
   }

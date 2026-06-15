@@ -3465,11 +3465,15 @@ export default function App() {
     }
 
     const startTimeInSeconds = Math.floor(startDateObj.getTime() / 1000);
-    const endDateObj = endDate ? parseLocalDate(endDate) : undefined;
-    if (endDateObj) {
-      endDateObj.setHours(23, 59, 59, 999);
+    let endDateObj = endDate ? parseLocalDate(endDate) : undefined;
+    if (!endDateObj) {
+      const temp = new Date();
+      const day = temp.getDay();
+      const daysToSubtract = [9, 3, 4, 5, 6, 7, 8][day];
+      endDateObj = new Date(temp.getTime() - daysToSubtract * 24 * 60 * 60 * 1000);
     }
-    const endTimeInSeconds = endDateObj ? Math.floor(endDateObj.getTime() / 1000) : undefined;
+    endDateObj.setHours(23, 59, 59, 999);
+    const endTimeInSeconds = Math.floor(endDateObj.getTime() / 1000);
     const createdAt = Date.now();
     const watchlistId = `wl_${Math.random().toString(36).substr(2, 9)}_${Date.now()}`;
     
