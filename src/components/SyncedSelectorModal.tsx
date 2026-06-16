@@ -65,6 +65,14 @@ export function SyncedSelectorModal({ isOpen, onClose, onSelect, currentSymbol }
 
     setSelectedSymbolInfo(symbol);
     setAvailableSources([]);
+
+    if ((symbol.category as string) === 'Crypto') {
+      setAvailableSources(['binance', 'bybit', 'okx']);
+      setBrokerSource('binance');
+      setIsLoadingSources(false);
+      return;
+    }
+
     setIsLoadingSources(true);
 
     try {
@@ -83,10 +91,10 @@ export function SyncedSelectorModal({ isOpen, onClose, onSelect, currentSymbol }
                             sources[0];
           setBrokerSource(preferred);
         } else {
-          setBrokerSource(symbol.category === 'Crypto' ? 'binance' : 'exness');
+          setBrokerSource((symbol.category as string) === 'Crypto' ? 'binance' : 'exness');
         }
       } else {
-        const fallbacks = symbol.category === 'Crypto' 
+        const fallbacks = (symbol.category as string) === 'Crypto' 
           ? ['binance', 'okx', 'bybit', 'bitflyer'] 
           : ['exness', 'dukascopy', 'fxcm', 'oando', 'axiory'];
         setAvailableSources(fallbacks);
@@ -94,7 +102,7 @@ export function SyncedSelectorModal({ isOpen, onClose, onSelect, currentSymbol }
       }
     } catch (err) {
       console.error('Error fetching sources for sync:', err);
-      const fallbacks = symbol.category === 'Crypto' 
+      const fallbacks = (symbol.category as string) === 'Crypto' 
         ? ['binance', 'okx', 'bybit', 'bitflyer'] 
         : ['exness', 'dukascopy', 'fxcm', 'oando', 'axiory'];
       setAvailableSources(fallbacks);
@@ -280,8 +288,10 @@ export function SyncedSelectorModal({ isOpen, onClose, onSelect, currentSymbol }
                           const meta = getSourceMeta(src);
                           const isSelected = brokerSource.toLowerCase() === src.toLowerCase();
                           const isCustomCat = ['Forex', 'Metals', 'Indices'].includes(selectedSymbolInfo.category);
-                          const isDisabled = isCustomCat && ['fxcm', 'oando', 'axiory'].includes(src.toLowerCase());
-                          const isRecommended = isCustomCat && src.toLowerCase() === 'exness';
+                          const isDisabled = (isCustomCat && ['fxcm', 'oando', 'axiory'].includes(src.toLowerCase())) ||
+                                             (selectedSymbolInfo.category === 'Crypto' && src.toLowerCase() === 'okx');
+                          const isRecommended = (isCustomCat && src.toLowerCase() === 'exness') ||
+                                                (selectedSymbolInfo.category === 'Crypto' && src.toLowerCase() === 'binance');
                           const isPoor = isCustomCat && src.toLowerCase() === 'dukascopy';
                           return (
                             <button

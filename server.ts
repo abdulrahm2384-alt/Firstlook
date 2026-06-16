@@ -3565,7 +3565,7 @@ async function startServer() {
 
   // Forex Datawarehouse candles proxy
   app.get("/api/warehouse-candles", async (req, res) => {
-    const { symbol, source, timeframe, startTime, endTime, limit } = req.query;
+    const { symbol, source, timeframe, startTime, endTime, limit, tradeType, marketType } = req.query;
     try {
       let baseUrl = (process.env.FOREX_API_URL || "https://datawarehouse-vi6d.onrender.com").trim();
       if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
@@ -3593,6 +3593,17 @@ async function startServer() {
       if (startTime) params.append("startTime", String(startTime));
       if (endTime) params.append("endTime", String(endTime));
       if (limit) params.append("limit", String(limit));
+
+      // Map tradeType or marketType to tradeType
+      let finalTradeType = tradeType ? String(tradeType) : undefined;
+      if (!finalTradeType && marketType) {
+        const mt = String(marketType).toLowerCase();
+        if (mt === 'spot') finalTradeType = 'spot';
+        else if (mt === 'usdt-futures' || mt === 'usdt_futures' || mt === 'usdt_future') finalTradeType = 'usdt_future';
+        else if (mt === 'coin-futures' || mt === 'coin_futures' || mt === 'coin_future') finalTradeType = 'coin_future';
+        else finalTradeType = mt.replace('-', '_');
+      }
+      if (finalTradeType) params.append("tradeType", finalTradeType);
 
       const targetUrl = `${forexApiUrl}?${params.toString()}`;
       console.log(`[Proxy] Requesting Forex Datawarehouse: ${targetUrl.replace(forexApiSecret, 'REDACTED')}`);

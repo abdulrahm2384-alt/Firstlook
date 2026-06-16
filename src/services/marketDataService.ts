@@ -47,25 +47,7 @@ export async function fetchMarketData(symbol: string, timeframeId: string, limit
   try {
     if (category === 'Crypto') {
       const cryptoSource = source?.toLowerCase() || 'binance';
-      
-      switch (cryptoSource) {
-        case 'okx':
-          result = await fetchOkxData(symbol, timeframeId, limit, endTime, startTime, marketType);
-          break;
-        case 'bybit':
-          result = await fetchBybitData(symbol, timeframeId, limit, endTime, startTime, marketType);
-          break;
-        case 'kraken':
-          result = await fetchKrakenData(symbol, timeframeId, limit, endTime, startTime);
-          break;
-        case 'binance':
-        case 'coinbase': 
-        case 'gemini':
-        case 'bitflyer':
-        default:
-          result = await fetchBinanceData(symbol, timeframeId, limit, endTime, startTime, marketType);
-          break;
-      }
+      result = await fetchWarehouseData(symbol, timeframeId, limit, endTime, startTime, cryptoSource, marketType);
     } else {
       const normSource = ['axiory', 'exness', 'dukascopy', 'fxcm', 'oando'].includes(source?.toLowerCase() || '') ? (source?.toLowerCase() || '') : 'exness';
       result = await fetchWarehouseData(symbol, timeframeId, limit, endTime, startTime, normSource);
@@ -161,114 +143,22 @@ export async function validateSymbolSupport(symbol: string, source: string, mark
   const normalizedSymbol = symbol.replace('/', '').replace('-', '').toUpperCase();
   
   try {
-    if (normSource === 'binance') {
-      let binanceSymbol = normalizedSymbol;
-      if (marketType === 'coin-futures') {
-        if (!binanceSymbol.includes('_')) {
-           if (binanceSymbol.endsWith('USDT')) binanceSymbol = binanceSymbol.replace('USDT', 'USD');
-           if (!binanceSymbol.endsWith('USD')) binanceSymbol += 'USD';
-           binanceSymbol += '_PERP';
-        }
-      } else {
-        if (!binanceSymbol.endsWith('USDT') && !binanceSymbol.includes('BUSD') && !binanceSymbol.includes('USDC')) {
-          binanceSymbol += 'USDT';
-        }
-      }
-      
-      try {
-        const res = await fetch(`/api/binance?symbol=${binanceSymbol}&interval=1h&limit=1&marketType=${marketType}`);
-        if (res.ok) return true;
-      } catch (err) {
-        console.warn(`[validateSymbolSupport] Binance proxy query failed. Trying direct fallback...`, err);
-      }
+    if (['binance', 'okx', 'bybit', 'kraken', 'coinbase', 'gemini', 'bitflyer'].includes(normSource)) {
+      const formatted = symbol.replace('/', '').replace('-', '').toUpperCase();
+      let finalTradeType = marketType.toLowerCase();
+      if (finalTradeType === 'spot') finalTradeType = 'spot';
+      else if (finalTradeType === 'usdt-futures' || finalTradeType === 'usdt_futures' || finalTradeType === 'usdt_future') finalTradeType = 'usdt_future';
+      else if (finalTradeType === 'coin-futures' || finalTradeType === 'coin_futures' || finalTradeType === 'coin_future') finalTradeType = 'coin_future';
+      else finalTradeType = finalTradeType.replace('-', '_');
 
-      // Live client-side direct fallback
-      let directBase = `https://api.binance.com`;
-      let directEndpoint = `/api/v3/klines`;
-      if (marketType === 'usdt-futures') {
-        directBase = `https://fapi.binance.com`;
-        directEndpoint = `/fapi/v1/klines`;
-      } else if (marketType === 'coin-futures') {
-        directBase = `https://dapi.binance.com`;
-        directEndpoint = `/dapi/v1/klines`;
-      }
-      try {
-        const directRes = await fetch(`${directBase}${directEndpoint}?symbol=${binanceSymbol}&interval=1h&limit=1`);
-        return directRes.ok;
-      } catch (e) {
-        console.warn(`[validateSymbolSupport Fallback] Binance direct validation failed:`, e);
+      const res = await fetch(`/api/warehouse-candles?symbol=${formatted}&source=${normSource}&timeframe=1h&limit=1&tradeType=${finalTradeType}`);
+      if (!res.ok) return false;
+      const contentType = res.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
         return false;
       }
-    }
-    
-    if (normSource === 'okx') {
-      let okxSymbol = symbol.replace('/', '-').toUpperCase();
-      if (marketType === 'usdt-futures' || marketType === 'perps') {
-        if (!okxSymbol.endsWith('-SWAP')) {
-          if (okxSymbol.endsWith('-USD')) okxSymbol = okxSymbol.replace('-USD', '-USDT');
-          okxSymbol += '-SWAP';
-        }
-      }
-      try {
-        const res = await fetch(`/api/okx?instId=${okxSymbol}&bar=1h&limit=1&marketType=${marketType}`);
-        if (res.ok) return true;
-      } catch (err) {
-        console.warn(`[validateSymbolSupport] OKX proxy query failed. Trying direct fallback...`, err);
-      }
-
-      // Live client-side direct fallback for OKX
-      try {
-        const okxBases = ['https://aws.okx.com', 'https://www.okx.com', 'https://okx.com'];
-        for (const base of okxBases) {
-          try {
-            const directRes = await fetch(`${base}/api/v5/market/candles?instId=${okxSymbol}&bar=1H&limit=1`);
-            if (directRes.ok) {
-              const data = await directRes.json();
-              if (data && data.code === "0") return true;
-            }
-          } catch (okxErr) {
-            // Move to next
-          }
-        }
-        return false;
-      } catch (e) {
-        return false;
-      }
-    }
-    
-    if (normSource === 'bybit') {
-      try {
-        const res = await fetch(`/api/bybit?symbol=${normalizedSymbol}&interval=60&limit=1&marketType=${marketType}`);
-        if (res.ok) return true;
-      } catch (err) {
-        console.warn(`[validateSymbolSupport] Bybit proxy query failed. Trying direct fallback...`, err);
-      }
-
-      // Live client-side direct fallback for Bybit
-      try {
-        const bybitBases = ['https://api.bybit.com', 'https://api.bytick.com'];
-        for (const base of bybitBases) {
-          try {
-            const directRes = await fetch(`${base}/v5/market/kline?symbol=${normalizedSymbol}&interval=60&limit=1`);
-            if (directRes.ok) {
-              const json = await directRes.json();
-              if (json.retCode === 0 || json.retCode === "0") return true;
-            }
-          } catch (bbErr) {
-            // Move to next
-          }
-        }
-        return false;
-      } catch (e) {
-        return false;
-      }
-    }
-    
-    if (normSource === 'kraken') {
-      let krakenSymbol = symbol.replace('/', '').toUpperCase();
-      if (krakenSymbol.startsWith('BTC')) krakenSymbol = krakenSymbol.replace('BTC', 'XBT');
-      const res = await fetch(`/api/kraken?pair=${krakenSymbol}&interval=60`);
-      return res.ok;
+      const json = await res.json();
+      return Array.isArray(json) && json.length > 0;
     }
 
     if (['axiory', 'exness', 'dukascopy', 'fxcm', 'oando'].includes(normSource)) {
@@ -883,7 +773,7 @@ function getClientEstimatedSpread(symbol: string, multiplier: number): number {
   return 1.5 * multiplier;
 }
 
-async function fetchWarehouseData(symbol: string, timeframeId: string, limit: number, endTime?: number, startTime?: number, source?: string): Promise<Candle[]> {
+async function fetchWarehouseData(symbol: string, timeframeId: string, limit: number, endTime?: number, startTime?: number, source?: string, marketType?: string): Promise<Candle[]> {
   const formattedSymbol = symbol.replace('/', '').replace('-', '').toUpperCase();
   const timeframe = mapWarehouseTimeframe(timeframeId);
   const normSource = source?.toLowerCase() || 'exness';
@@ -910,6 +800,16 @@ async function fetchWarehouseData(symbol: string, timeframeId: string, limit: nu
     params.append('startTime', msStartTime.toString());
   }
   // If neither are specified, the API automatically delivers the latest candles chronologically.
+
+  if (marketType) {
+    const mt = marketType.toLowerCase();
+    let finalTradeType = mt;
+    if (mt === 'spot') finalTradeType = 'spot';
+    else if (mt === 'usdt-futures' || mt === 'usdt_futures' || mt === 'usdt_future') finalTradeType = 'usdt_future';
+    else if (mt === 'coin-futures' || mt === 'coin_futures' || mt === 'coin_future') finalTradeType = 'coin_future';
+    else finalTradeType = mt.replace('-', '_');
+    params.append('tradeType', finalTradeType);
+  }
 
   const url = `/api/warehouse-candles?${params.toString()}`;
 

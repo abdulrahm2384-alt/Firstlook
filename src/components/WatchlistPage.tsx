@@ -1153,6 +1153,12 @@ export function WatchlistPage({
   const handleSetSelectedAsset = useCallback(async (asset: MarketSymbol) => {
     setSelectedAssetForSource(asset);
     
+    if ((asset.category as string) === 'Crypto') {
+      setAvailableSources(['binance', 'bybit', 'okx']);
+      setIsLoadingSources(false);
+      return;
+    }
+    
     // Fetch available sources for this symbol
     setIsLoadingSources(true);
     try {
@@ -1165,11 +1171,11 @@ export function WatchlistPage({
         const data = await response.json();
         setAvailableSources(data.sources || []);
       } else {
-        setAvailableSources(asset.category === 'Crypto' ? ['binance', 'coinbase'] : ['exness', 'dukascopy', 'axiory', 'fxcm', 'oando']); // Base fallbacks
+        setAvailableSources((asset.category as string) === 'Crypto' ? ['binance', 'coinbase'] : ['exness', 'dukascopy', 'axiory', 'fxcm', 'oando']); // Base fallbacks
       }
     } catch (err) {
       console.error('Failed to fetch sources:', err);
-      setAvailableSources(asset.category === 'Crypto' ? ['binance', 'coinbase'] : ['exness', 'dukascopy', 'axiory', 'fxcm', 'oando']);
+      setAvailableSources((asset.category as string) === 'Crypto' ? ['binance', 'coinbase'] : ['exness', 'dukascopy', 'axiory', 'fxcm', 'oando']);
     } finally {
       setIsLoadingSources(false);
     }
@@ -1178,12 +1184,13 @@ export function WatchlistPage({
   const filteredSources = useMemo(() => {
     if (!selectedAssetForSource) return [];
     
+    const isCrypto = (selectedAssetForSource.category as string) === 'Crypto';
     const allPotentialSources = [
-      { id: 'binance', name: 'Binance', description: 'World\'s Largest Exchange' },
-      { id: 'okx', name: 'OKX', description: 'Global Crypto Ecosystem' },
+      { id: 'binance', name: 'Binance', description: 'World\'s Largest Exchange', recommended: isCrypto ? true : undefined },
+      { id: 'okx', name: 'OKX', description: 'Global Crypto Ecosystem', disabled: isCrypto ? true : undefined },
       { id: 'bybit', name: 'Bybit', description: 'Fastest Matching Engine' },
       { id: 'bitflyer', name: 'bitFlyer', description: 'Japan\'s Leading Exchange' },
-      { id: 'exness', name: 'Exness', description: 'Global Multi-Asset Broker', recommended: true },
+      { id: 'exness', name: 'Exness', description: 'Global Multi-Asset Broker', recommended: !isCrypto ? true : undefined },
       { id: 'dukascopy', name: 'Dukascopy', description: 'Swiss ECN Forex Provider', poor: true },
       { id: 'fxcm', name: 'FXCM', description: 'Leading FX & CFD Broker', disabled: true },
       { id: 'oando', name: 'Oando', description: 'Global CFD & Forex Broker', disabled: true },
@@ -1191,11 +1198,10 @@ export function WatchlistPage({
     ];
 
     return allPotentialSources.filter(s => {
-      if (selectedAssetForSource.category === 'Crypto') {
-        if (['axiory', 'exness', 'dukascopy', 'fxcm', 'oando'].includes(s.id)) return false;
-        return availableSources.includes(s.id);
+      if (isCrypto) {
+        return ['binance', 'bybit', 'okx'].includes(s.id);
       }
-      if (['Forex', 'Metals', 'Indices'].includes(selectedAssetForSource.category)) {
+      if (['Forex', 'Metals', 'Indices'].includes(selectedAssetForSource.category as string)) {
         return ['exness', 'dukascopy', 'fxcm', 'oando', 'axiory'].includes(s.id);
       }
       return s.id === 'axiory'; 
@@ -1207,8 +1213,8 @@ export function WatchlistPage({
     setValidationError(null);
     
     try {
-      // Just a quick check to see if the source supports the symbol
-      const isSupported = await validateSymbolSupport(asset.symbol, source);
+      // Just a quick check to see if the source supports the symbol. Skip check for Crypto symbols.
+      const isSupported = asset.category === 'Crypto' ? true : await validateSymbolSupport(asset.symbol, source);
       
       if (!isSupported) {
         setValidationError(`${source.toUpperCase()} does not appear to support ${asset.symbol}. Please choose a different source.`);

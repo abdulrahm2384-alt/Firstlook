@@ -4442,15 +4442,19 @@ export default function App() {
 
         if (lastRequestedSymbolRef.current === symbol && lastRequestedTimeframeRef.current === timeframeId) {
           if (combined.length > 0) {
+            const isFirstLoadOrChanging = loadedSymbolRef.current !== symbol || loadedTimeframeRef.current !== timeframeId;
             setHistoricalData(combined);
             setRenderedTimeframeId(timeframeId);
             loadedSymbolRef.current = symbol;
             loadedTimeframeRef.current = timeframeId;
             
             if (!isReplayMode) {
-              if (simCurrentTimeRef.current === null || lastLoadedSessionKeyRef.current !== currentSessionKey || forceTimeSnap) {
+              if (simCurrentTimeRef.current === null || lastLoadedSessionKeyRef.current !== currentSessionKey || isFirstLoadOrChanging || forceTimeSnap) {
                 const targetTime = activeItem?.last_play_candle_time || initialEndTime;
-                const snapCandle = combined.find(c => c.time >= targetTime);
+                let snapCandle = combined.find(c => c.time >= targetTime);
+                if (!snapCandle) {
+                  snapCandle = [...combined].reverse().find(c => c.time <= targetTime);
+                }
                 const timeToSet = snapCandle ? snapCandle.time : targetTime;
                 
                 simCurrentTimeRef.current = timeToSet;
@@ -4460,10 +4464,15 @@ export default function App() {
                 setSimCurrentTime(timeToSet);
               }
             } else {
-              if (replayCurrentTimeRef.current === null) {
+              if (replayCurrentTimeRef.current === null || lastLoadedSessionKeyRef.current !== currentSessionKey || isFirstLoadOrChanging || forceTimeSnap) {
                 const targetTime = activeItem?.last_play_candle_time || initialEndTime;
-                replayCurrentTimeRef.current = targetTime;
-                setReplayCurrentTime(targetTime);
+                let snapCandle = combined.find(c => c.time >= targetTime);
+                if (!snapCandle) {
+                  snapCandle = [...combined].reverse().find(c => c.time <= targetTime);
+                }
+                const timeToSet = snapCandle ? snapCandle.time : targetTime;
+                replayCurrentTimeRef.current = timeToSet;
+                setReplayCurrentTime(timeToSet);
               }
             }
           } else {
@@ -4525,11 +4534,12 @@ export default function App() {
       targetTimeframeId = symbolViewStates[key].timeframeId;
     }
 
+    const isNewSession = currentSessionKey ? (lastLoadedSessionKeyRef.current !== currentSessionKey) : false;
     const sessionData = currentSessionKey ? backtestSessions[currentSessionKey] : null;
 
     if (sessionData) {
       let timeToLoad: number;
-      if (lastLoadedSessionKeyRef.current !== currentSessionKey) {
+      if (isNewSession) {
         // Switching to a different session/pair!
         // Find matching watchlist item
         const matchingWatchlistItem = watchlist.find(item => {
@@ -4596,13 +4606,14 @@ export default function App() {
         timeToLoad = simCurrentTimeRef.current || sessionData.currentTime || sessionData.startTime;
       }
 
-      loadMarketData(selectedSymbol, targetTimeframeId, timeToLoad, activeWatchlistItem?.dataSource, activeWatchlistItem?.marketType);
+      loadMarketData(selectedSymbol, targetTimeframeId, timeToLoad, activeWatchlistItem?.dataSource, activeWatchlistItem?.marketType, isNewSession);
       setIsSimulating(!isMobile);
     } else {
       lastLoadedSessionKeyRef.current = null;
       if (isReplayMode && replayTrade) {
         let timeToLoad: number;
-        if (lastLoadedReplayTradeIdRef.current !== replayTrade.id) {
+        const isNewTrade = lastLoadedReplayTradeIdRef.current !== replayTrade.id;
+        if (isNewTrade) {
           timeToLoad = replayTrade.entryTime;
           lastLoadedReplayTradeIdRef.current = replayTrade.id;
           replayCurrentTimeRef.current = timeToLoad;
@@ -4616,7 +4627,7 @@ export default function App() {
         const source = activeItem?.dataSource || activeWatchlistItem?.dataSource;
         const marketType = activeItem?.marketType || activeWatchlistItem?.marketType;
 
-        loadMarketData(selectedSymbol, targetTimeframeId, timeToLoad, source, marketType);
+        loadMarketData(selectedSymbol, targetTimeframeId, timeToLoad, source, marketType, isNewTrade);
       } else {
         lastLoadedReplayTradeIdRef.current = null;
       }
@@ -5037,7 +5048,7 @@ export default function App() {
       if (!timeToLoad) {
         timeToLoad = Math.floor(Date.now() / 1000) - (86400 * 30);
       }
-      loadMarketData(selectedSymbol, selectedTimeframe.id, timeToLoad, activeWatchlistItem?.dataSource, activeWatchlistItem?.marketType);
+      loadMarketData(selectedSymbol, selectedTimeframe.id, timeToLoad, activeWatchlistItem?.dataSource, activeWatchlistItem?.marketType, true);
       
       if (syncedSymbol) {
         if (syncedChartEngineRef.current) {
