@@ -587,8 +587,8 @@ Permanently delete multiple user accounts (and all associated configurations) by
     }
     ```
 
-### 7. Send Secure Emails via Zoho Mail
-Securely send formatted transactional or notification HTML emails using Zoho Mail settings to specific users or broadcast to all registered users simultaneously.
+### 7. Send Secure Emails via Resend API
+Securely send formatted transactional or notification HTML emails using Resend to specific users or broadcast to all registered users simultaneously.
 *   **Route:** `POST /api/admin/send-email`
 *   **Request Body JSON Fields:**
     *   `api_secret` (required string): Valid secret auth key. You can also specify this in the standard `Authorization: Bearer <secret>` header instead.

@@ -207,13 +207,25 @@ const DEFAULT_THEME: ChartTheme = {
   rawSpread: false,
   tickingEnabled: true,
   showWatermark: true,
-  commissionEnabled: true
+  commissionEnabled: true,
+  showVolume: true,
+  chartType: 'candle'
 };
 
 const toTheme = (t: any): ChartTheme => ({
   ...DEFAULT_THEME,
   ...t
 });
+
+export function findLastCandleAtOrBefore(candles: Candle[], targetTime: number): Candle | undefined {
+  if (!candles || candles.length === 0) return undefined;
+  for (let i = candles.length - 1; i >= 0; i--) {
+    if (candles[i] && candles[i].time <= targetTime) {
+      return candles[i];
+    }
+  }
+  return undefined;
+}
 
 const MemoizedChart = memo(ChartComponent);
 
@@ -1691,8 +1703,63 @@ export default function App() {
     });
   }, [simIsPlaying, currentSessionKey, session?.user?.id]);
 
-  // Synchronise Time Sync on tab/window focus
+  // Synchronise Time Sync on tab/window focus and handle auto-pausing when leaving standard play
   useEffect(() => {
+    const handleBlurOrHide = () => {
+      if (!currentSessionKey) return;
+      const sessionData = backtestSessionsRef.current[currentSessionKey];
+      const matchingWatchlistItem = watchlistRef.current.find(item => {
+        if (currentSessionKey && currentSessionKey.startsWith('wl_')) {
+          return item.id === currentSessionKey;
+        }
+        return item.id === currentSessionKey || (item.symbol === selectedSymbolRef.current && (item.prefix || '') === (activePrefixRef.current || ''));
+      });
+
+      const isTSEnabled = sessionData?.timeSyncEnabled || matchingWatchlistItem?.timeSync;
+
+      if (!isTSEnabled) {
+        // Standard playback 1x-4x: automatically pause when user leaves the chart!
+        if (simIsPlaying) {
+          setSimIsPlaying(false);
+          // Save state to backing store so when they re-visit, it doesn't show playing as on!
+          setBacktestSessions(prev => {
+            const currentSession = prev[currentSessionKey];
+            if (currentSession && currentSession.isPlaying) {
+              const updatedSession = {
+                ...currentSession,
+                isPlaying: false,
+                timeSyncLastTimestamp: Date.now()
+              };
+              const updated = { ...prev, [currentSessionKey]: updatedSession };
+              if (session?.user?.id) {
+                persistenceService.saveBacktestSessions(session.user.id, updated).catch(() => {});
+              }
+              return updated;
+            }
+            return prev;
+          });
+        }
+      } else {
+        // Time-Synced: keep playing (virtually), store the timestamp of when they left so we can calculate advanced time on return
+        setBacktestSessions(prev => {
+          const currentSession = prev[currentSessionKey];
+          if (currentSession) {
+            const updatedSession = {
+              ...currentSession,
+              timeSyncLastTimestamp: Date.now(),
+              currentTime: simCurrentTimeRef.current || currentSession.currentTime
+            };
+            const updated = { ...prev, [currentSessionKey]: updatedSession };
+            if (session?.user?.id) {
+              persistenceService.saveBacktestSessions(session.user.id, updated).catch(() => {});
+            }
+            return updated;
+          }
+          return prev;
+        });
+      }
+    };
+
     const handleFocus = () => {
       if (!currentSessionKey) return;
       const sessionData = backtestSessionsRef.current[currentSessionKey];
@@ -1710,7 +1777,7 @@ export default function App() {
 
       if (isTSEnabled && lastPlayAt && sessionData?.isPlaying) {
         const elapsedMs = Date.now() - lastPlayAt;
-        if (elapsedMs > 5000 && elapsedMs <= 15000) { // only trigger if away for more than 5 seconds but less than 15 seconds to prevent huge jumping
+        if (elapsedMs > 2000) { // triggered if away for more than 2 seconds
           const ratio = 60 / speedRate;
           const chartAdvanceSecs = (elapsedMs / 1000) * ratio;
           
@@ -1727,17 +1794,25 @@ export default function App() {
           // Re-activate playing state safely on focus
           setSimIsPlaying(true);
           
-          setBacktestSessions(prev => ({
-            ...prev,
-            [currentSessionKey]: {
-              ...prev[currentSessionKey],
-              isPlaying: true, // Safeguard active flag
-              timeSyncEnabled: true,
-              timeSyncSpeed: speedRate,
-              currentTime: finalTime,
-              timeSyncLastTimestamp: Date.now()
+          setBacktestSessions(prev => {
+            const currentSession = prev[currentSessionKey];
+            if (currentSession) {
+              const updatedSession = {
+                ...currentSession,
+                isPlaying: true, // Safeguard active flag
+                timeSyncEnabled: true,
+                timeSyncSpeed: speedRate,
+                currentTime: finalTime,
+                timeSyncLastTimestamp: Date.now()
+              };
+              const updated = { ...prev, [currentSessionKey]: updatedSession };
+              if (session?.user?.id) {
+                persistenceService.saveBacktestSessions(session.user.id, updated).catch(() => {});
+              }
+              return updated;
             }
-          }));
+            return prev;
+          });
 
           setWatchlist(prev => {
             const updated = prev.map(item => {
@@ -1764,9 +1839,8 @@ export default function App() {
           });
 
           // Trigger a fresh load around finalTime if it has advanced past our cached buffer
-          const timeframeSeconds = selectedTimeframeRef.current?.seconds || 60;
           const latestCandleTime = historicalDataRef.current[historicalDataRef.current.length - 1]?.time || 0;
-          if (latestCandleTime > 0 && finalTime > latestCandleTime + (100 * timeframeSeconds)) {
+          if (latestCandleTime > 0 && finalTime > latestCandleTime) {
             const activeItem = watchlistRef.current.find(i => i.id === activeWatchlistItemId);
             loadMarketData(
               selectedSymbolRef.current || '',
@@ -1778,23 +1852,26 @@ export default function App() {
             );
           }
         } else {
-          // If less than 5 seconds, still safeguard that simIsPlaying matches the active session state
+          // If less than 2 seconds, still safeguard that simIsPlaying matches the active session state
           if (!simIsPlaying) {
             setSimIsPlaying(true);
           }
         }
       } else {
-        // If not playing or if we were away for more than 15 seconds, reset the sync timestamp to now
+        // If not playing, reset the sync timestamp to now to prevent a huge jump when starting later
         if (isTSEnabled && currentSessionKey) {
           setBacktestSessions(prev => {
-            if (prev[currentSessionKey]) {
-              return {
-                ...prev,
-                [currentSessionKey]: {
-                  ...prev[currentSessionKey],
-                  timeSyncLastTimestamp: Date.now()
-                }
+            const currentSession = prev[currentSessionKey];
+            if (currentSession) {
+              const updatedSession = {
+                ...currentSession,
+                timeSyncLastTimestamp: Date.now()
               };
+              const updated = { ...prev, [currentSessionKey]: updatedSession };
+              if (session?.user?.id) {
+                persistenceService.saveBacktestSessions(session.user.id, updated).catch(() => {});
+              }
+              return updated;
             }
             return prev;
           });
@@ -1805,14 +1882,24 @@ export default function App() {
         }
       }
     };
-    
+
+    const handleVisibilityOrFocus = () => {
+      if (document.hidden) {
+        handleBlurOrHide();
+      } else {
+        handleFocus();
+      }
+    };
+
     window.addEventListener('focus', handleFocus);
-    document.addEventListener('visibilitychange', handleFocus);
+    window.addEventListener('blur', handleBlurOrHide);
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
     return () => {
       window.removeEventListener('focus', handleFocus);
-      document.removeEventListener('visibilitychange', handleFocus);
+      window.removeEventListener('blur', handleBlurOrHide);
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
     };
-  }, [currentSessionKey, simIsPlaying]);
+  }, [currentSessionKey, simIsPlaying, session?.user?.id, addNotification, activeWatchlistItemId]);
 
   const simTimeSessionKeyRef = useRef<string | null>(null);
   const sessionCurrentTimesRef = useRef<Record<string, number>>({});
@@ -2135,11 +2222,11 @@ export default function App() {
         let curCandle: Candle | undefined = undefined;
         if (isReplayMode) {
           const current = replayCurrentTimeRef.current || 0;
-          curCandle = [...historicalDataRef.current].reverse().find(c => c.time <= current);
+          curCandle = findLastCandleAtOrBefore(historicalDataRef.current, current);
         } else if (isSimulating || currentSessionKey) {
           const sessionKey = currentSessionKey || '';
           const current = sessionCurrentTimesRef.current?.[sessionKey] || simCurrentTimeRef.current || (sessionKey && backtestSessionsRef.current[sessionKey]?.currentTime) || (sessionKey && backtestSessionsRef.current[sessionKey]?.startTime) || 0;
-          curCandle = [...historicalDataRef.current].reverse().find(c => c.time <= current);
+          curCandle = findLastCandleAtOrBefore(historicalDataRef.current, current);
         }
         if (curCandle) {
           const tfS = isReplayMode 
@@ -2194,10 +2281,13 @@ export default function App() {
         const currentData = historicalDataRef.current;
         if (currentData.length > 0) {
           const firstCandleTime = currentData[0].time;
+          const lastCandleTime = currentData[currentData.length - 1].time;
           if (playheadTime < firstCandleTime) {
             playheadTime = firstCandleTime;
+          } else if (playheadTime > lastCandleTime) {
+            // Target is beyond currently available candles. Keep original target to prevent snapping backward.
           } else {
-            const snapCandle = [...currentData].reverse().find(c => c.time <= playheadTime);
+            const snapCandle = findLastCandleAtOrBefore(currentData, playheadTime);
             if (snapCandle) {
               playheadTime = snapCandle.time;
             }
@@ -2206,7 +2296,7 @@ export default function App() {
         if (nonPlayingTickIndex > 0 && replayTrade) {
           const timeframeSeconds = TIMEFRAMES.find(tf => tf.id.toLowerCase() === replayTrade.timeframe.toLowerCase() || tf.label.toLowerCase() === replayTrade.timeframe.toLowerCase())?.seconds || 60;
           const totalTicks = Math.max(1, Math.floor(timeframeSeconds / 2));
-          const curCandle = [...currentData].reverse().find(c => c.time <= playheadTime);
+          const curCandle = findLastCandleAtOrBefore(currentData, playheadTime);
           if (curCandle) {
             const elapsedSeconds = (nonPlayingTickIndex / totalTicks) * timeframeSeconds;
             playheadTime = curCandle.time + elapsedSeconds;
@@ -2220,10 +2310,13 @@ export default function App() {
         const currentData = historicalDataRef.current;
         if (currentData.length > 0) {
           const firstCandleTime = currentData[0].time;
+          const lastCandleTime = currentData[currentData.length - 1].time;
           if (playheadTime < firstCandleTime) {
             playheadTime = firstCandleTime;
+          } else if (playheadTime > lastCandleTime) {
+            // Target is beyond currently available candles. Keep original target to prevent snapping backward.
           } else {
-            const snapCandle = [...currentData].reverse().find(c => c.time <= playheadTime);
+            const snapCandle = findLastCandleAtOrBefore(currentData, playheadTime);
             if (snapCandle) {
               playheadTime = snapCandle.time;
             }
@@ -2232,7 +2325,7 @@ export default function App() {
         if (nonPlayingTickIndex > 0) {
           const timeframeSeconds = selectedTimeframeRef.current?.seconds || 60;
           const totalTicks = Math.max(1, Math.floor(timeframeSeconds / 2));
-          const curCandle = [...currentData].reverse().find(c => c.time <= playheadTime);
+          const curCandle = findLastCandleAtOrBefore(currentData, playheadTime);
           if (curCandle) {
             const elapsedSeconds = (nonPlayingTickIndex / totalTicks) * timeframeSeconds;
             playheadTime = curCandle.time + elapsedSeconds;
@@ -2524,7 +2617,7 @@ export default function App() {
 
     const time = isReplayMode ? replayCurrentTime : simCurrentTime;
     if (!time || historicalData.length === 0) return;
-    const candle = [...historicalData].reverse().find(c => c.time <= time);
+    const candle = findLastCandleAtOrBefore(historicalData, time);
     if (candle) {
       setSimCurrentPrice(candle.close);
     }
@@ -4162,10 +4255,13 @@ export default function App() {
         let snappedPlayToSet = finalPlayToSet;
         if (syncCachedState.candles && syncCachedState.candles.length > 0) {
           const firstCandleTime = syncCachedState.candles[0].time;
+          const lastCandleTime = syncCachedState.candles[syncCachedState.candles.length - 1].time;
           if (snappedPlayToSet < firstCandleTime) {
             snappedPlayToSet = firstCandleTime;
+          } else if (snappedPlayToSet > lastCandleTime) {
+            // Target is beyond currently available candles. Keep original target to prevent snapping backward.
           } else {
-            const snapCandle = [...syncCachedState.candles].reverse().find(c => c.time <= snappedPlayToSet);
+            const snapCandle = findLastCandleAtOrBefore(syncCachedState.candles, snappedPlayToSet);
             if (snapCandle) {
               snappedPlayToSet = snapCandle.time;
             }
@@ -4208,10 +4304,13 @@ export default function App() {
         let snappedSimToSet = finalSimToSet;
         if (syncCachedState.candles && syncCachedState.candles.length > 0) {
           const firstCandleTime = syncCachedState.candles[0].time;
+          const lastCandleTime = syncCachedState.candles[syncCachedState.candles.length - 1].time;
           if (snappedSimToSet < firstCandleTime) {
             snappedSimToSet = firstCandleTime;
+          } else if (snappedSimToSet > lastCandleTime) {
+            // Target is beyond currently available candles. Keep original target to prevent snapping backward.
           } else {
-            const snapCandle = [...syncCachedState.candles].reverse().find(c => c.time <= snappedSimToSet);
+            const snapCandle = findLastCandleAtOrBefore(syncCachedState.candles, snappedSimToSet);
             if (snapCandle) {
               snappedSimToSet = snapCandle.time;
             }
@@ -4334,10 +4433,13 @@ export default function App() {
               let snappedPlayToSet = finalPlayToSet;
               if (combinedCandles && combinedCandles.length > 0) {
                 const firstCandleTime = combinedCandles[0].time;
+                const lastCandleTime = combinedCandles[combinedCandles.length - 1].time;
                 if (snappedPlayToSet < firstCandleTime) {
                   snappedPlayToSet = firstCandleTime;
+                } else if (snappedPlayToSet > lastCandleTime) {
+                  // Target is beyond currently available candles. Keep original target to prevent snapping backward.
                 } else {
-                  const snapCandle = [...combinedCandles].reverse().find(c => c.time <= snappedPlayToSet);
+                  const snapCandle = findLastCandleAtOrBefore(combinedCandles, snappedPlayToSet);
                   if (snapCandle) {
                     snappedPlayToSet = snapCandle.time;
                   }
@@ -4380,10 +4482,13 @@ export default function App() {
               let snappedSimToSet = finalSimToSet;
               if (combinedCandles && combinedCandles.length > 0) {
                 const firstCandleTime = combinedCandles[0].time;
+                const lastCandleTime = combinedCandles[combinedCandles.length - 1].time;
                 if (snappedSimToSet < firstCandleTime) {
                   snappedSimToSet = firstCandleTime;
+                } else if (snappedSimToSet > lastCandleTime) {
+                  // Target is beyond currently available candles. Keep original target to prevent snapping backward.
                 } else {
-                  const snapCandle = [...combinedCandles].reverse().find(c => c.time <= snappedSimToSet);
+                  const snapCandle = findLastCandleAtOrBefore(combinedCandles, snappedSimToSet);
                   if (snapCandle) {
                     snappedSimToSet = snapCandle.time;
                   }
@@ -4452,8 +4557,11 @@ export default function App() {
               if (simCurrentTimeRef.current === null || lastLoadedSessionKeyRef.current !== currentSessionKey || isFirstLoadOrChanging || forceTimeSnap) {
                 const targetTime = activeItem?.last_play_candle_time || initialEndTime;
                 let snapCandle = combined.find(c => c.time >= targetTime);
-                if (!snapCandle) {
-                  snapCandle = [...combined].reverse().find(c => c.time <= targetTime);
+                if (!snapCandle && combined.length > 0) {
+                  const lastCandleTime = combined[combined.length - 1].time;
+                  if (targetTime <= lastCandleTime) {
+                    snapCandle = findLastCandleAtOrBefore(combined, targetTime);
+                  }
                 }
                 const timeToSet = snapCandle ? snapCandle.time : targetTime;
                 
@@ -4467,8 +4575,11 @@ export default function App() {
               if (replayCurrentTimeRef.current === null || lastLoadedSessionKeyRef.current !== currentSessionKey || isFirstLoadOrChanging || forceTimeSnap) {
                 const targetTime = activeItem?.last_play_candle_time || initialEndTime;
                 let snapCandle = combined.find(c => c.time >= targetTime);
-                if (!snapCandle) {
-                  snapCandle = [...combined].reverse().find(c => c.time <= targetTime);
+                if (!snapCandle && combined.length > 0) {
+                  const lastCandleTime = combined[combined.length - 1].time;
+                  if (targetTime <= lastCandleTime) {
+                    snapCandle = findLastCandleAtOrBefore(combined, targetTime);
+                  }
                 }
                 const timeToSet = snapCandle ? snapCandle.time : targetTime;
                 replayCurrentTimeRef.current = timeToSet;
@@ -5437,11 +5548,11 @@ export default function App() {
     let mainCandle: Candle | undefined = undefined;
     if (isReplayMode) {
       const current = replayCurrentTime || 0;
-      mainCandle = [...historicalData].reverse().find(c => c.time <= current);
+      mainCandle = findLastCandleAtOrBefore(historicalData, current);
     } else if (isSimulating || currentSessionKey) {
       const session = currentSessionKey ? backtestSessions[currentSessionKey] : null;
       const current = simCurrentTime || (session ? session.currentTime || session.startTime : null) || 0;
-      mainCandle = [...historicalData].reverse().find(c => c.time <= current);
+      mainCandle = findLastCandleAtOrBefore(historicalData, current);
     } else {
       mainCandle = historicalData[historicalData.length - 1];
     }
@@ -8647,6 +8758,42 @@ export default function App() {
                     <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Environment</h3>
                   </div>
                   <div className="grid gap-3">
+                    <div className="p-4 bg-slate-50/50 border border-slate-100 rounded-2xl flex flex-col gap-3 group hover:border-slate-200 transition-colors">
+                      <div className="flex flex-col">
+                        <span className="text-[10px] font-bold text-slate-800 uppercase">Chart Style</span>
+                        <span className="text-[9px] text-slate-400 mt-0.5">Select primary candle visualization mode</span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 mt-1">
+                        {[
+                          { id: 'candle', label: 'Candles' },
+                          { id: 'line', label: 'Line Chart' },
+                          { id: 'bar', label: 'Bar Chart' },
+                          { id: 'heikin-ashi', label: 'Heikin Ashi' }
+                        ].map((item) => {
+                          const isActive = (theme.chartType || 'candle') === item.id;
+                          return (
+                            <button
+                              key={item.id}
+                              onClick={() => {
+                                const newTheme = { ...theme, chartType: item.id as any };
+                                setTheme(newTheme);
+                                if (session?.user) {
+                                  persistenceService.savePreferences(session.user.id, { theme: newTheme });
+                                }
+                              }}
+                              className={`py-2.5 px-3 rounded-xl border text-[10px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 ${
+                                isActive
+                                  ? 'bg-slate-900 border-slate-900 text-white shadow-sm'
+                                  : 'bg-white border-slate-100 text-slate-600 hover:border-slate-200'
+                              }`}
+                            >
+                              {item.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
                     <div className="p-4 bg-slate-50/50 border border-slate-100 rounded-2xl flex items-center justify-between group hover:border-slate-200 transition-colors">
                       <div className="flex flex-col">
                         <span className="text-[10px] font-bold text-slate-800 uppercase">Static Grid</span>
@@ -8663,6 +8810,25 @@ export default function App() {
                         className={`w-9 h-5 rounded-full transition-all relative ${theme.showGrid ? 'bg-slate-900' : 'bg-slate-200'}`}
                       >
                         <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all shadow-sm ${theme.showGrid ? 'left-5' : 'left-1'}`} />
+                      </button>
+                    </div>
+
+                    <div className="p-4 bg-slate-50/50 border border-slate-100 rounded-2xl flex items-center justify-between group hover:border-slate-200 transition-colors">
+                      <div className="flex flex-col">
+                        <span className="text-[10px] font-bold text-slate-800 uppercase">Volume Bars</span>
+                        <span className="text-[9px] text-slate-400 mt-0.5">Plot asset trade volume in background</span>
+                      </div>
+                      <button 
+                        onClick={() => {
+                          const newTheme = {...theme, showVolume: theme.showVolume === false ? true : false};
+                          setTheme(newTheme);
+                          if (session?.user) {
+                            persistenceService.savePreferences(session.user.id, { theme: newTheme });
+                          }
+                        }}
+                        className={`w-9 h-5 rounded-full transition-all relative ${theme.showVolume !== false ? 'bg-slate-900' : 'bg-slate-200'}`}
+                      >
+                        <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all shadow-sm ${theme.showVolume !== false ? 'left-5' : 'left-1'}`} fill="none" />
                       </button>
                     </div>
 
@@ -8936,7 +9102,7 @@ export default function App() {
                 </button>
                 <button 
                   onClick={() => {
-                    const defaultTheme = {
+                    const defaultTheme: ChartTheme = {
                       bg: '#ffffff',
                       text: '#0f172a',
                       grid: '#f1f5f9',
@@ -8951,7 +9117,9 @@ export default function App() {
                       askColor: '#f23645',
                       rawSpread: false,
                       tickingEnabled: true,
-                      showWatermark: true
+                      showWatermark: true,
+                      showVolume: true,
+                      chartType: 'candle'
                     };
                     setTheme(defaultTheme);
                     if (session.user) persistenceService.savePreferences(session.user.id, { theme: defaultTheme });

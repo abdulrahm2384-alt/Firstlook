@@ -5,7 +5,6 @@ import "dotenv/config";
 import { GoogleGenAI, Type } from "@google/genai";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import nodemailer from "nodemailer";
 import fs from "fs";
 import { db, initializeDatabase } from "./db";
 import { getCurrencyForCountry } from "./src/utils/currencyConverter";
@@ -85,11 +84,9 @@ function checkOtpRateLimit(email: string): { allowed: boolean; message?: string 
   return { allowed: true };
 }
 
-// SMTP email sending function using Zoho Mail SMTP with optimized high-deliverability settings
-// Enhances cloud hosting compatibility (Render, Heroku, etc.) by forcing IPv4 and adding automatic port fallbacks (465 <-> 587)
-// If RESEND_API_KEY is configured in the environment variables, we will route delivery through Resend's HTTPS REST API.
-// This completely avoids connection timeout issues caused by cloud firewalls blocking ports 25, 465, and 587 on Render Free tier!
-async function sendZohoEmail(
+// Email sending function using Resend's secure HTTPS REST API.
+// This completely avoids connection timeout issues caused by cloud firewalls blocking SMTP ports.
+async function sendEmail(
   toEmail: string,
   subject: string,
   htmlContent: string,
@@ -98,10 +95,10 @@ async function sendZohoEmail(
   highPriority: boolean = false,
   replyTo?: string
 ): Promise<boolean> {
-  // 1. Web API routing check: (Guaranteed delivery on platforms with blocked port configurations)
+  // Use Resend when key is configured
   if (process.env.RESEND_API_KEY) {
     const resendApiKey = process.env.RESEND_API_KEY.trim();
-    console.log(`[Email Route] RESEND_API_KEY detected! Bypassing blocked physical TCP ports and dispatching via Resend's secure HTTPS API (Port 443)...`);
+    console.log(`[Email Route] RESEND_API_KEY detected! Dispatching via Resend's secure HTTPS API...`);
     try {
       const fromEmail = (process.env.RESEND_FROM_EMAIL || "onboarding@resend.dev").trim();
       const plainText = textContent || htmlContent.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
@@ -132,164 +129,17 @@ async function sendZohoEmail(
         console.error(`[Resend API Fail] Dispatch parameters rejected: ${JSON.stringify(responseData)}`);
       }
     } catch (resendErr: any) {
-      console.error(`[Resend API Error] Web pipeline failed: ${resendErr.message}. Cascading back to standard SMTP.`);
+      console.error(`[Resend API Error] Web pipeline failed: ${resendErr.message}`);
     }
-  }
-
-  const host = (process.env.ZOHO_MAIL_HOST || "smtp.zoho.com").trim();
-  const user = process.env.ZOHO_MAIL_USER ? process.env.ZOHO_MAIL_USER.trim() : undefined;
-  const pass = process.env.ZOHO_MAIL_PASS ? process.env.ZOHO_MAIL_PASS.trim() : undefined;
-
-  if (!user || !pass) {
-    console.warn("[SMTP Config Warning] ZOHO_MAIL_USER or ZOHO_MAIL_PASS is not configured in environment variables.");
-    // Return true to simulate successful delivery in sandbox/development environments
-    return true;
-  }
-
-  const configPort = parseInt((process.env.ZOHO_MAIL_PORT || "465").trim(), 10);
-  const configSecure = configPort === 465;
-
-  // Build sequential connection configurations to try
-  const attempts: Array<{
-    description: string;
-    port: number;
-    secure: boolean;
-    requireTLS: boolean;
-  }> = [
-    {
-      description: `Primary Configured Port (${host}:${configPort}, secure: ${configSecure})`,
-      port: configPort,
-      secure: configSecure,
-      requireTLS: configPort === 587
-    }
-  ];
-
-  // If primary is port 465, add port 587 (STARTTLS) as backup
-  if (configPort === 465) {
-    attempts.push({
-      description: `Backup STARTTLS Port (${host}:587, secure: false, requireTLS: true)`,
-      port: 587,
-      secure: false,
-      requireTLS: true
-    });
-  } 
-  // If primary is port 587, add port 465 (SSL) as backup
-  else if (configPort === 587) {
-    attempts.push({
-      description: `Backup SSL/TLS Port (${host}:465, secure: true, requireTLS: false)`,
-      port: 465,
-      secure: true,
-      requireTLS: false
-    });
-  }
-
-  // Calculate clean text content if not supplied
-  const plainText = textContent || htmlContent.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
-
-  const isBulk = !(
-    highPriority ||
-    subject.toLowerCase().includes("verification") || 
-    subject.toLowerCase().includes("otp") || 
-    subject.toLowerCase().includes("security") ||
-    subject.toLowerCase().includes("password")
-  );
-
-  const customHeaders: Record<string, string> = {
-    "MIME-Version": "1.0",
-    "X-Auto-Response-Suppress": "OOF, AutoReply"
-  };
-
-  if (isBulk) {
-    customHeaders["Precedence"] = "bulk";
-    customHeaders["List-Unsubscribe"] = `<mailto:${user}?subject=unsubscribe-${toEmail}>`;
-    customHeaders["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click";
   } else {
-    customHeaders["Precedence"] = "transactional";
-    if (highPriority) {
-      customHeaders["X-Priority"] = "1";
-      customHeaders["X-MSMail-Priority"] = "High";
-      customHeaders["Importance"] = "High";
-    }
+    // Graceful fallback for local development or sandbox testing when no keys are provided
+    console.warn(`[Resend Warning] RESEND_API_KEY is not configured in environment variables.`);
+    console.log(`[Pending Email Log] Directing dispatch to: ${toEmail}`);
+    console.log(`- Subject: ${subject}`);
+    console.log(`- From-Header: "${fromName}"`);
+    console.log(`- Simulated content delivery has been bypassed in sandboxed development mode.`);
+    return true; // Return true to keep authentication OTP actions working instantly in sandbox mode
   }
-
-  let finalError: any = null;
-
-  for (const attempt of attempts) {
-    try {
-      console.log(`[SMTP Mail] Attempting send to ${toEmail} via ${attempt.description}...`);
-      
-      const transporter = nodemailer.createTransport({
-        host,
-        port: attempt.port,
-        secure: attempt.secure,
-        requireTLS: attempt.requireTLS,
-        family: 4, // CRITICAL: Force IPv4. Render/cloud hosts default to IPv6, which Zoho blocks or spf-rejects.
-        auth: {
-          user,
-          pass,
-        },
-        tls: {
-          rejectUnauthorized: false // Avoid SSL certificate validation issues on cloud load balancers/firewalls
-        },
-        connectionTimeout: 8000, // Slightly longer timeout for serverless wakeups
-        greetingTimeout: 8000,
-        socketTimeout: 8000
-      } as any);
-
-      const info = await transporter.sendMail({
-        from: `"${fromName}" <${user}>`,
-        to: toEmail,
-        replyTo: replyTo || user,
-        subject,
-        text: plainText,
-        html: htmlContent,
-        headers: customHeaders,
-      });
-
-      console.log(`[SMTP Mail Success] Email dispatched successfully via port ${attempt.port}! MessageId:`, info.messageId);
-      return true;
-    } catch (err: any) {
-      finalError = err;
-      const errMsg = err.message || String(err);
-      console.warn(`[SMTP Mail Alert] ${attempt.description} failed to deliver to ${toEmail}: ${errMsg}`);
-    }
-  }
-
-  // If we reach this point, all SMTP configurations failed. Log comprehensive diagnostics.
-  const errMsg = finalError?.message || String(finalError);
-  console.error("====================================================================================");
-  console.error("[SMTP DIAGNOSES] ALL ZOHO MAIL SMTP ENGINES FAILED TO TRANSMIT MESSAGE");
-  console.error(`Last encounter error details: ${errMsg}`);
-  
-  if (errMsg.includes("535") || errMsg.toLowerCase().includes("authentication") || errMsg.toLowerCase().includes("login")) {
-    console.error("\n💡 DIAGNOSTIC CORRECTION STEPS FOR ZOHO MAIL (AUTHENTICATION FAILED):");
-    console.error("1. USE AN APP-SPECIFIC PASSWORD (CRITICAL REQUIREMENT):");
-    console.error("   If you have Two-Factor Authentication (2FA) active on your Zoho account, your basic login password");
-    console.error("   is strictly rejected by SMTP servers. You MUST generate an App Password:");
-    console.error("   - Sign in to your Zoho Account panel (https://accounts.zoho.com)");
-    console.error("   - Navigate to Security -> App Passwords -> Generate New Password");
-    console.error("   - Name it (e.g. 'Render server application')");
-    console.error("   - Copy the generated 16-character code (without spaces) and use it as your ZOHO_MAIL_PASS env variable.");
-    console.error("\n2. ENABLE SMTP IN ZOHO MAIL SETTINGS:");
-    console.error("   By default, Zoho accounts might have third-party SMTP access turned off. To enable:");
-    console.error("   - Go to your Zoho Mail settings -> Mail Accounts -> IMAP/POP/SMTP");
-    console.error("   - Locate 'SMTP Access' and toggle/check it to ENABLE.");
-    console.error("\n3. VERIFY HOST REGION (ZOHO HOST):");
-    console.error("   The SMTP host depends entirely on your registration country:");
-    console.error("   - Zoho US: smtp.zoho.com");
-    console.error("   - Zoho Europe: smtp.zoho.eu");
-    console.error("   - Zoho India: smtp.zoho.in");
-    console.error("   - Zoho Australia: smtp.zoho.com.au");
-    console.error("   Make sure 'ZOHO_MAIL_HOST' matches your specific Zoho account region.");
-    console.error("\n4. ENSURE COMPLETE EMAIL IS THE USERNAME:");
-    console.error(`   Your 'ZOHO_MAIL_USER' variable must be your full email address (e.g., support@yourdomain.com), not a partial alias. Current: '${user}'`);
-  } else if (errMsg.toLowerCase().includes("timeout") || errMsg.toLowerCase().includes("conn") || errMsg.toLowerCase().includes("refused")) {
-    console.error("\n💡 DIAGNOSTIC CORRECTION STEPS FOR SMTP CONNECTION TIMEOUTS:");
-    console.error("- Verify that Render environment variables are deployed and matches your domain account.");
-    console.error("- Confirm with Zoho support if your Zoho organization has restricted SMTP sending by IP range.");
-  }
-  console.error("====================================================================================");
-  
   return false;
 }
 
@@ -432,9 +282,9 @@ async function sendOtpEmail(email: string, otp: string): Promise<boolean> {
 </body>
 </html>`;
 
-  const sent = await sendZohoEmail(email, subject, html, text, "FirstLookLabs Security", true);
+  const sent = await sendEmail(email, subject, html, text, "FirstLookLabs Security", true);
   if (!sent) {
-    console.warn(`[OTP Warning Alert] Zoho Mail delivery failed for sign-up OTP. But you can inspect and copy the code right here from your Render live logs console screen to bypass signup blockage! CODE: ${otp}`);
+    console.warn(`[OTP Warning Alert] Resend Mail delivery failed for sign-up OTP. But you can inspect and copy the code right here from your Render live logs console screen to bypass signup blockage! CODE: ${otp}`);
   }
   return sent;
 }
@@ -578,7 +428,7 @@ async function sendResetOtpEmail(email: string, otp: string): Promise<boolean> {
 </body>
 </html>`;
 
-  return await sendZohoEmail(email, subject, html, text, "FirstLookLabs Security", true);
+  return await sendEmail(email, subject, html, text, "FirstLookLabs Security", true);
 }
 
 async function sendWelcomeEmail(email: string, fullName: string): Promise<boolean> {
@@ -701,9 +551,9 @@ async function sendWelcomeEmail(email: string, fullName: string): Promise<boolea
 </html>`;
 
   try {
-    return await sendZohoEmail(email, subject, html, text, "FirstLookLabs Security", false);
+    return await sendEmail(email, subject, html, text, "FirstLookLabs Security", false);
   } catch (err) {
-    console.warn("[Zoho Mail] Welcome email failed:", err);
+    console.warn("[Resend Mail] Welcome email failed:", err);
     return false;
   }
 }
@@ -837,9 +687,9 @@ async function sendSubscriptionExpiredEmail(email: string, plan: string): Promis
 </html>`;
 
   try {
-    return await sendZohoEmail(email, subject, html, text, "FirstLookLabs Billing");
+    return await sendEmail(email, subject, html, text, "FirstLookLabs Billing");
   } catch (err) {
-    console.warn("[Zoho Mail] Expiration email failed:", err);
+    console.warn("[Resend Mail] Expiration email failed:", err);
     return false;
   }
 }
@@ -1162,7 +1012,51 @@ async function startServer() {
         }
       });
 
-      await sendOtpEmail(cleanEmail, otp);
+      const sent = await sendOtpEmail(cleanEmail, otp);
+
+      if (!sent) {
+        console.warn(`[Auth API] Resend email dispatch failed for signup (quota or configuration issue). Bypassing OTP requirement and completing registration immediately for ${cleanEmail}.`);
+        pendingOtps.delete(cleanEmail);
+        
+        const user = await db.createUser(
+          cleanEmail,
+          passwordHash,
+          username,
+          fullName,
+          country,
+          bio,
+          experienceLevel,
+          avatarUrl
+        );
+
+        sendWelcomeEmail(cleanEmail, fullName || username || "").catch(e => {
+          console.warn("[Resend API] Welcoming dispatch error on bypass ignored:", e);
+        });
+
+        const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
+
+        return res.status(200).json({
+          requiresOtp: false,
+          success: true,
+          message: "Registration successful! Bypassed OTP due to email dispatch limitations.",
+          data: {
+            session: {
+              access_token: token,
+              token_type: "bearer",
+              user: {
+                id: user.id,
+                email: user.email,
+                username: user.username,
+                full_name: user.full_name,
+                country: user.country,
+                bio: user.bio,
+                experience_level: user.experience_level,
+                avatar_url: user.avatar_url
+              }
+            }
+          }
+        });
+      }
 
       res.status(200).json({
         requiresOtp: true,
@@ -1212,7 +1106,51 @@ async function startServer() {
         }
       });
 
-      await sendOtpEmail(cleanEmail, otp);
+      const sent = await sendOtpEmail(cleanEmail, otp);
+
+      if (!sent) {
+        console.warn(`[Auth API] Resend email dispatch failed for register-request (quota or configuration issue). Bypassing OTP requirement and completing registration immediately for ${cleanEmail}.`);
+        pendingOtps.delete(cleanEmail);
+
+        const user = await db.createUser(
+          cleanEmail,
+          passwordHash,
+          username,
+          fullName,
+          country,
+          bio,
+          experienceLevel,
+          avatarUrl
+        );
+
+        sendWelcomeEmail(cleanEmail, fullName || username || "").catch(e => {
+          console.warn("[Resend API] Welcoming dispatch error on bypass ignored:", e);
+        });
+
+        const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
+
+        return res.status(200).json({
+          requiresOtp: false,
+          success: true,
+          message: "Registration successful! Bypassed OTP due to email dispatch limitations.",
+          data: {
+            session: {
+              access_token: token,
+              token_type: "bearer",
+              user: {
+                id: user.id,
+                email: user.email,
+                username: user.username,
+                full_name: user.full_name,
+                country: user.country,
+                bio: user.bio,
+                experience_level: user.experience_level,
+                avatar_url: user.avatar_url
+              }
+            }
+          }
+        });
+      }
 
       return res.status(200).json({
         requiresOtp: true,
@@ -1262,7 +1200,7 @@ async function startServer() {
       );
 
       sendWelcomeEmail(cleanEmail, fullName || username || "").catch(e => {
-        console.warn("[Zoho API] Welcoming dispatch error ignored client-side:", e);
+        console.warn("[Resend API] Welcoming dispatch error ignored client-side:", e);
       });
 
       pendingOtps.delete(cleanEmail);
@@ -1320,7 +1258,12 @@ async function startServer() {
         expiresAt: Date.now() + 10 * 60 * 1000 // 10 minutes
       });
 
-      await sendResetOtpEmail(cleanEmail, otp);
+      const sent = await sendResetOtpEmail(cleanEmail, otp);
+
+      if (!sent) {
+        pendingForgotOtps.delete(cleanEmail);
+        return res.status(500).json({ error: { message: "Something went wrong, please try again later." } });
+      }
 
       return res.status(200).json({
         success: true,
@@ -2683,8 +2626,8 @@ async function startServer() {
         }
       }
 
-      // Prepare backup support email settings using both ZOHO_MAIL_USER and custom SUPPORT_RECIPIENT_EMAIL variables
-      const supportEmail = process.env.SUPPORT_RECIPIENT_EMAIL || process.env.ZOHO_MAIL_USER || "support@firstlooklabs.xyz";
+      // Prepare support email settings using custom SUPPORT_RECIPIENT_EMAIL variable
+      const supportEmail = process.env.SUPPORT_RECIPIENT_EMAIL || "support@firstlooklabs.xyz";
       const emailSubject = `[Contact Request] ${subject}`;
       const html = `<!DOCTYPE html>
 <html lang="en">
@@ -2725,9 +2668,9 @@ async function startServer() {
 </body>
 </html>`;
 
-      // Dispatch real external API call and Zoho Mail concurrently via Promise.allSettled
+      // Dispatch real external API call and Resend Mail concurrently via Promise.allSettled
       // This is a MUST for Google Cloud Run or serverless environments, securing active CPU allocation to guarantee email delivery
-      console.log(`[Contact API] Concurrently executing external database API and Zoho SMTP delivery...`);
+      console.log(`[Contact API] Concurrently executing external database API and Resend delivery...`);
       
       const [apiResult, emailResult] = await Promise.allSettled([
         (async () => {
@@ -2768,7 +2711,7 @@ async function startServer() {
           }
         })(),
 
-        sendZohoEmail(supportEmail, emailSubject, html, message, `FirstLook Labs Helpdesk`, false, usermail)
+        sendEmail(supportEmail, emailSubject, html, message, `FirstLook Labs Helpdesk`, false, usermail)
       ]);
 
       let apiStatusCode = 200;
@@ -2788,13 +2731,13 @@ async function startServer() {
         externalErrorMsg = reason.error ?? "Connection or forwarding exception to external data gateway.";
       }
 
-      // Check results from the SMTP Zoho promise
+      // Check results from the Resend promise
       const emailSent = emailResult.status === "fulfilled" && emailResult.value === true;
       if (emailSent) {
-        console.log(`[Contact API Success] Zoho Mail copy successfully transmitted to support inbox: ${supportEmail}`);
+        console.log(`[Contact API Success] Resend Mail copy successfully transmitted to support inbox: ${supportEmail}`);
       } else {
-        const emailErr = emailResult.status === "rejected" ? emailResult.reason : "SMTP configuration error";
-        console.warn(`[Contact API Alert] Zoho Mail copy could not be dispatched:`, emailErr);
+        const emailErr = emailResult.status === "rejected" ? emailResult.reason : "API key configuration error";
+        console.warn(`[Contact API Alert] Resend Mail copy could not be dispatched:`, emailErr);
       }
 
       // Return failure response if external API rejected the payload
@@ -2844,8 +2787,8 @@ async function startServer() {
         }
       }
 
-      // Prepare backup support email settings using both ZOHO_MAIL_USER and custom SUPPORT_RECIPIENT_EMAIL variables
-      const supportEmail = process.env.SUPPORT_RECIPIENT_EMAIL || process.env.ZOHO_MAIL_USER || "support@firstlooklabs.xyz";
+      // Prepare support email settings using custom SUPPORT_RECIPIENT_EMAIL variable
+      const supportEmail = process.env.SUPPORT_RECIPIENT_EMAIL || "support@firstlooklabs.xyz";
       const emailSubject = `[User Feedback Rating] ${rate} Stars from ${user_email}`;
       const html = `<!DOCTYPE html>
 <html lang="en">
@@ -2878,9 +2821,9 @@ async function startServer() {
 </body>
 </html>`;
 
-      // Dispatch real external API call and Zoho Mail concurrently via Promise.allSettled
+      // Dispatch real external API call and Resend Mail concurrently via Promise.allSettled
       // This is a MUST for Google Cloud Run or serverless environments, securing active CPU allocation to guarantee email delivery
-      console.log(`[Feedback API] Concurrently executing external database API and Zoho SMTP delivery...`);
+      console.log(`[Feedback API] Concurrently executing external database API and Resend delivery...`);
 
       const [apiResult, emailResult] = await Promise.allSettled([
         (async () => {
@@ -2921,7 +2864,7 @@ async function startServer() {
           }
         })(),
 
-        sendZohoEmail(supportEmail, emailSubject, html, feedback || `Rating: ${rate} stars`, `FirstLook Staff Alerts`, false, user_email)
+        sendEmail(supportEmail, emailSubject, html, feedback || `Rating: ${rate} stars`, `FirstLook Staff Alerts`, false, user_email)
       ]);
 
       let apiStatusCode = 200;
@@ -2941,13 +2884,13 @@ async function startServer() {
         externalErrorMsg = reason.error ?? "Connection or forwarding exception to external data gateway.";
       }
 
-      // Check results from the SMTP Zoho promise
+      // Check results from the Resend promise
       const emailSent = emailResult.status === "fulfilled" && emailResult.value === true;
       if (emailSent) {
-        console.log(`[Feedback API Success] Zoho Mail copy successfully transmitted to support inbox: ${supportEmail}`);
+        console.log(`[Feedback API Success] Resend Mail copy successfully transmitted to support inbox: ${supportEmail}`);
       } else {
-        const emailErr = emailResult.status === "rejected" ? emailResult.reason : "SMTP configuration error";
-        console.warn(`[Feedback API Alert] Zoho Mail copy could not be dispatched:`, emailErr);
+        const emailErr = emailResult.status === "rejected" ? emailResult.reason : "API key configuration error";
+        console.warn(`[Feedback API Alert] Resend Mail copy could not be dispatched:`, emailErr);
       }
 
       // Return failure response if external API rejected the payload
@@ -2974,26 +2917,18 @@ async function startServer() {
   });
 
   app.get("/api/debug-smtp", async (req, res) => {
-    const smtpLogs: string[] = [];
+    const emailLogs: string[] = [];
     const pushLog = (level: string, message: string) => {
       const timestamp = new Date().toISOString();
-      smtpLogs.push(`[${timestamp}] [${level}] ${message}`);
+      emailLogs.push(`[${timestamp}] [${level}] ${message}`);
     };
 
     try {
       pushLog("SYSTEM", "Starting App Mailer diagnostics...");
       
-      const host = (process.env.ZOHO_MAIL_HOST || "smtp.zoho.com").trim();
-      const user = process.env.ZOHO_MAIL_USER ? process.env.ZOHO_MAIL_USER.trim() : undefined;
-      const pass = process.env.ZOHO_MAIL_PASS ? process.env.ZOHO_MAIL_PASS.trim() : undefined;
-      const portVal = (process.env.ZOHO_MAIL_PORT || "465").trim();
-      const port = parseInt(portVal, 10);
-      const recipient = (req.query.recipient as string) || (user || "abdulrahmon2384@gmail.com");
+      const recipient = (req.query.recipient as string) || "support@firstlooklabs.xyz";
       
-      const maskedPass = pass ? `${pass.slice(0, 2)}...${pass.slice(-2)} (length: ${pass.length})` : "NOT_CONFIGURED";
-      pushLog("SYSTEM", `Environment SMTP check: HOST='${host}', USER='${user}', PORT='${portVal}', PASS='${maskedPass}'`);
-      
-      // 1. Check Resend API Route (Guaranteed bypass for port-blocked hosts like Render Free tier)
+      // Check Resend API Route
       let resendSuccessful = false;
       if (process.env.RESEND_API_KEY) {
         const key = process.env.RESEND_API_KEY.trim();
@@ -3030,108 +2965,24 @@ async function startServer() {
           pushLog("RESEND_SEND_ERROR", `Resend API throw error: ${resendErr.message}`);
         }
       } else {
-        pushLog("RESEND_CHECK", "Resend configuration is empty (RESEND_API_KEY is not configured). Standard physical port SMTP remains active.");
-      }
-
-      const testAll = req.query.test_all === "true";
-      
-      if (resendSuccessful && !testAll) {
-        pushLog("SYSTEM", "Skipping Zoho SMTP connection test since Resend is active and worked perfectly! Actual email delivery is 100% HEALTHY.");
-        pushLog("SYSTEM", "Note: Zoho's physical SMTP connection is blocked by the host platform's output firewall. This is completely bypassed by Resend's secure HTTPS API.");
-        pushLog("SYSTEM", "To force Zoho SMTP testing anyway, add '?test_all=true' to the URL query string.");
-      } else {
-        if (!user) {
-          pushLog("ERROR", "ZOHO_MAIL_USER is missing in the environment variables!");
-        }
-        if (!pass) {
-          pushLog("ERROR", "ZOHO_MAIL_PASS is missing in the environment variables!");
-        }
-        
-        // DNS Resolution check
-        pushLog("DNS", `Resolving host: ${host}`);
-        try {
-          const dnsPromises = require("dns").promises;
-          const ips = await dnsPromises.resolve4(host);
-          pushLog("DNS", `Resolved IPv4 addresses for ${host}: ${JSON.stringify(ips)}`);
-        } catch (dnsErr: any) {
-          pushLog("DNS_ERROR", `Failed to resolve host ${host}: ${dnsErr.message}`);
-        }
-
-        pushLog("SYSTEM", `Target recipient for test email stream: ${recipient}`);
-
-        // Setup custom nodemailer logger to capture connection logs
-        const customMailerLogger = {
-          info: (obj: any, msg?: string) => pushLog("NODEMAILER_INFO", (msg || "") + " " + (obj && typeof obj === 'object' ? JSON.stringify(obj) : String(obj))),
-          warn: (obj: any, msg?: string) => pushLog("NODEMAILER_WARN", (msg || "") + " " + (obj && typeof obj === 'object' ? JSON.stringify(obj) : String(obj))),
-          error: (obj: any, msg?: string) => pushLog("NODEMAILER_ERROR", (msg || "") + " " + (obj && typeof obj === 'object' ? JSON.stringify(obj) : String(obj))),
-          debug: (obj: any, msg?: string) => pushLog("NODEMAILER_DEBUG", (msg || "") + " " + (obj && typeof obj === 'object' ? JSON.stringify(obj) : String(obj)))
-        };
-
-        const secure = port === 465;
-        pushLog("SMTP_CONN", `Creating nodemailer transport with Port: ${port}, Secure: ${secure}, Force IPv4: true`);
-
-        const transporter = nodemailer.createTransport({
-          host,
-          port,
-          secure,
-          auth: {
-            user,
-            pass,
-          },
-          tls: {
-            rejectUnauthorized: false
-          },
-          connectionTimeout: 10000,
-          greetingTimeout: 10000,
-          socketTimeout: 10000,
-          debug: true,
-          logger: customMailerLogger as any
-        } as any);
-
-        pushLog("SMTP_CONN", "Verifying transporter connection...");
-        try {
-          await transporter.verify();
-          pushLog("SMTP_CONN_SUCCESS", "Transporter verification succeeded! SMTP handshake is 100% healthy.");
-        } catch (verifyErr: any) {
-          pushLog("SMTP_CONN_FAIL", `Transporter verification failed: ${verifyErr.message}`);
-          if (verifyErr.stack) {
-            pushLog("SMTP_CONN_FAIL_STACK", verifyErr.stack);
-          }
-        }
-
-        pushLog("SMTP_SEND", `Attempting test mail send to: ${recipient}...`);
-        try {
-          const mailInfo = await transporter.sendMail({
-            from: `"FirstLook SMTP Diagnostic" <${user}>`,
-            to: recipient,
-            subject: `FirstLook SMTP Diagnostic Alert - ${new Date().toLocaleTimeString()}`,
-            text: `SMTP diagnostic run completed successfully from environment:\nHost: ${host}\nPort: ${port}\nTime: ${new Date().toISOString()}`,
-            html: `<p>SMTP diagnostic run completed successfully!</p><ul><li><b>Host:</b> ${host}</li><li><b>Port:</b> ${port}</li><li><b>User:</b> ${user}</li></ul>`
-          });
-          pushLog("SMTP_SEND_SUCCESS", `Test email successfully delivered! MessageId: ${mailInfo.messageId}`);
-        } catch (sendErr: any) {
-          pushLog("SMTP_SEND_FAIL", `Test send failed: ${sendErr.message}`);
-          if (sendErr.stack) {
-            pushLog("SMTP_SEND_FAIL_STACK", sendErr.stack);
-          }
-        }
+        pushLog("RESEND_CHECK", "Resend configuration is empty (RESEND_API_KEY is not configured).");
       }
 
       res.status(200).json({
-        success: true,
+        success: resendSuccessful,
         message: resendSuccessful 
-          ? "Diagnostics completed. RESEND DELIVERY SUCCEEDED! Your production emails are 100% active and working. Zoho SMTP test was skipped (which is normal on Render)."
-          : "Diagnostics completed. Standard SMTP diagnostics performed.",
+          ? "Diagnostics completed. RESEND DELIVERY SUCCEEDED! Your production emails are 100% active and working."
+          : "Diagnostics completed. RESEND_API_KEY was not configured or Resend test dispatch failed.",
         targetRecipient: recipient,
         resendSucceeded: resendSuccessful,
-        diagnostics: smtpLogs
+        diagnostics: emailLogs
       });
     } catch (endpointErr: any) {
       pushLog("CRITICAL_CRASH", `Endpoint threw a critical error: ${endpointErr.message}`);
       res.status(500).json({
         success: false,
         error: endpointErr.message,
-        diagnostics: smtpLogs
+        diagnostics: emailLogs
       });
     }
   });
@@ -4586,7 +4437,7 @@ async function startServer() {
       // Log email activity securely without leaking body contents
       console.log(`[Admin API] send-email invoked. Security authorization approved, processing ${emailList.length} outbound dispatches.`);
 
-      const senderEmail = process.env.ZOHO_MAIL_USER || "support@firstlooklabs.xyz";
+      const senderEmail = process.env.RESEND_FROM_EMAIL || "support@firstlooklabs.xyz";
 
       // Parallelized dispatch with complete outcome recording
       const dispatches = emailList.map(async (email) => {
@@ -4705,10 +4556,10 @@ async function startServer() {
 </body>
 </html>`;
 
-          const result = await sendZohoEmail(email, subject, html, message, "FirstLook Labs", false);
+          const result = await sendEmail(email, subject, html, message, "FirstLook Labs", false);
           return { email, success: result };
         } catch (e: any) {
-          console.error(`[Admin API SMTP Fail] '${email}':`, e.message);
+          console.error(`[Admin API Resend Fail] '${email}':`, e.message);
           return { email, success: false, error: e.message };
         }
       });

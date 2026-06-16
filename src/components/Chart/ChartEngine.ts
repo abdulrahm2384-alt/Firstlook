@@ -408,7 +408,8 @@ export class ChartEngine {
     bidColor: '#2962ff',
     askColor: '#f23645',
     rawSpread: false,
-    showWatermark: true
+    showWatermark: true,
+    showVolume: true
   };
 
   private animationId: number | null = null;
@@ -420,6 +421,77 @@ export class ChartEngine {
   // News engine variables
   private renderedNewsIcons: Array<{ x: number, y: number, r: number, news: any[], isFuture: boolean }> = [];
   private historicalData: Candle[] = [];
+  private cachedHeikinAshiData: any[] = [];
+  private cachedHeikinAshiSourceData: Candle[] = [];
+
+  private getHeikinAshi(): any[] {
+    if (!this.data || this.data.length === 0) return [];
+    if (this.cachedHeikinAshiSourceData === this.data && this.cachedHeikinAshiData.length === this.data.length) {
+      return this.cachedHeikinAshiData;
+    }
+
+    const haData: any[] = [];
+    const first = this.data[0];
+    let prevHaOpen = first.open;
+    let prevHaClose = (first.open + first.high + first.low + first.close) / 4;
+
+    haData.push({
+      open: prevHaOpen,
+      high: first.high,
+      low: first.low,
+      close: prevHaClose,
+      time: first.time,
+      volume: first.volume,
+      news: first.news
+    });
+
+    for (let i = 1; i < this.data.length; i++) {
+      const c = this.data[i];
+      const haClose = (c.open + c.high + c.low + c.close) / 4;
+      const haOpen = (prevHaOpen + prevHaClose) / 2;
+      const haHigh = Math.max(c.high, haOpen, haClose);
+      const haLow = Math.min(c.low, haOpen, haClose);
+
+      haData.push({
+        open: haOpen,
+        high: haHigh,
+        low: haLow,
+        close: haClose,
+        time: c.time,
+        volume: c.volume,
+        news: c.news
+      });
+
+      prevHaOpen = haOpen;
+      prevHaClose = haClose;
+    }
+
+    this.cachedHeikinAshiSourceData = this.data;
+    this.cachedHeikinAshiData = haData;
+    return haData;
+  }
+
+  private getAlphaColor(c: string, alpha: number): string {
+    if (c.startsWith('rgba')) {
+      const parts = c.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
+      if (parts) {
+        const r = parts[1];
+        const g = parts[2];
+        const b = parts[3];
+        const internalAlpha = parts[4] ? parseFloat(parts[4]) : 1;
+        return `rgba(${r}, ${g}, ${b}, ${internalAlpha * alpha})`;
+      }
+    }
+    if (c.startsWith('#')) {
+      const hex = c.replace('#', '');
+      const r = parseInt(hex.substring(0, 2), 16);
+      const g = parseInt(hex.substring(2, 4), 16);
+      const b = parseInt(hex.substring(4, 6), 16);
+      return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    }
+    return c;
+  }
+
   private newsStreamEnabled: boolean = true;
   private onNewsClick: ((news: any[], isFuture: boolean, x: number, y: number) => void) | null = null;
 
@@ -1693,235 +1765,7 @@ export class ChartEngine {
     this.needsRangeUpdate = true;
     this.draw();
 
-    // TRIGGER DETECTION: Check if any un-triggered drawings were hit by the data
-    if (data.length > 0) {
-      let drawingsChanged = false;
-
-      this.drawings.forEach(d => {
-        let justTriggered = false;
-        // 1. TRIGGER DETECTION: (Check when approved and not yet triggered)
-        if (d.isPipelineApproved && !d.isTriggered && (d.type === DrawingType.LONG_POSITION || d.type === DrawingType.SHORT_POSITION)) {
-          const p0 = d.points[0];
-          const p1 = d.points[1];
-          if (!p0 || !p1) return;
-
-          const entryPrice = p0.price;
-          const startTime = Math.min(p0.time, p1.time);
-          const endTime = Math.max(p0.time, p1.time);
-
-          // Check exclusively from the last candle (Math.max(0, oldLength - 1)) to support live ticking
-          const startIdx = Math.max(0, oldLength - 1); 
-          for (let i = startIdx; i < data.length; i++) {
-            const candle = data[i];
-            
-            // Further safety check with placedAt
-            if (d.placedAt && candle.time < d.placedAt) {
-              continue;
-            }
-
-            if (candle.time >= startTime && candle.time <= endTime) {
-              let isTriggeredByCandleRange = false;
-              const isLong = d.type === DrawingType.LONG_POSITION;
-              const isSpreadApplied = isSpreadApplicableForSymbol(d.symbol || this.symbol) && !this.theme.rawSpread;
-              const spr = isSpreadApplied ? getCandleSpread(d.symbol || this.symbol, candle, false) : 0;
-
-              if (d.placedAt !== undefined && candle.time === d.placedAt) {
-                // Exact candle the trade was accepted on: ONLY trigger if current price
-                // crosses or matches the entry price from the approved price at the moment of acceptance.
-                const appPrice = d.approvedPrice !== undefined ? d.approvedPrice : candle.open;
-                
-                if (isLong) {
-                  // Long triggers at Ask price: Ask is Bid (appPrice/candle.close) + spread
-                  const minAsk = Math.min(appPrice, candle.close) + spr;
-                  const maxAsk = Math.max(appPrice, candle.close) + spr;
-                  if (entryPrice >= minAsk && entryPrice <= maxAsk) {
-                    isTriggeredByCandleRange = true;
-                  }
-                } else {
-                  // Short triggers at Bid price (directly native chart price)
-                  const minBid = Math.min(appPrice, candle.close);
-                  const maxBid = Math.max(appPrice, candle.close);
-                  if (entryPrice >= minBid && entryPrice <= maxBid) {
-                    isTriggeredByCandleRange = true;
-                  }
-                }
-              } else {
-                // Future candles (time > d.placedAt) or historical candles when placedAt is absent:
-                // fully evaluated by full bar range (candle low/high)
-                if (isLong) {
-                  // Long triggers at Ask price range: [candle.low + spr, candle.high + spr]
-                  if (candle.low + spr <= entryPrice && candle.high + spr >= entryPrice) {
-                    isTriggeredByCandleRange = true;
-                  }
-                } else {
-                  // Short triggers at Bid price range: [candle.low, candle.high]
-                  if (candle.low <= entryPrice && candle.high >= entryPrice) {
-                    isTriggeredByCandleRange = true;
-                  }
-                }
-              }
-
-              if (isTriggeredByCandleRange) {
-                d.isTriggered = true;
-                d.triggeredAt = candle.time;
-                d.status = 'active';
-                const stopVal = d.points[2]?.price ?? (isLong ? entryPrice * 0.99 : entryPrice * 1.01);
-                d.managedStopPrice = stopVal;
-                d.initialStopPrice = stopVal;
-                drawingsChanged = true;
-                
-                // Only skip close detection for a live ticking trigger (the very last candle of dataset)
-                justTriggered = (candle.time === data[data.length - 1]?.time);
-                
-                // Emit trigger event
-                if (this.onDrawingTrigger) {
-                  this.onDrawingTrigger(d);
-                }
-                break; 
-              }
-            }
-          }
-        }
-
-        // 2. CLOSING DETECTION: Check if triggered positions were closed
-        // PROTECTION: If it just triggered on the last candle in this loop, skip closing detection for one cycle
-        const isDraggingThis = this.selectedDrawingId === d.id && this.draggingPointIdx !== null;
-        if (d.isTriggered && d.status === 'active' && !justTriggered && !isDraggingThis) {
-          const p0 = d.points[0];
-          const p1 = d.points[1];
-          const p2 = d.points[2] || p0;
-          if (!p0 || !p1) return;
-
-          const entry = p0.price;
-          const target = p1.price;
-          const originalStopValue = p2.price;
-          const isLong = d.type === DrawingType.LONG_POSITION;
-          const managedStop = d.managedStopPrice !== undefined ? d.managedStopPrice : originalStopValue;
-
-          let closedStatus: 'won' | 'lost' | null = null;
-          let exitPrice = 0;
-          let statusAt = 0;
-
-          // PERFORMANCE OPTIMIZATION: Start from trigger index or the latest pending candle feed index to verify all subsequent price interactions
-          const triggerIdx = data.findIndex(c => c.time === d.triggeredAt);
-          let startIdx = Math.max(0, oldLength - 1);
-          if (triggerIdx !== -1) {
-            if (triggerIdx < startIdx) {
-              startIdx = triggerIdx;
-            }
-          } else if (d.triggeredAt && data.length > 0 && d.triggeredAt < data[0].time) {
-            startIdx = 0;
-          }
-
-          const isSpreadApplied = isSpreadApplicableForSymbol(d.symbol || this.symbol) && !this.theme.rawSpread;
-
-          for (let i = startIdx; i < data.length; i++) {
-            const candle = data[i];
-            if (candle.time < d.triggeredAt!) continue;
-
-            const spr = isSpreadApplied ? getCandleSpread(d.symbol || this.symbol, candle, false) : 0;
-
-            if (isLong) {
-              // Long exits (sells) at Bid price (natively shown on chart)
-              if (candle.high >= target) {
-                closedStatus = 'won';
-                exitPrice = target;
-                statusAt = candle.time;
-                break;
-              } else if (candle.low <= managedStop) {
-                closedStatus = 'lost';
-                exitPrice = managedStop;
-                statusAt = candle.time;
-                break;
-              }
-            } else {
-              // Short exits (buys back) at Ask price: Ask = Bid (candle) + spread
-              // TP hits when Ask covers target -> Bid + spr <= target -> Bid <= target - spr
-              // SL hits when Ask covers stop value -> Bid + spr >= managedStop -> Bid >= managedStop - spr
-              if (candle.low <= target - spr) {
-                closedStatus = 'won';
-                exitPrice = target;
-                statusAt = candle.time;
-                break;
-              } else if (candle.high >= managedStop - spr) {
-                closedStatus = 'lost';
-                exitPrice = managedStop;
-                statusAt = candle.time;
-                break;
-              }
-            }
-          }
-
-          if (closedStatus) {
-            d.status = closedStatus;
-            d.statusAt = statusAt;
-            drawingsChanged = true;
-
-            if (this.onTradeClosed) {
-              const triggerCandle = data[triggerIdx] || data[0] || { close: entry };
-              const triggerSpread = isSpreadApplied ? getCandleSpread(d.symbol || this.symbol, triggerCandle, false) : 0;
-              const actualEntry = isLong ? (entry + triggerSpread) : entry;
-              const actualExit = exitPrice;
-
-              // Mathematically evaluate risk based on entry till the initial/original SL range, 
-              // which represents the 1-R risk unit. Moving the SL further away or exiting past it 
-              // yields a proportionately larger RR loss.
-              const initialStopValue = d.initialStopPrice !== undefined ? d.initialStopPrice : originalStopValue;
-              const risk = Math.abs(entry - initialStopValue) || 0.00000001;
-              const tradeDiff = isLong ? (actualExit - actualEntry) : (actualEntry - actualExit);
-              const rrRaw = tradeDiff / risk;
-              const rr = isFinite(rrRaw) ? rrRaw : (closedStatus === 'won' ? 100 : -100); // Cap at 100RR if risk is 0
-              
-              const isCommEnabled = this.theme.commissionEnabled !== false;
-              const commissionVal = isCommEnabled ? parseFloat((0.05 * Math.abs(rr)).toFixed(3)) : 0;
-              const netRrVal = isCommEnabled ? parseFloat((rr - commissionVal).toFixed(2)) : parseFloat(rr.toFixed(2));
-
-              // Duration
-              const diffSec = d.statusAt - d.triggeredAt!;
-              const days = Math.floor(diffSec / 86400);
-              const hours = Math.floor((diffSec % 86400) / 3600);
-              const mins = Math.floor((diffSec % 3600) / 60);
-              const duration = (days > 0 ? `${days}d ` : '') + (hours > 0 ? `${hours}h ` : '') + `${mins}m`;
-
-               const tradeInfo = {
-                symbol: this.symbol,
-                type: isLong ? 'LONG' : 'SHORT',
-                entryTime: d.triggeredAt!,
-                exitTime: d.statusAt,
-                entryPrice: actualEntry,
-                exitPrice: actualExit,
-                rr: parseFloat(rr.toFixed(2)),
-                commission: commissionVal,
-                netRr: netRrVal,
-                pips: calculatePips(this.symbol, actualEntry, actualExit),
-                status: closedStatus === 'won' ? 'TP' : 'SL',
-                timeframe: this.timeframe,
-                duration: duration,
-                setupGrade: d.settings?.setupGrade,
-                confluences: d.settings?.confluences,
-                notes: d.settings?.notes,
-                realizedAt: d.settings?.realizedAt || new Date().toISOString()
-              };
-
-              d.settings = { ...d.settings, realizedAt: tradeInfo.realizedAt, tradeInfo };
-
-              this.onTradeClosed({
-                ...tradeInfo,
-                drawingId: d.id,
-                timeframe: '?', // Will be set by App
-                setupGrade: d.settings?.setupGrade,
-                confluences: d.settings?.confluences,
-                notes: d.settings?.notes
-              });
-            }
-          }
-        }
-      });
-
-      if (drawingsChanged) {
-        this.onDrawingsChange?.(this.drawings);
-      }
-    }
+    this.evaluateDrawings(oldLength);
     
     // Pre-calculate max volume for performance
     this.maxVolume = 0;
@@ -2099,6 +1943,231 @@ export class ChartEngine {
       }
       return d;
     });
+
+    // Re-evaluate drawings triggers and closings immediately based on mapped state
+    this.evaluateDrawings(1);
+  }
+
+  private evaluateDrawings(oldLength: number) {
+    const data = this.data;
+    if (!data || data.length === 0) return;
+
+    let drawingsChanged = false;
+
+    this.drawings.forEach(d => {
+      let justTriggered = false;
+      // 1. TRIGGER DETECTION: (Check when approved and not yet triggered)
+      if (d.isPipelineApproved && !d.isTriggered && (d.type === DrawingType.LONG_POSITION || d.type === DrawingType.SHORT_POSITION)) {
+        const p0 = d.points[0];
+        const p1 = d.points[1];
+        if (!p0 || !p1) return;
+
+        const entryPrice = p0.price;
+        const startTime = Math.min(p0.time, p1.time);
+        const endTime = Math.max(p0.time, p1.time);
+
+        // Heal placedAt safe default if somehow missing/undefined
+        if (!d.placedAt) {
+          d.placedAt = p0.time;
+        }
+
+        // Check exclusively from the last candle (Math.max(0, oldLength - 1)) to support live ticking
+        const startIdx = Math.max(0, oldLength - 1); 
+        for (let i = startIdx; i < data.length; i++) {
+          const candle = data[i];
+          
+          // Further safety check with placedAt
+          if (d.placedAt && candle.time < d.placedAt) {
+            continue;
+          }
+
+          if (candle.time >= startTime && candle.time <= endTime) {
+            let isTriggeredByCandleRange = false;
+            const isLong = d.type === DrawingType.LONG_POSITION;
+            const isSpreadApplied = isSpreadApplicableForSymbol(d.symbol || this.symbol) && !this.theme.rawSpread;
+            const spr = isSpreadApplied ? getCandleSpread(d.symbol || this.symbol, candle, false) : 0;
+
+            if (d.placedAt !== undefined && candle.time === d.placedAt) {
+              // Exact candle the trade was accepted on
+              const appPrice = d.approvedPrice !== undefined ? d.approvedPrice : candle.close;
+              
+              if (isLong) {
+                // Long triggers at Ask price range on this candle
+                const minAsk = Math.min(appPrice, candle.low) + spr;
+                const maxAsk = Math.max(appPrice, candle.high) + spr;
+                if (entryPrice >= candle.low && entryPrice <= maxAsk) {
+                  isTriggeredByCandleRange = true;
+                }
+              } else {
+                // Short triggers at Bid price range on this candle
+                const minBid = Math.min(appPrice, candle.low);
+                const maxBid = Math.max(appPrice, candle.high);
+                if (entryPrice >= minBid && entryPrice <= candle.high) {
+                  isTriggeredByCandleRange = true;
+                }
+              }
+            } else {
+              // Future candles (time > d.placedAt) or historical candles when placedAt is absent
+              if (isLong) {
+                if (candle.low + spr <= entryPrice && candle.high + spr >= entryPrice) {
+                  isTriggeredByCandleRange = true;
+                }
+              } else {
+                if (candle.low <= entryPrice && candle.high >= entryPrice) {
+                  isTriggeredByCandleRange = true;
+                }
+              }
+            }
+
+            if (isTriggeredByCandleRange) {
+              d.isTriggered = true;
+              d.triggeredAt = candle.time;
+              d.status = 'active';
+              const stopVal = d.points[2]?.price ?? (isLong ? entryPrice * 0.99 : entryPrice * 1.01);
+              d.managedStopPrice = stopVal;
+              d.initialStopPrice = stopVal;
+              drawingsChanged = true;
+              
+              // Only skip close detection for a live ticking trigger (the very last candle of dataset)
+              justTriggered = (candle.time === data[data.length - 1]?.time);
+              
+              if (this.onDrawingTrigger) {
+                this.onDrawingTrigger(d);
+              }
+              break; 
+            }
+          }
+        }
+      }
+
+      // 2. CLOSING DETECTION: Check if triggered positions were closed
+      const isDraggingThis = this.selectedDrawingId === d.id && this.draggingPointIdx !== null;
+      if (d.isTriggered && d.status === 'active' && !justTriggered && !isDraggingThis) {
+        const p0 = d.points[0];
+        const p1 = d.points[1];
+        const p2 = d.points[2] || p0;
+        if (!p0 || !p1) return;
+
+        const entry = p0.price;
+        const target = p1.price;
+        const originalStopValue = p2.price;
+        const isLong = d.type === DrawingType.LONG_POSITION;
+        const managedStop = d.managedStopPrice !== undefined ? d.managedStopPrice : originalStopValue;
+
+        let closedStatus: 'won' | 'lost' | null = null;
+        let exitPrice = 0;
+        let statusAt = 0;
+
+        const triggerIdx = data.findIndex(c => c.time === d.triggeredAt);
+        let startIdx = Math.max(0, oldLength - 1);
+        if (triggerIdx !== -1) {
+          if (triggerIdx < startIdx) {
+            startIdx = triggerIdx;
+          }
+        } else if (d.triggeredAt && data.length > 0 && d.triggeredAt < data[0].time) {
+          startIdx = 0;
+        }
+
+        const isSpreadApplied = isSpreadApplicableForSymbol(d.symbol || this.symbol) && !this.theme.rawSpread;
+
+        for (let i = startIdx; i < data.length; i++) {
+          const candle = data[i];
+          if (candle.time < d.triggeredAt!) continue;
+
+          const spr = isSpreadApplied ? getCandleSpread(d.symbol || this.symbol, candle, false) : 0;
+
+          if (isLong) {
+            if (candle.high >= target) {
+              closedStatus = 'won';
+              exitPrice = target;
+              statusAt = candle.time;
+              break;
+            } else if (candle.low <= managedStop) {
+              closedStatus = 'lost';
+              exitPrice = managedStop;
+              statusAt = candle.time;
+              break;
+            }
+          } else {
+            if (candle.low <= target - spr) {
+              closedStatus = 'won';
+              exitPrice = target;
+              statusAt = candle.time;
+              break;
+            } else if (candle.high >= managedStop - spr) {
+              closedStatus = 'lost';
+              exitPrice = managedStop;
+              statusAt = candle.time;
+              break;
+            }
+          }
+        }
+
+        if (closedStatus) {
+          d.status = closedStatus;
+          d.statusAt = statusAt;
+          drawingsChanged = true;
+
+          if (this.onTradeClosed) {
+            const triggerCandle = data[triggerIdx] || data[0] || { close: entry };
+            const triggerSpread = isSpreadApplied ? getCandleSpread(d.symbol || this.symbol, triggerCandle, false) : 0;
+            const actualEntry = isLong ? (entry + triggerSpread) : entry;
+            const actualExit = exitPrice;
+
+            const initialStopValue = d.initialStopPrice !== undefined ? d.initialStopPrice : originalStopValue;
+            const risk = Math.abs(entry - initialStopValue) || 0.00000001;
+            const tradeDiff = isLong ? (actualExit - actualEntry) : (actualEntry - actualExit);
+            const rrRaw = tradeDiff / risk;
+            const rr = isFinite(rrRaw) ? rrRaw : (closedStatus === 'won' ? 100 : -100);
+            
+            const isCommEnabled = this.theme.commissionEnabled !== false;
+            const commissionVal = isCommEnabled ? parseFloat((0.05 * Math.abs(rr)).toFixed(3)) : 0;
+            const netRrVal = isCommEnabled ? parseFloat((rr - commissionVal).toFixed(2)) : parseFloat(rr.toFixed(2));
+
+            const diffSec = d.statusAt - d.triggeredAt!;
+            const days = Math.floor(diffSec / 86400);
+            const hours = Math.floor((diffSec % 86400) / 3600);
+            const mins = Math.floor((diffSec % 3600) / 60);
+            const duration = (days > 0 ? `${days}d ` : '') + (hours > 0 ? `${hours}h ` : '') + `${mins}m`;
+
+            const tradeInfo = {
+              symbol: this.symbol,
+              type: isLong ? 'LONG' : 'SHORT',
+              entryTime: d.triggeredAt!,
+              exitTime: d.statusAt,
+              entryPrice: actualEntry,
+              exitPrice: actualExit,
+              rr: parseFloat(rr.toFixed(2)),
+              commission: commissionVal,
+              netRr: netRrVal,
+              pips: calculatePips(this.symbol, actualEntry, actualExit),
+              status: closedStatus === 'won' ? 'TP' : 'SL',
+              timeframe: this.timeframe,
+              duration: duration,
+              setupGrade: d.settings?.setupGrade,
+              confluences: d.settings?.confluences,
+              notes: d.settings?.notes,
+              realizedAt: d.settings?.realizedAt || new Date().toISOString()
+            };
+
+            d.settings = { ...d.settings, realizedAt: tradeInfo.realizedAt, tradeInfo };
+
+            this.onTradeClosed({
+              ...tradeInfo,
+              drawingId: d.id,
+              timeframe: '?', 
+              setupGrade: d.settings?.setupGrade,
+              confluences: d.settings?.confluences,
+              notes: d.settings?.notes
+            });
+          }
+        }
+      }
+    });
+
+    if (drawingsChanged) {
+      this.onDrawingsChange?.(this.drawings);
+    }
   }
 
   public clearDrawings() {
@@ -2179,18 +2248,49 @@ export class ChartEngine {
     if (shouldRecalculate) {
       let minPriceVisible = Infinity;
       let maxPriceVisible = -Infinity;
-      for (let i = this.cachedStartIdx; i <= this.cachedEndIdx; i++) {
+      
+      const chartType = this.theme.chartType || 'candle';
+
+      if (chartType === 'heikin-ashi') {
+        const ha = this.getHeikinAshi();
+        for (let i = this.cachedStartIdx; i <= this.cachedEndIdx; i++) {
+          const d = ha[i];
+          if (d) {
+            minPriceVisible = Math.min(minPriceVisible, d.low);
+            maxPriceVisible = Math.max(maxPriceVisible, d.high);
+          }
+        }
+      } else if (chartType === 'line') {
+        for (let i = this.cachedStartIdx; i <= this.cachedEndIdx; i++) {
           const d = this.data[i];
           if (d) {
-              minPriceVisible = Math.min(minPriceVisible, d.low);
-              maxPriceVisible = Math.max(maxPriceVisible, d.high);
+            minPriceVisible = Math.min(minPriceVisible, d.close);
+            maxPriceVisible = Math.max(maxPriceVisible, d.close);
           }
+        }
+      } else {
+        for (let i = this.cachedStartIdx; i <= this.cachedEndIdx; i++) {
+          const d = this.data[i];
+          if (d) {
+            minPriceVisible = Math.min(minPriceVisible, d.low);
+            maxPriceVisible = Math.max(maxPriceVisible, d.high);
+          }
+        }
       }
       
       if (minPriceVisible === Infinity || isNaN(minPriceVisible)) {
           const recent = this.data.slice(-100);
-          minPriceVisible = Math.min(...recent.map(d => d.low)) || 0;
-          maxPriceVisible = Math.max(...recent.map(d => d.high)) || 100;
+          if (chartType === 'heikin-ashi') {
+            const haRecent = this.getHeikinAshi().slice(-100);
+            minPriceVisible = Math.min(...haRecent.map(d => d.low)) || 0;
+            maxPriceVisible = Math.max(...haRecent.map(d => d.high)) || 100;
+          } else if (chartType === 'line') {
+            minPriceVisible = Math.min(...recent.map(d => d.close)) || 0;
+            maxPriceVisible = Math.max(...recent.map(d => d.close)) || 100;
+          } else {
+            minPriceVisible = Math.min(...recent.map(d => d.low)) || 0;
+            maxPriceVisible = Math.max(...recent.map(d => d.high)) || 100;
+          }
       }
 
       if (minPriceVisible === maxPriceVisible) {
@@ -5919,34 +6019,189 @@ export class ChartEngine {
       ctx.restore();
     }
 
-    // Draw Candles
-    for (let i = startIdx; i <= endIdx; i++) {
-      const candle = this.data[i];
-      const x = getX(i);
-      if (x < -this.zoom || x > width - this.sidebarWidth) continue;
+    // Draw Volume Bars (TradingView-style at bottom of chart overlay)
+    if (this.theme.showVolume !== false) {
+      ctx.save();
+      // Calculate dynamic max volume *specifically in the visible range* for highly responsive and visible bars
+      let visibleMaxVolume = 0;
+      for (let i = startIdx; i <= endIdx; i++) {
+        if (this.data[i] && this.data[i].volume > visibleMaxVolume) {
+          visibleMaxVolume = this.data[i].volume;
+        }
+      }
+      if (visibleMaxVolume === 0) {
+        visibleMaxVolume = this.maxVolume || 1;
+      }
 
-      const bodyWidth = this.zoom > 3 ? this.zoom - 2 : Math.max(1, this.zoom - 0.5);
-      const isUp = candle.close >= candle.open;
-      const bodyTop = getY(Math.max(candle.open, candle.close));
-      const bodyBottom = getY(Math.min(candle.open, candle.close));
-      const bodyHeight = Math.max(1, bodyBottom - bodyTop);
+      // Height constraint: volume takes up the bottom 15% of the chart drawing area
+      const maxVolumeHeight = (height - 30) * 0.15;
+      const volumeBottomY = height - 30;
 
-      // Wick (thin out at high compression)
-      ctx.strokeStyle = isUp ? this.theme.upWick : this.theme.downWick;
-      ctx.lineWidth = this.zoom > 1 ? 1 : 0.5;
+      for (let i = startIdx; i <= endIdx; i++) {
+        const candle = this.data[i];
+        if (!candle) continue;
+        const x = getX(i);
+        if (x < -this.zoom || x > width - this.sidebarWidth) continue;
+
+        const bodyWidth = this.zoom > 3 ? this.zoom - 2 : Math.max(1, this.zoom - 0.5);
+        const isUp = candle.close >= candle.open;
+
+        // Calculate height proportionally
+        const ratio = visibleMaxVolume > 0 ? candle.volume / visibleMaxVolume : 0;
+        const barHeight = ratio * maxVolumeHeight;
+        const barTopY = volumeBottomY - barHeight;
+
+        // Choose volume bar fill color with soft opacity so indicators/grid remain perfectly legible underneath
+        ctx.fillStyle = isUp 
+          ? 'rgba(16, 185, 129, 0.28)'  // Soft green
+          : 'rgba(239, 68, 68, 0.28)';   // Soft red
+
+        ctx.fillRect(x + (this.zoom - bodyWidth) / 2, barTopY, bodyWidth, barHeight);
+      }
+      ctx.restore();
+    }
+
+    // Draw Candles / Visualization Type
+    const chartType = this.theme.chartType || 'candle';
+
+    if (chartType === 'line') {
+      ctx.save();
       ctx.beginPath();
-      ctx.moveTo(x + this.zoom / 2, getY(candle.high));
-      ctx.lineTo(x + this.zoom / 2, getY(candle.low));
+      let firstPoint = true;
+      for (let i = startIdx; i <= endIdx; i++) {
+        const candle = this.data[i];
+        if (!candle) continue;
+        const x = getX(i) + this.zoom / 2;
+        const y = getY(candle.close);
+        if (firstPoint) {
+          ctx.moveTo(x, y);
+          firstPoint = false;
+        } else {
+          ctx.lineTo(x, y);
+        }
+      }
+      ctx.strokeStyle = this.theme.bidColor || '#2962ff';
+      ctx.lineWidth = 2.5;
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
       ctx.stroke();
 
-      // Body
-      ctx.fillStyle = isUp ? this.theme.upColor : this.theme.downColor;
-      if (this.zoom > 1.5) {
-        ctx.strokeStyle = isUp ? this.theme.upBorder : this.theme.downBorder;
-        ctx.lineWidth = 1;
-        ctx.strokeRect(x + (this.zoom - bodyWidth) / 2, bodyTop, bodyWidth, bodyHeight);
+      // AREA FILL: Fill the area under the curve with a luxurious smooth gradient for premium aesthetic
+      if (!firstPoint && startIdx <= endIdx) {
+        // Find first and last plotted X coordinates
+        const firstX = getX(startIdx) + this.zoom / 2;
+        const lastX = getX(endIdx) + this.zoom / 2;
+        const bottomY = height - 30;
+
+        ctx.lineTo(lastX, bottomY);
+        ctx.lineTo(firstX, bottomY);
+        ctx.closePath();
+
+        const gradient = ctx.createLinearGradient(0, 0, 0, bottomY);
+        const startColor = this.getAlphaColor(this.theme.bidColor || '#2962ff', 0.16);
+        gradient.addColorStop(0, startColor);
+        gradient.addColorStop(1, 'rgba(255, 255, 255, 0.0)');
+        ctx.fillStyle = gradient;
+        ctx.fill();
       }
-      ctx.fillRect(x + (this.zoom - bodyWidth) / 2, bodyTop, bodyWidth, bodyHeight);
+      ctx.restore();
+    } else if (chartType === 'bar') {
+      // Draw Barchart (OHLC bars)
+      for (let i = startIdx; i <= endIdx; i++) {
+        const candle = this.data[i];
+        if (!candle) continue;
+        const x = getX(i);
+        if (x < -this.zoom || x > width - this.sidebarWidth) continue;
+
+        const bodyWidth = this.zoom > 3 ? this.zoom - 2 : Math.max(1, this.zoom - 0.5);
+        const isUp = candle.close >= candle.open;
+
+        ctx.strokeStyle = isUp ? this.theme.upColor : this.theme.downColor;
+        ctx.lineWidth = this.zoom > 3 ? 1.5 : 1;
+        ctx.lineCap = 'round';
+        
+        ctx.beginPath();
+        const centerX = x + this.zoom / 2;
+        // High to Low vertical bar
+        ctx.moveTo(centerX, getY(candle.high));
+        ctx.lineTo(centerX, getY(candle.low));
+        ctx.stroke();
+
+        const tickOffset = Math.max(1.5, bodyWidth / 2);
+        // Open tick (left)
+        ctx.beginPath();
+        ctx.moveTo(centerX - tickOffset, getY(candle.open));
+        ctx.lineTo(centerX, getY(candle.open));
+        ctx.stroke();
+
+        // Close tick (right)
+        ctx.beginPath();
+        ctx.moveTo(centerX, getY(candle.close));
+        ctx.lineTo(centerX + tickOffset, getY(candle.close));
+        ctx.stroke();
+      }
+    } else if (chartType === 'heikin-ashi') {
+      const ha = this.getHeikinAshi();
+      for (let i = startIdx; i <= endIdx; i++) {
+        const candle = ha[i];
+        if (!candle) continue;
+        const x = getX(i);
+        if (x < -this.zoom || x > width - this.sidebarWidth) continue;
+
+        const bodyWidth = this.zoom > 3 ? this.zoom - 2 : Math.max(1, this.zoom - 0.5);
+        const isUp = candle.close >= candle.open;
+        const bodyTop = getY(Math.max(candle.open, candle.close));
+        const bodyBottom = getY(Math.min(candle.open, candle.close));
+        const bodyHeight = Math.max(1, bodyBottom - bodyTop);
+
+        // Wick
+        ctx.strokeStyle = isUp ? this.theme.upWick : this.theme.downWick;
+        ctx.lineWidth = this.zoom > 1 ? 1 : 0.5;
+        ctx.beginPath();
+        ctx.moveTo(x + this.zoom / 2, getY(candle.high));
+        ctx.lineTo(x + this.zoom / 2, getY(candle.low));
+        ctx.stroke();
+
+        // Body
+        ctx.fillStyle = isUp ? this.theme.upColor : this.theme.downColor;
+        if (this.zoom > 1.5) {
+          ctx.strokeStyle = isUp ? this.theme.upBorder : this.theme.downBorder;
+          ctx.lineWidth = 1;
+          ctx.strokeRect(x + (this.zoom - bodyWidth) / 2, bodyTop, bodyWidth, bodyHeight);
+        }
+        ctx.fillRect(x + (this.zoom - bodyWidth) / 2, bodyTop, bodyWidth, bodyHeight);
+      }
+    } else {
+      // Standard Candle chart
+      for (let i = startIdx; i <= endIdx; i++) {
+        const candle = this.data[i];
+        if (!candle) continue;
+        const x = getX(i);
+        if (x < -this.zoom || x > width - this.sidebarWidth) continue;
+
+        const bodyWidth = this.zoom > 3 ? this.zoom - 2 : Math.max(1, this.zoom - 0.5);
+        const isUp = candle.close >= candle.open;
+        const bodyTop = getY(Math.max(candle.open, candle.close));
+        const bodyBottom = getY(Math.min(candle.open, candle.close));
+        const bodyHeight = Math.max(1, bodyBottom - bodyTop);
+
+        // Wick (thin out at high compression)
+        ctx.strokeStyle = isUp ? this.theme.upWick : this.theme.downWick;
+        ctx.lineWidth = this.zoom > 1 ? 1 : 0.5;
+        ctx.beginPath();
+        ctx.moveTo(x + this.zoom / 2, getY(candle.high));
+        ctx.lineTo(x + this.zoom / 2, getY(candle.low));
+        ctx.stroke();
+
+        // Body
+        ctx.fillStyle = isUp ? this.theme.upColor : this.theme.downColor;
+        if (this.zoom > 1.5) {
+          ctx.strokeStyle = isUp ? this.theme.upBorder : this.theme.downBorder;
+          ctx.lineWidth = 1;
+          ctx.strokeRect(x + (this.zoom - bodyWidth) / 2, bodyTop, bodyWidth, bodyHeight);
+        }
+        ctx.fillRect(x + (this.zoom - bodyWidth) / 2, bodyTop, bodyWidth, bodyHeight);
+      }
     }
 
     // Indicators

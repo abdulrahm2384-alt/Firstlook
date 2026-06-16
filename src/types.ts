@@ -143,4 +143,6 @@ export interface ChartTheme {
   tickingEnabled?: boolean;
   showWatermark?: boolean;
   commissionEnabled?: boolean;
+  showVolume?: boolean;
+  chartType?: 'candle' | 'line' | 'bar' | 'heikin-ashi';
 }
