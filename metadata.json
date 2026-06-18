@@ -1,6 +1,6 @@
 {
-  "name": "Remix: Remix: Check-In",
-  "description": "Quickly verify the safety and presence of loved ones with simple status notifications and real-time check-ins.",
+  "name": "FirstLook",
+  "description": "A high-performance market charting, backtesting, and trading journaling platform featuring interactive indicators, watchlists, and secure subscription management.",
   "requestFramePermissions": [],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"

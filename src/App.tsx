@@ -2116,6 +2116,42 @@ export default function App() {
     }
   }, [simIsPlaying, replayIsPlaying, isReplayMode, selectedTimeframe, replayTrade]);
 
+  // Daily Candle PLAY Limit Tracking (tracks play-by-play candle progression)
+  const checkAndTrackPlayLimit = useCallback((countToAdd: number): boolean => {
+    if (subscriptionPlan === 'premium') return true;
+
+    const limit = subscriptionPlan === 'plus' ? 5000 : 500;
+    const todayStr = new Date().toISOString().split('T')[0];
+    
+    let tracker = { date: todayStr, consumed: 0 };
+    try {
+      const saved = localStorage.getItem('firstlook_daily_play_limit_v1');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.date === todayStr) {
+          tracker = parsed;
+        }
+      }
+    } catch (e) {
+      console.error("Error reading daily play limit", e);
+    }
+
+    if (tracker.consumed >= limit) {
+      return false;
+    }
+
+    if (countToAdd > 0) {
+      tracker.consumed += countToAdd;
+      localStorage.setItem('firstlook_daily_play_limit_v1', JSON.stringify(tracker));
+    }
+    return true;
+  }, [subscriptionPlan]);
+
+  // Keep legacy function signature as an unlimited pass-through so candle fetching has absolutely no limits
+  const checkAndTrackCandleLimit = useCallback((_countToAdd: number): boolean => {
+    return true;
+  }, []);
+
   const togglePlayback = useCallback(() => {
     const isPlaying = isReplayMode ? replayIsPlaying : simIsPlaying;
     if (isPlaying) {
@@ -2125,6 +2161,12 @@ export default function App() {
         setSimIsPlaying(false);
       }
     } else {
+      if (!checkAndTrackPlayLimit(0)) {
+        setUpgradeModalFeature('candles');
+        setIsUpgradeModalOpen(true);
+        addNotification(`Daily candle play limit reached (Max ${subscriptionPlan === 'plus' ? '5000' : '500'} candles). Upgrade your plan to play more candles!`, 'warning');
+        return;
+      }
       // Check if we are already at or beyond end time
       const activeItem = watchlistRef.current.find(i => i.id === activeWatchlistItemId) ||
                          watchlistRef.current.find(i => i.symbol === selectedSymbolRef.current && (i.prefix || null) === (activePrefixRef.current || null));
@@ -2232,7 +2274,10 @@ export default function App() {
     activeWatchlistItemId,
     currentSessionKey,
     watchlist,
-    selectedSymbol
+    selectedSymbol,
+    checkAndTrackPlayLimit,
+    subscriptionPlan,
+    addNotification
   ]);
 
   // Passive, background real-time ticker running when playback is idle/paused
@@ -3418,9 +3463,15 @@ export default function App() {
       item.dataSource === finalSource
     );
     
-    if (subscriptionPlan === 'basic' && existingIndex === -1) {
+    if (existingIndex === -1) {
       const ongoingCount = watchlist.filter(item => (item.status || 'ongoing') === 'ongoing').length;
-      if (ongoingCount >= 3) {
+      if (subscriptionPlan === 'basic' && ongoingCount >= 3) {
+        setUpgradeModalFeature('watchlist');
+        setIsUpgradeModalOpen(true);
+        setShowBacktestSetup(null);
+        return;
+      }
+      if (subscriptionPlan === 'plus' && ongoingCount >= 12) {
         setUpgradeModalFeature('watchlist');
         setIsUpgradeModalOpen(true);
         setShowBacktestSetup(null);
@@ -4006,36 +4057,6 @@ export default function App() {
 
   // Theme sync is handled via the preferences effect
 
-  // Daily Candle Limit Tracking
-  const checkAndTrackCandleLimit = useCallback((countToAdd: number): boolean => {
-    if (subscriptionPlan === 'premium') return true;
-
-    const limit = subscriptionPlan === 'plus' ? 5000 : 500;
-    const todayStr = new Date().toISOString().split('T')[0];
-    
-    let tracker = { date: todayStr, consumed: 0 };
-    try {
-      const saved = localStorage.getItem('firstlook_daily_candle_limit_v1');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (parsed.date === todayStr) {
-          tracker = parsed;
-        }
-      }
-    } catch (e) {
-      console.error("Error reading daily candle limit", e);
-    }
-
-    if (tracker.consumed >= limit) {
-      return false;
-    }
-
-    // Update the consumed count
-    tracker.consumed += countToAdd;
-    localStorage.setItem('firstlook_daily_candle_limit_v1', JSON.stringify(tracker));
-    return true;
-  }, [subscriptionPlan]);
-
   const fetchCandleData = useCallback(async (
     symbol: string,
     timeframe: string,
@@ -4045,13 +4066,8 @@ export default function App() {
     source?: string,
     marketType?: string
   ) => {
-    if (!checkAndTrackCandleLimit(limit)) {
-      setUpgradeModalFeature('candles');
-      setIsUpgradeModalOpen(true);
-      throw new Error("DAILY_CANDLE_LIMIT_EXCEEDED");
-    }
     return apiFetchCandleData(symbol, timeframe, limit, endTime, startTime, source, marketType);
-  }, [checkAndTrackCandleLimit]);
+  }, []);
 
   const loadMarketData = async (symbol: string, timeframeId: string, initialEndTime?: number, sourceOverride?: string, marketTypeOverride?: MarketType, forceTimeSnap?: boolean) => {
     if (!symbol) return;
@@ -5200,6 +5216,18 @@ export default function App() {
             nextProgress = 0.999;
           }
 
+          // Check and track daily candle played limits
+          const candlesPlayed = nextCandleIdx - candleIdx;
+          if (candlesPlayed > 0) {
+            if (!checkAndTrackPlayLimit(candlesPlayed)) {
+              setReplayIsPlaying(false);
+              setUpgradeModalFeature('candles');
+              setIsUpgradeModalOpen(true);
+              addNotification(`Daily candle play limit reached (Max ${subscriptionPlan === 'plus' ? '5000' : '500'} candles). Upgrade your plan to play more candles!`, 'warning');
+              return;
+            }
+          }
+
           const tT = Math.max(1, Math.floor(timeframeSeconds / 2));
           lastActiveTickIndexRef.current = Math.floor(nextProgress * tT);
 
@@ -5238,6 +5266,20 @@ export default function App() {
           };
           const playDuration = getCandleDurationForSpeed(simSpeed);
           const nextTime = current + (deltaMs / 1000) * (timeframeSeconds / playDuration);
+
+          const oldTimeIdx = Math.floor(current / timeframeSeconds);
+          const newTimeIdx = Math.floor(nextTime / timeframeSeconds);
+          const candlesPlayed = newTimeIdx - oldTimeIdx;
+          if (candlesPlayed > 0) {
+            if (!checkAndTrackPlayLimit(candlesPlayed)) {
+              setReplayIsPlaying(false);
+              setUpgradeModalFeature('candles');
+              setIsUpgradeModalOpen(true);
+              addNotification(`Daily candle play limit reached (Max ${subscriptionPlan === 'plus' ? '5000' : '500'} candles). Upgrade to play more candles!`, 'warning');
+              return;
+            }
+          }
+
           replayCurrentTimeRef.current = nextTime;
           setReplayCurrentTime(nextTime);
         }
@@ -5337,6 +5379,18 @@ export default function App() {
             nextProgress = 0.999;
           }
 
+          // Check and track daily candle played limits
+          const candlesPlayed = nextCandleIdx - candleIdx;
+          if (candlesPlayed > 0) {
+            if (!checkAndTrackPlayLimit(candlesPlayed)) {
+              setSimIsPlaying(false);
+              setUpgradeModalFeature('candles');
+              setIsUpgradeModalOpen(true);
+              addNotification(`Daily candle play limit reached (Max ${subscriptionPlan === 'plus' ? '5000' : '500'} candles). Upgrade your plan to play more candles!`, 'warning');
+              return;
+            }
+          }
+
           const tT = Math.max(1, Math.floor(timeframeSeconds / 2));
           lastActiveTickIndexRef.current = Math.floor(nextProgress * tT);
 
@@ -5382,6 +5436,20 @@ export default function App() {
           const nextTime = isTimeSync
             ? current + (deltaMs / 1000) * (60 / safeTimeSyncSpeed)
             : current + (deltaMs / 1000) * (timeframeSeconds / playDuration);
+
+          const oldTimeIdx = Math.floor(current / timeframeSeconds);
+          const newTimeIdx = Math.floor(nextTime / timeframeSeconds);
+          const candlesPlayed = newTimeIdx - oldTimeIdx;
+          if (candlesPlayed > 0) {
+            if (!checkAndTrackPlayLimit(candlesPlayed)) {
+              setSimIsPlaying(false);
+              setUpgradeModalFeature('candles');
+              setIsUpgradeModalOpen(true);
+              addNotification(`Daily candle play limit reached (Max ${subscriptionPlan === 'plus' ? '5000' : '500'} candles). Upgrade your plan to play more candles!`, 'warning');
+              return;
+            }
+          }
+
           simCurrentTimeRef.current = nextTime;
           if (sessionCurrentTimesRef.current) {
             sessionCurrentTimesRef.current[sessionKey] = nextTime;
@@ -6296,8 +6364,8 @@ export default function App() {
               </button>
             </div>
           </header>
-          <div className="flex-1 overflow-hidden">
-            {activeTab === 'profile' ? (
+          <div className="flex-1 overflow-hidden relative w-full h-full">
+            <div className="w-full h-full" style={{ display: activeTab === 'profile' ? 'block' : 'none' }}>
               <MemoizedProfilePage 
                 user={session.user} 
                 trades={mergedTrades} 
@@ -6312,7 +6380,8 @@ export default function App() {
                 }}
                 onTriggerSimulationOfBadge={triggerSimulationOfBadge}
               />
-            ) : activeTab === 'subscription' ? (
+            </div>
+            <div className="w-full h-full" style={{ display: activeTab === 'subscription' ? 'block' : 'none' }}>
               <MemoizedSubscriptionPage 
                 user={session?.user}
                 currentPlan={subscriptionPlan}
@@ -6340,7 +6409,8 @@ export default function App() {
                     : (subscriptionBackTarget === 'chart-room' ? "Back to Chart" : "Back to Profile")
                 }
               />
-            ) : (
+            </div>
+            <div className="w-full h-full" style={{ display: activeTab !== 'profile' && activeTab !== 'subscription' ? 'block' : 'none' }}>
               <MemoizedWatchlistPage 
                 userId={session.user?.id} 
                 onSelectSymbol={handleSelectSymbol}
@@ -6365,7 +6435,7 @@ export default function App() {
                 onNavigateToCompetitions={() => setIsCompetitionsPopupOpen(true)}
                 journalTrades={journalTrades}
               />
-            )}
+            </div>
           </div>
         </div>
       ) : (
@@ -8992,9 +9062,11 @@ export default function App() {
                 )}
                 {upgradeModalFeature === 'watchlist' && (
                   <>
-                    <h4 className="text-[11px] font-black uppercase tracking-wide text-slate-905">Watchlist Limit Reached (Max 3 Active)</h4>
+                    <h4 className="text-[11px] font-black uppercase tracking-wide text-slate-905">Watchlist Limit Reached</h4>
                     <p className="text-[11px] text-slate-500 font-semibold leading-relaxed">
-                      Managing more than 3 active ongoing market assets on your watchlist is locked for Basic users. All users can have an infinite number of completed assets! Upgrade to Plus or Premium to track unlimited ongoing pairs simultaneously.
+                      {subscriptionPlan === 'basic' 
+                        ? "Managing more than 3 active ongoing market assets on your watchlist is locked for Basic users. All users can have an infinite number of completed assets! Upgrade to Plus (Max 12 ongoing) or Premium (unlimited) to track more ongoing assets!"
+                        : "Managing more than 12 active ongoing market assets on your watchlist is locked for Plus users. Upgrade to Premium for unconstrained, unlimited assets!"}
                     </p>
                   </>
                 )}
@@ -9016,9 +9088,9 @@ export default function App() {
                 )}
                 {upgradeModalFeature === 'candles' && (
                   <>
-                    <h4 className="text-[11px] font-black uppercase tracking-wide text-slate-905">Daily Candle Load Limit Reached</h4>
+                    <h4 className="text-[11px] font-black uppercase tracking-wide text-slate-905">Daily Candle Playback Limit Reached</h4>
                     <p className="text-[11px] text-slate-500 font-semibold leading-relaxed">
-                      You have reached your daily candle data extraction budget. Under the Basic free tier, daily loading limit is capped at 500 candles. Plus accounts get 5,000 candles/day, and Premium accounts enjoy completely unlimited data.
+                      You have reached your daily candle-by-candle play limit. Under the Basic free tier, visual playback is capped at 500 candles/day. Plus accounts get 5,000 candles/day, and Premium accounts enjoy completely unlimited candle play!
                     </p>
                   </>
                 )}

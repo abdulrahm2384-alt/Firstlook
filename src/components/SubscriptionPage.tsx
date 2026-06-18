@@ -179,7 +179,7 @@ export function SubscriptionPage({
     {
       category: "billing" as const,
       q: "What are the exact plan differences?",
-      a: "• Basic (Free): Lifetime indicators, 3 watchlist symbols, and standard fixed spreads.\n• Plus ($5.00/mo): Raw spreads toggle, unlimited watchlist items, historic replay engine, and competition access.\n• Premium ($20.00/mo): Adds unlimited competition slots and multi-seat team management with 10 team seats."
+      a: "• Basic (Free): Lifetime indicators, 3 watchlist symbols, and standard fixed spreads.\n• Plus ($5.00/mo): Raw spreads toggle, 12 ongoing watchlist items, historic replay engine, and competition access.\n• Premium ($20.00/mo): Adds unlimited competition slots and multi-seat team management with 5 team seats."
     },
     {
       category: "billing" as const,
@@ -189,7 +189,7 @@ export function SubscriptionPage({
     {
       category: "limits" as const,
       q: "Is there a Symbol Watchlist limit?",
-      a: "Yes, the Basic tier is limited to 3 active symbols. Upgrading to Plus or Premium removes all watchlist limitations."
+      a: "Yes, the Basic tier is limited to 3 active symbols. The Plus tier is limited to 12 active ongoing symbols, and Premium has absolutely unlimited watchlist items."
     },
     {
       category: "limits" as const,
@@ -236,6 +236,11 @@ export function SubscriptionPage({
   const handleAddMember = (e: React.FormEvent) => {
     e.preventDefault();
     if (!invitedEmail.trim()) return;
+    
+    if (teamMembers.length >= 5) {
+      alert("Multi-user seats limit reached (Max 5 active seats on Premium plan). Please revoke an existing seat before adding a new one!");
+      return;
+    }
     
     const newMember: TeamMember = {
       id: Math.random().toString(36).substring(2, 9),
@@ -363,8 +368,8 @@ export function SubscriptionPage({
       features: [
         { text: 'Complete Indicator Toolsets', included: true },
         { text: 'Interactive Drawing Tools', included: true },
-        { text: 'Unlimited Watchlist Pairs', included: true },
-        { text: 'Daily Candle Playback (Max 3,000 candles)', included: true },
+        { text: 'Watchlist (Max 12 Active Pairs)', included: true },
+        { text: 'Daily Candle Playback (Max 5,000 candles)', included: true },
         { text: 'Replay All Historical Journal Trades', included: true },
         { text: 'Custom LiteScripts (Max 1 Active)', included: true },
         { text: 'Synced Side-by-Side Charts', included: true },
@@ -398,7 +403,7 @@ export function SubscriptionPage({
         { text: 'Synced Side-by-Side Charts', included: true },
         { text: 'Unlimited Simulated Competition Slots', included: true },
         { text: 'Customizable Forex Spreads (Disable option)', included: true },
-        { text: 'Invite multiple user slots to account (10 seats)', included: true },
+        { text: 'Invite multiple user slots to account (5 seats)', included: true },
       ],
       ctaText: currentPlan === 'premium' ? 'Current Active Tier' : 'Upgrade to Premium',
       isCurrent: currentPlan === 'premium',
@@ -883,7 +888,7 @@ export function SubscriptionPage({
 
             {/* Invitees lists */}
             <div className="space-y-2">
-              <span className="text-[8.5px] font-black uppercase tracking-widest text-slate-400">Active Authorized Seats ({teamMembers.length} seats filled, 10 slots maximum)</span>
+              <span className="text-[8.5px] font-black uppercase tracking-widest text-slate-400">Active Authorized Seats ({teamMembers.length} seats filled, 5 slots maximum)</span>
               {teamMembers.length > 0 ? (
                 <div className="border border-slate-100 rounded-2xl divide-y divide-slate-100 overflow-hidden">
                   {teamMembers.map(member => (

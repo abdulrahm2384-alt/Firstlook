@@ -793,19 +793,36 @@ export function WatchlistPage({
 
   // --- Premium Support Chat Panel States & Handlers (Real Live API) ---
   const [isSupportOpen, setIsSupportOpen] = useState(false);
-  const [supportMessages, setSupportMessages] = useState<Array<{ sender: 'user' | 'admin', message?: string, text?: string, sentAt?: string, time?: string, read?: boolean }>>([]);
+  const [supportMessages, setSupportMessages] = useState<Array<{ sender: 'user' | 'admin', message?: string, text?: string, sentAt?: string, time?: string, read?: boolean }>>(() => {
+    try {
+      const saved = localStorage.getItem('firstlook_support_messages_v1');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
   const [supportInput, setSupportInput] = useState('');
   const [isLoadingSupport, setIsLoadingSupport] = useState(false);
   const [isSendingSupport, setIsSendingSupport] = useState(false);
   const [supportError, setSupportError] = useState<string | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
+  // Sync support messages cache to local storage instantly so page is loaded natively
+  useEffect(() => {
+    if (supportMessages.length > 0) {
+      localStorage.setItem('firstlook_support_messages_v1', JSON.stringify(supportMessages));
+    }
+  }, [supportMessages]);
+
   // Initialize discussion thread when widget opens, starting with welcome screen or current session thread.
   useEffect(() => {
     if (!isSupportOpen || !userId) return;
 
     const fetchThreadOnce = async () => {
-      setIsLoadingSupport(true);
+      // Only set UI loader spinner if we don't have cached conversation messages
+      if (supportMessages.length === 0) {
+        setIsLoadingSupport(true);
+      }
       try {
         const response = await fetch("/api/support/message", {
           method: "POST",
@@ -1131,10 +1148,10 @@ export function WatchlistPage({
     prevAddModalOpenRef.current = isAddModalOpen;
   }, [isAddModalOpen, fetchSponsorAd, sponsorPool.length]);
 
-  // Fetch new dynamic ad and refresh on activeTab changes (ongoing / completed switch)
+  // Fetch block on page mount with default cooldown check. Simple tab changes should be completely instant & local.
   useEffect(() => {
-    fetchSponsorAd(true);
-  }, [activeTab, fetchSponsorAd]);
+    fetchSponsorAd(false);
+  }, [fetchSponsorAd]);
 
   // Filter symbols by category and search query
   const filteredSymbols = useMemo(() => {
@@ -1465,6 +1482,8 @@ export function WatchlistPage({
                 const ongoingCount = watchlist.filter(item => (item.status || 'ongoing') === 'ongoing').length;
                 if (subscriptionPlan === 'basic' && ongoingCount >= 3) {
                   onLockedFeature?.('watchlist');
+                } else if (subscriptionPlan === 'plus' && ongoingCount >= 12) {
+                  onLockedFeature?.('watchlist');
                 } else {
                   setIsAddModalOpen(true);
                 }
@@ -1567,12 +1586,31 @@ export function WatchlistPage({
               </Reorder.Group>
             </div>
           ) : (
-            <div className="py-20 text-center">
+            <div className="py-20 text-center flex flex-col items-center justify-center">
               <div className="w-16 h-16 bg-slate-50 rounded-2xl flex items-center justify-center mx-auto mb-4 text-slate-200">
                 {activeTab === 'ongoing' ? <Clock size={32} /> : <CheckCircle2 size={32} />}
               </div>
               <h3 className="text-sm font-black uppercase tracking-widest text-slate-900">No {activeTab} pairs</h3>
               <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Start by adding an asset to your watch board</p>
+              
+              <motion.button
+                whileHover={{ scale: 1.03 }}
+                whileTap={{ scale: 0.97 }}
+                onClick={() => {
+                  const ongoingCount = watchlist.filter(item => (item.status || 'ongoing') === 'ongoing').length;
+                  if (subscriptionPlan === 'basic' && ongoingCount >= 3) {
+                    onLockedFeature?.('watchlist');
+                  } else if (subscriptionPlan === 'plus' && ongoingCount >= 12) {
+                    onLockedFeature?.('watchlist');
+                  } else {
+                    setIsAddModalOpen(true);
+                  }
+                }}
+                className="mt-5 inline-flex items-center gap-2 px-5 py-2.5 text-[9.5px] font-black uppercase tracking-widest bg-slate-900 text-white hover:bg-black rounded-xl transition-all shadow-md shadow-slate-900/10 cursor-pointer"
+              >
+                <Plus size={11.5} strokeWidth={2.5} />
+                <span>Add Your First Pair</span>
+              </motion.button>
             </div>
           )}
         </div>
@@ -1630,18 +1668,23 @@ export function WatchlistPage({
               </div>
 
               {/* Permanent Support Response Notice Banner */}
-              <div className="p-3 bg-slate-50 border-b border-slate-150 text-[10.5px] font-medium leading-normal text-slate-500 text-center select-none shrink-0">
-                Our support team typically responds within a few hours. In some cases replies may take up to 6 hours depending on ticket volume.
+              <div className="p-3 bg-slate-50 border-b border-slate-150 text-[10.5px] font-medium leading-normal text-slate-500 text-center select-none shrink-0 relative flex items-center justify-center min-h-[38px]">
+                <span className="px-5">Our support team typically responds within a few hours. In some cases replies may take up to 6 hours depending on ticket volume.</span>
+                {isLoadingSupport && supportMessages.length > 0 && (
+                  <div className="absolute right-3 flex items-center" title="Syncing conversation...">
+                    <Loader2 size={11} className="text-slate-400 animate-spin" />
+                  </div>
+                )}
               </div>
 
               {/* Chat Message Scroll */}
               <div className="flex-1 overflow-y-auto p-4 space-y-3.5 bg-slate-50/55 scrollbar-thin scrollbar-thumb-slate-200 flex flex-col justify-between">
                 
                 <div className="space-y-3.5 flex-1">
-                  {isLoadingSupport ? (
+                  {isLoadingSupport && supportMessages.length === 0 ? (
                     <div className="flex flex-col items-center justify-center py-16 text-center select-none">
-                      <Loader2 className="w-6 h-6 text-slate-400 animate-spin mb-2" />
-                      <span className="text-[9px] font-bold uppercase tracking-widest text-slate-400">Loading conversation...</span>
+                      <Loader2 className="w-6 h-6 text-indigo-500 animate-spin mb-2" />
+                      <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">Loading conversation...</span>
                     </div>
                   ) : null}
 
@@ -1657,7 +1700,7 @@ export function WatchlistPage({
                     </div>
                   ) : null}
 
-                  {!isLoadingSupport && supportMessages.map((msg, i) => {
+                  {supportMessages.map((msg, i) => {
                     const isUserMsg = msg.sender === 'user';
                     const msgText = msg.message || msg.text || '';
                     const msgTime = msg.sentAt ? new Date(msg.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : (msg.time || '');
@@ -1825,7 +1868,9 @@ export function WatchlistPage({
             </motion.div>
           </>
         )}
+      </AnimatePresence>
 
+      <AnimatePresence>
         {extendingItem && extendConfig && (
           <>
             <motion.div 
@@ -1952,7 +1997,9 @@ export function WatchlistPage({
             </motion.div>
           </>
         )}
+      </AnimatePresence>
 
+      <AnimatePresence>
         {isAddModalOpen && (
           <>
             <motion.div 
