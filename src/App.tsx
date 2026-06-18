@@ -98,7 +98,6 @@ import { calculatePips, normalizeSymbol, getPipMultiplier } from './lib/marketUt
 import { supabase, isSupabasePlaceholder } from './lib/supabase';
 import { LoginPage } from './components/LoginPage';
 import { WatchlistPage } from './components/WatchlistPage';
-import { GoogleAdSenseUnit } from './components/GoogleAdSenseUnit';
 import { persistenceService } from './services/persistenceService';
 import {
   saveChartStateToCache,
@@ -756,8 +755,6 @@ const getStreakBadgeInfo = (target: number) => {
 
 // Update the export of App or the main component as well
 export default function App() {
-  const adsenseClient = (import.meta as any).env?.VITE_ADSENSE_CLIENT || '';
-  const adsenseSlot = (import.meta as any).env?.VITE_ADSENSE_SLOT || '';
   const [session, setSession] = useState<any>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [params, setParams] = useState<StrategyParams>({});
@@ -1419,82 +1416,6 @@ export default function App() {
     };
     fetchCompetitionsStatus();
   }, [session, isCompetitionsPopupOpen]);
-  const [exploreSponsorAd, setExploreSponsorAd] = useState<{
-    sponsor: string;
-    tagline: string;
-    category: string;
-    incentive: string;
-    cta: string;
-    logoType: string;
-    link: string;
-  } | null>(null);
-
-  useEffect(() => {
-    if (showBacktestSetup && subscriptionPlan === 'basic') {
-      const getAd = async () => {
-        const fallbacks = [
-          {
-            sponsor: "Exness Broker",
-            tagline: "Unbeatable spreads under 0.1 pips with raw liquidity.",
-            category: "Trusted Broker",
-            incentive: "Spreads from 0.0 pips",
-            cta: "Trade Raw",
-            logoType: "broker",
-            link: "https://www.exness.com"
-          },
-          {
-            sponsor: "FTMO Challenges",
-            tagline: "The leading prop platform. Keep up to 90% profit split.",
-            category: "Prop Funding",
-            incentive: "90% Profit Split",
-            cta: "Get Funded",
-            logoType: "prop",
-            link: "https://ftmo.com"
-          },
-          {
-            sponsor: "PineServer VPS",
-            tagline: "Ultra-low latency VPS hosting next to Equinix matches.",
-            category: "Low-Latency VPS",
-            incentive: "99.99% Guaranteed Host",
-            cta: "Deploy Node",
-            logoType: "vps",
-            link: "https://www.pepperstone.com"
-          },
-          {
-            sponsor: "Alpha Core Insights",
-            tagline: "Exclusive daily market order flow and smart-money concepts.",
-            category: "Premium Insights",
-            incentive: "Curated Daily Briefings",
-            cta: "Read Digest",
-            logoType: "insight",
-            link: "https://www.interactivebrokers.com"
-          }
-        ];
-        
-        try {
-          const res = await fetch('/api/sponsor-ad');
-          if (res.ok) {
-            const ct = res.headers.get('content-type');
-            if (ct && ct.includes('application/json')) {
-              const data = await res.json();
-              if (data && data.sponsor) {
-                setExploreSponsorAd(data);
-                return;
-              }
-            }
-          }
-        } catch (e) {
-          console.warn('[ExploreSponsorAd] could not fetch live:', e);
-        }
-        
-        const randomFallback = fallbacks[Math.floor(Math.random() * fallbacks.length)];
-        setExploreSponsorAd(randomFallback);
-      };
-      getAd();
-    } else {
-      setExploreSponsorAd(null);
-    }
-  }, [showBacktestSetup, subscriptionPlan]);
   const [replayCurrentTime, setReplayCurrentTime] = useState<number | null>(null);
   const [replayTrade, setReplayTrade] = useState<JournalTrade | null>(null);
   const [replayIsPlaying, setReplayIsPlaying] = useState(false);
@@ -1934,6 +1855,13 @@ export default function App() {
 
   const loadedSymbolRef = useRef<string | null>(null);
   const loadedTimeframeRef = useRef<string | null>(null);
+  const hasMorePastRef = useRef<boolean>(true);
+  const lastLoadMorePastTime = useRef<number>(0);
+
+  useEffect(() => {
+    hasMorePastRef.current = true;
+    lastLoadMorePastTime.current = 0;
+  }, [selectedSymbol, selectedTimeframe]);
 
   useEffect(() => {
     if (historicalData.length === 0) {
@@ -4756,8 +4684,16 @@ export default function App() {
   ]);
 
   const loadMorePast = async () => {
+    if (!hasMorePastRef.current) return;
     if (isLoadingPast || isLoadingMorePast || historicalData.length === 0 || !selectedSymbol) return;
     
+    // SAFETY CHECK & THROTTLE: Cooldown to avoid ratelimits and lockups when scaling scroll
+    const now = Date.now();
+    if (now - lastLoadMorePastTime.current < 3500) {
+      return;
+    }
+    lastLoadMorePastTime.current = now;
+
     // SAFETY CHECK: Ensure current memory has updated to the selected pair first
     if (loadedSymbolRef.current !== selectedSymbol || loadedTimeframeRef.current !== selectedTimeframe.id) {
       console.warn('[loadMorePast] Loaded data symbol/timeframe mismatch. Aborting past prefetch.');
@@ -4785,6 +4721,7 @@ export default function App() {
           return Array.from(uniqueMap.values()).sort((a, b) => a.time - b.time);
         });
       } else {
+        hasMorePastRef.current = false;
         addNotification(`No more historical data available for ${selectedSymbol}`, 'info');
       }
     } catch (err: any) {
@@ -6184,64 +6121,7 @@ export default function App() {
                   </span>
                 </div>
 
-                {/* Controlled Sponsor Spotlight (Only visible to Basic plans) */}
-                {subscriptionPlan === 'basic' && (
-                  adsenseClient && adsenseSlot ? (
-                    <div className="pb-1">
-                      <GoogleAdSenseUnit client={adsenseClient} slot={adsenseSlot} />
-                    </div>
-                  ) : exploreSponsorAd ? (
-                    <div className="p-4 bg-gradient-to-r from-amber-500/10 to-indigo-500/10 border border-slate-200/60 rounded-3xl space-y-3 shadow-sm relative overflow-hidden text-left">
-                      <div className="absolute top-0 right-0 px-2.5 py-0.5 rounded-bl-xl bg-slate-900 text-[6.5px] font-black uppercase text-amber-400 tracking-wider">
-                        Sponsor Partner
-                      </div>
-                      
-                      <div className="flex items-start justify-between">
-                        <div className="flex flex-col text-left">
-                          <span className="text-[7.5px] font-black tracking-widest uppercase text-slate-400 mb-0.5">
-                            {exploreSponsorAd.category}
-                          </span>
-                          <h4 className="text-sm font-black text-slate-900">
-                            {exploreSponsorAd.sponsor}
-                          </h4>
-                          <p className="text-[10px] text-slate-500 font-bold leading-snug mt-1 max-w-[85%]">
-                            {exploreSponsorAd.tagline}
-                          </p>
-                        </div>
-                        
-                        <div className="w-10 h-10 bg-white rounded-xl border border-slate-100/50 flex items-center justify-center overflow-hidden shrink-0">
-                          <img 
-                            src={`https://logo.clearbit.com/${exploreSponsorAd.link.replace('https://www.', '').replace('https://', '')}.com`}
-                            alt=""
-                            className="w-8 h-8 object-contain"
-                            onError={(e) => {
-                              (e.target as HTMLImageElement).style.display = 'none';
-                            }}
-                          />
-                        </div>
-                      </div>
 
-                      <div className="flex items-center justify-between border-t border-slate-200/20 pt-2 bg-transparent text-[8.5px] font-bold">
-                        <span className="text-indigo-600 uppercase font-black tracking-wide">
-                          {exploreSponsorAd.incentive}
-                        </span>
-                      </div>
-
-                      {/* Single direct CTA with no cycling controls */}
-                      <div className="pt-1 text-[8.5px] font-black select-none">
-                        <a 
-                          href={exploreSponsorAd.link}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="bg-indigo-600 text-white rounded-xl py-2 px-3 text-center uppercase tracking-widest hover:bg-slate-900 transition-colors flex items-center justify-center gap-1 w-full shadow-sm"
-                        >
-                          {exploreSponsorAd.cta}
-                          <ExternalLink size={8} />
-                        </a>
-                      </div>
-                    </div>
-                  ) : null
-                )}
 
                 <div className="p-5 bg-slate-50/50 rounded-3xl border border-slate-100 grid grid-cols-2 gap-4 divide-x divide-slate-100/80">
                   <div className="flex flex-col justify-center text-left pr-2">
@@ -9340,22 +9220,7 @@ export default function App() {
                   💡 Reset all limits (<strong className="text-slate-950 font-extrabold">2 Replays, 1 Synced Chart, 3 Trades</strong>) for this pair instantly by watching a quick 10-second video ad.
                 </div>
 
-                {/* Sponsor Control Ad block inside popup */}
-                <div className="border border-indigo-100/60 rounded-xl bg-indigo-50/20 p-2.5 text-center relative overflow-hidden flex flex-col justify-center items-center min-h-[50px]">
-                  {adsenseClient && adsenseSlot ? (
-                    <GoogleAdSenseUnit client={adsenseClient} slot={adsenseSlot} />
-                  ) : (
-                    <>
-                      <span className="absolute right-2.5 top-1 px-1.5 py-0.5 rounded bg-amber-500/10 text-[5px] font-black uppercase text-amber-600 tracking-wider">
-                        Sponsor Ad Unit
-                      </span>
-                      <div className="text-[10px] text-slate-400 font-mono italic flex items-center gap-1.5 py-1">
-                        <Sparkles size={11} className="text-amber-500 fill-amber-500 animate-pulse" />
-                        <span>Interactive Grid Ads loaded dynamically</span>
-                      </div>
-                    </>
-                  )}
-                </div>
+
               </div>
 
               <div className="flex flex-col gap-2 pt-1">
@@ -9490,16 +9355,10 @@ export default function App() {
                   Professional-grade multi-timeframe sandboxing, unlimited fast historical playbacks, and real-time raw feed comparisons.
                 </p>
                 
-                {adsenseClient && adsenseSlot ? (
-                  <div className="w-full bg-slate-900/60 backdrop-blur-md rounded-2xl border border-slate-800 p-1.5 text-slate-300">
-                    <GoogleAdSenseUnit client={adsenseClient} slot={adsenseSlot} />
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-1.5 justify-center text-[8.5px] bg-slate-900 border border-slate-800 px-3 py-1 rounded-xl text-slate-500 font-semibold font-mono">
-                    <Sparkles size={11} className="text-amber-500 animate-pulse" />
-                    <span>Get immediate ad-free bypass on premium levels starting at $9/mo</span>
-                  </div>
-                )}
+                <div className="flex items-center gap-1.5 justify-center text-[8.5px] bg-slate-900 border border-slate-800 px-3 py-1 rounded-xl text-slate-500 font-semibold font-mono">
+                  <Sparkles size={11} className="text-amber-500 animate-pulse" />
+                  <span>Get immediate ad-free bypass on premium levels starting at $9/mo</span>
+                </div>
               </div>
             </div>
 

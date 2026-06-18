@@ -705,26 +705,26 @@ export const FavoriteDrawingsToolbar = memo(function FavoriteDrawingsToolbar({
                 </div>
               )}
 
-              {!isExpanded ? (
-                /* Regular Collapsed star trigger button */
+              {/* Star group with drop-up favorites panel */}
+              <div className="relative">
+                {/* Regular star trigger button */}
                 <motion.button
                   key="collapsed-trigger"
-                  initial={{ opacity: 0, scale: 0.9 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.9 }}
                   onClick={() => {
                     if (!isDragging) {
                       if (activeTool) {
                         onSelectTool(null);
                       } else {
-                        setFavoritesExpanded(true);
+                        setFavoritesExpanded(!isExpanded);
                       }
                     }
                   }}
                   className={`rounded-full flex items-center justify-center transition-all cursor-pointer ${
                     activeTool 
-                      ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/30' 
-                      : 'text-amber-500 hover:text-amber-600 hover:bg-amber-50/55'
+                      ? 'bg-blue-700 text-white shadow-lg shadow-blue-500/40 scale-105' 
+                      : isExpanded
+                        ? 'bg-amber-100 text-amber-600 shadow-sm'
+                        : 'text-amber-500 hover:text-amber-600 hover:bg-amber-50/55'
                   } ${
                     isMobileLandscape 
                       ? 'p-[1.4vh] min-w-[4.5vh] min-h-[4.5vh]' 
@@ -732,7 +732,7 @@ export const FavoriteDrawingsToolbar = memo(function FavoriteDrawingsToolbar({
                         ? 'p-1.5 min-w-[28px] min-h-[28px]' 
                         : 'p-1.5 min-w-[30px] min-h-[30px]'
                   }`}
-                  title={activeTool ? `Cancel Active ${activeTool.replace('_', ' ')}` : "Expand Favorites"}
+                  title={activeTool ? `Cancel Active ${activeTool.replace('_', ' ')}` : isExpanded ? "Collapse Favorites" : "Expand Favorites"}
                 >
                   {activeTool ? (
                     (() => {
@@ -743,37 +743,70 @@ export const FavoriteDrawingsToolbar = memo(function FavoriteDrawingsToolbar({
                     <Star size={isMobileLandscape ? '3.5vh' : isPortrait ? 13 : 18} fill="currentColor" strokeWidth={2.5} />
                   )}
                 </motion.button>
-              ) : (
-                /* Regular Favorites list */
-                <motion.div
-                  key="expanded"
-                  initial={{ opacity: 0, width: 0 }}
-                  animate={{ opacity: 1, width: 'auto' }}
-                  exit={{ opacity: 0, width: 0 }}
-                  className="flex items-center"
-                >
-                  <div className={`flex items-center ${isMobileLandscape ? 'gap-[1.2vh] p-[0.8vh]' : isPortrait ? 'gap-1 p-0.5' : 'gap-1 px-1'}`}>
-                    {favorites.map(toolId => {
-                      const Icon = TOOL_ICONS[toolId] || Star;
-                      return (
-                        <button
-                          key={toolId}
-                          onClick={() => {
-                            if (!isDragging) {
-                              onSelectTool(activeTool === toolId ? null : toolId);
-                              setFavoritesExpanded(false); // Auto-collapse to float favorite so they can draw on screen!
-                            }
-                          }}
-                          className={`${isMobileLandscape ? 'p-[1.5vh]' : isPortrait ? 'p-1' : 'p-1 mx-0.5'} rounded-xl transition-all shrink-0 ${activeTool === toolId ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' : 'text-slate-600 hover:bg-slate-50'}`}
-                          title={toolId}
+
+                {/* Animated Drop-Up Favorites List - Positioned squarely above the Star trigger */}
+                <AnimatePresence>
+                  {isExpanded && (
+                    <motion.div
+                      key="dropup-favorites-panel"
+                      initial={{ opacity: 0, y: 15, scale: 0.9, x: '-50%' }}
+                      animate={{ opacity: 1, y: 0, scale: 1, x: '-50%' }}
+                      exit={{ opacity: 0, y: 10, scale: 0.9, x: '-50%' }}
+                      transition={{ type: 'spring', damping: 20, stiffness: 350 }}
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      className="absolute bottom-full mb-3 left-1/2 bg-white/95 backdrop-blur-md border border-slate-200 shadow-2xl rounded-2xl flex flex-col items-center gap-1.5 z-[210] p-2.5 min-w-[150px]"
+                    >
+                      {/* Label badge to identify the panel */}
+                      <div className="px-2 py-0.5 border-b border-slate-100 w-full text-center select-none flex items-center justify-between gap-2">
+                        <span className="text-[8.5px] font-black uppercase text-indigo-500 tracking-wider flex items-center gap-1.5">
+                          <Star size={8} className="fill-amber-400 text-amber-500" />
+                          Favorite Tools
+                        </span>
+                        <button 
+                          onClick={() => setFavoritesExpanded(false)}
+                          className="text-slate-400 hover:text-slate-650 transition-colors cursor-pointer"
                         >
-                          <Icon size={isMobileLandscape ? '4.5vh' : isPortrait ? 12 : 18} strokeWidth={2.5} />
+                          <X size={10} className="stroke-[3px]" />
                         </button>
-                      );
-                    })}
-                  </div>
-                </motion.div>
-              )}
+                      </div>
+
+                      {/* Flex row of favorites (generously sized, elegant rounded buttons) */}
+                      <div className={`flex flex-wrap items-center justify-center ${isMobileLandscape ? 'gap-[1.5vh] p-[1vh]' : isPortrait ? 'gap-1.5 p-0.5' : 'gap-2 p-1'}`}>
+                        {favorites.map(toolId => {
+                          const Icon = TOOL_ICONS[toolId] || Star;
+                          const isToolActive = activeTool === toolId;
+                          return (
+                            <button
+                              key={toolId}
+                              onClick={() => {
+                                if (!isDragging) {
+                                  onSelectTool(isToolActive ? null : toolId);
+                                  setFavoritesExpanded(false); // Auto-collapse so they can use the tool on chart
+                                }
+                              }}
+                              className={`rounded-xl transition-all shrink-0 cursor-pointer border flex items-center justify-center ${
+                                isToolActive 
+                                  ? 'bg-blue-600 text-white border-blue-700 shadow-md scale-105' 
+                                  : 'text-slate-700 bg-slate-50/70 border-slate-200/50 hover:bg-slate-100/90 hover:text-slate-900 hover:border-slate-300 hover:scale-110 active:scale-95'
+                              } ${
+                                isMobileLandscape 
+                                  ? 'p-[2vh]' 
+                                  : isPortrait 
+                                    ? 'p-2 min-w-[32px] min-h-[32px]' 
+                                    : 'p-2.5 min-w-[36px] min-h-[36px]'
+                              }`}
+                              title={toolId.replace('_', ' ').toLowerCase()}
+                            >
+                              <Icon size={isMobileLandscape ? '5.5vh' : isPortrait ? 15 : 20} strokeWidth={2.5} />
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
 
               {/* Play Segment (Combined with the toolbar in desktop/landscape view) */}
               {(!isMobile || isMobileLandscape) && (

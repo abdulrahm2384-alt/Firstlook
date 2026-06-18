@@ -41,7 +41,6 @@ import { WatchlistItem, MarketDataSource } from '../types/watchlist';
 import { POPULAR_SYMBOLS } from '../constants/symbols';
 import { normalizeSymbol } from '../lib/marketUtils';
 import { validateSymbolSupport } from '../services/marketDataService';
-import { GoogleAdSenseUnit } from './GoogleAdSenseUnit';
 
 interface WatchlistItemRowProps {
   item: WatchlistItem;
@@ -1574,90 +1573,6 @@ export function WatchlistPage({
         </div>
       </div>
 
-
-
-      {/* Sponsored/Partner Partnership Banner */}
-      {(adsenseClient && adsenseSlot) ? (
-        <div className="px-3 pb-3 pt-1 border-t border-slate-50 shrink-0 bg-white">
-          <GoogleAdSenseUnit client={adsenseClient} slot={adsenseSlot} />
-        </div>
-      ) : sponsorPool.length > 0 ? (
-        <div className="px-3 pb-3 pt-1 border-t border-slate-100 shrink-0 bg-white relative">
-          {/* Subtle Carousel Dots indicating multiple premium partnerships */}
-          <div className="flex justify-between items-center px-1 mb-1.5">
-            <span className="text-[7.5px] font-black uppercase text-slate-400 tracking-widest flex items-center gap-1 select-none">
-              <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse" />
-              Exclusive Partner Programs
-            </span>
-            <div className="flex gap-1 items-center">
-              {sponsorPool.map((_, idx) => (
-                <button
-                  key={idx}
-                  onClick={() => setCurrentAdIndex(idx)}
-                  className={`w-1 h-1 rounded-full transition-all duration-300 ${
-                    idx === currentAdIndex ? 'bg-indigo-600 w-2.5' : 'bg-slate-200'
-                  }`}
-                  aria-label={`Sponsor slide ${idx + 1}`}
-                />
-              ))}
-            </div>
-          </div>
-
-          <div className="relative overflow-hidden h-12 w-full">
-            <AnimatePresence initial={false} mode="wait">
-              <motion.div
-                key={currentAdIndex}
-                initial={{ opacity: 0, x: 50 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -50 }}
-                transition={{ duration: 0.35, ease: "easeInOut" }}
-                onClick={() => window.open(sponsorPool[currentAdIndex].link, '_blank', 'noopener,noreferrer')}
-                className="absolute inset-x-0 inset-y-0 flex gap-2 px-3 py-1.5 items-center hover:bg-slate-50/75 transition-all border border-indigo-100/65 rounded-xl bg-slate-50/40 cursor-pointer group select-none"
-              >
-                {/* Ad category label / Badge */}
-                <span className="absolute right-3 top-2 px-1 px-1.5 py-0.5 rounded bg-indigo-50 text-[6.5px] font-extrabold uppercase text-indigo-500 tracking-wider">
-                  {sponsorPool[currentAdIndex].category}
-                </span>
-
-                {/* Styled Icon */}
-                <div className="w-7 h-7 rounded-lg bg-indigo-50/80 border border-indigo-100/80 flex items-center justify-center overflow-hidden shrink-0 group-hover:scale-105 transition-transform duration-200">
-                  {sponsorPool[currentAdIndex].logoType === 'broker' ? (
-                    <TrendingUp size={13} className="text-indigo-600" />
-                  ) : sponsorPool[currentAdIndex].logoType === 'prop' ? (
-                    <Coins size={13} className="text-indigo-600 animate-pulse" />
-                  ) : sponsorPool[currentAdIndex].logoType === 'vps' ? (
-                    <Server size={13} className="text-indigo-600" />
-                  ) : (
-                    <Shield size={13} className="text-indigo-600" />
-                  )}
-                </div>
-
-                {/* Identity & Subtext */}
-                <div className="flex-1 min-w-0 flex flex-col justify-center">
-                  <span className="font-extrabold text-slate-900 text-[10px] uppercase tracking-tight truncate flex items-center gap-1 pb-0.5">
-                    {sponsorPool[currentAdIndex].sponsor}
-                    <span className="px-1 py-0.2 rounded bg-emerald-50 text-emerald-600 border border-emerald-100/50 text-[5.5px] font-black uppercase tracking-wider scale-95 origin-left">
-                      Verified
-                    </span>
-                  </span>
-                  <span className="text-[7.5px] text-slate-400 font-bold uppercase tracking-wider truncate mr-20">
-                    {sponsorPool[currentAdIndex].tagline}
-                  </span>
-                </div>
-
-                {/* Right side interactive CTA button with mobile style arrow */}
-                <div className="flex flex-col items-end shrink-0 pl-1">
-                  <span className="text-[5.5px] font-black text-indigo-400 uppercase tracking-widest leading-none mb-0.5">Benefit</span>
-                  <span className="font-mono font-bold text-[7.5px] tracking-tight text-white bg-slate-900 px-2 py-0.8 rounded-md truncate max-w-[90px] group-hover:bg-indigo-600 transition-colors inline-flex items-center gap-1">
-                    {sponsorPool[currentAdIndex].cta}
-                    <ChevronRight size={7} strokeWidth={3} className="group-hover:translate-x-0.5 transition-transform duration-100" />
-                  </span>
-                </div>
-              </motion.div>
-            </AnimatePresence>
-          </div>
-        </div>
-      ) : null}
       {/* Clean Support Direct Chat Widget (Intercom Style) */}
       <AnimatePresence>
         {isSupportOpen && (

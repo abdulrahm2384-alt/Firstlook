@@ -764,48 +764,7 @@ function getGeminiClient() {
   return aiInstance;
 }
 
-const FALLBACK_SPONSORS = [
-  {
-    sponsor: "Exness Broker",
-    tagline: "Unbeatable trading conditions with raw spreads under 0.1 pips.",
-    category: "Reputable Brokers",
-    incentive: "0.0 pips raw spread account for backtesters",
-    cta: "Claim Offer",
-    logoType: "broker",
-    link: "https://www.exness.com"
-  },
-  {
-    sponsor: "FTMO Challenges",
-    tagline: "The leading prop firm. Scale up to $200,000 in trading capital.",
-    category: "Prop Firms",
-    incentive: "Get 90% profit split with backtest-proven strategies",
-    cta: "Start Challenge",
-    logoType: "prop",
-    link: "https://ftmo.com"
-  },
-  {
-    sponsor: "PineServer VPS",
-    tagline: "Ultra-low latency VPS hosting in Equinix NY4 and LD4 locations.",
-    category: "Trading Utilities",
-    incentive: "24/7 server running with 99.99% uptime guarantees",
-    cta: "Deploy VPS",
-    logoType: "vps",
-    link: "https://www.pepperstone.com"
-  },
-  {
-    sponsor: "Alpha Insights",
-    tagline: "Exclusive daily market order flow and smart-money concept briefs.",
-    category: "Premium Insights",
-    incentive: "Curated trading recommendations based on daily depth graphs",
-    cta: "Receive Digest",
-    logoType: "insight",
-    link: "https://www.interactivebrokers.com"
-  }
-];
 
-let memoizedSponsor: any = null;
-let lastSponsorFetchTime = 0;
-const SPONSOR_CACHE_DURATION = 15 * 60 * 1000; // Cache Gemini-generated sponsor for 15 mins to respect quota
 
 async function startServer() {
   await initializeDatabase();
@@ -3040,59 +2999,7 @@ async function startServer() {
     }
   });
 
-  app.get("/api/sponsor-ad", async (req, res) => {
-    const randomFallback = FALLBACK_SPONSORS[Math.floor(Math.random() * FALLBACK_SPONSORS.length)];
-    
-    // Serve memoized cache if fresh
-    const now = Date.now();
-    if (memoizedSponsor && (now - lastSponsorFetchTime < SPONSOR_CACHE_DURATION)) {
-      return res.json(memoizedSponsor);
-    }
 
-    try {
-      const ai = getGeminiClient();
-      if (!ai) {
-        return res.json(randomFallback);
-      }
-
-      console.log("[Sponsor API] Fetching new high-quality sponsor offer from Gemini...");
-      const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: "Generate a professional, high-converting, non-intrusive sponsor offer for retail traders actively backtesting on currency or crypto charts. It MUST be extremely professional and belong to one of these niches: Reputable Brokers, Prop Firms, Trading Utilities, or Premium Insights. Do NOT mention clothing, fast food, or generic non-financial consumer ads. Return valid JSON only.",
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              sponsor: { type: Type.STRING, description: "Name of the partner, e.g., Exness, FTMO, Pepperstone, PineServer, Alpha Insights" },
-              tagline: { type: Type.STRING, description: "Short, engaging, professional trading tagline (max 65 chars), e.g., 'Zero commissions on FX majors', 'Get up to $200k funded'" },
-              category: { type: Type.STRING, description: "One of exactly: 'Reputable Brokers', 'Prop Firms', 'Trading Utilities', 'Premium Insights'" },
-              incentive: { type: Type.STRING, description: "Specific professional incentive or tech guarantee, e.g., 'Uptime 99.99%', 'Spreads from 0.0 pips', '1:100 leverage available'" },
-              cta: { type: Type.STRING, description: "Short CTA action label, e.g., 'Get Premium', 'Start Challenge', 'Open Account', 'Deploy VPS', 'Learn More'" },
-              logoType: { type: Type.STRING, description: "One of exactly: 'broker', 'prop', 'vps', 'insight'" },
-              link: { type: Type.STRING, description: "Partner URL link" }
-            },
-            required: ["sponsor", "tagline", "category", "incentive", "cta", "logoType", "link"]
-          }
-        }
-      });
-
-      const text = response.text;
-      if (text) {
-        const parsed = JSON.parse(text);
-        // Save to in-memory cache
-        memoizedSponsor = parsed;
-        lastSponsorFetchTime = now;
-        return res.json(parsed);
-      }
-      
-      throw new Error("No response text from Gemini API");
-    } catch (err: any) {
-      // Gracefully handle 429, 503 Service Unavailable, and other Gemini API errors, and serve the fallback seamlessly
-      console.log("[Sponsor API] Dynamic generation unavailable (service sleeping), utilizing pre-configured local backup campaign options.");
-      return res.json(randomFallback);
-    }
-  });
 
   // Helper for proxy requests
   async function proxyRequest(name: string, url: string, headers: Record<string, string> = {}) {

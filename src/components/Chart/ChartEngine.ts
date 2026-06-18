@@ -126,6 +126,8 @@ export class ChartEngine {
   
   private onLoadMore?: () => void;
   private isLoadingMore: boolean = false;
+  private isLoadingMoreTimeout: any = null;
+  private needsDraw: boolean = true;
   
   private isDragging: boolean = false;
   private isSidebarDragging: boolean = false;
@@ -159,6 +161,7 @@ export class ChartEngine {
   private timePartsCache: Map<number, { year: number, month: number, date: number, day: number, hour: number, minute: number }> = new Map();
   private lastTimePartsTz: string = '';
   private levelsIndicatorCache: Map<string, { dataLength: number; timezone: string; lastTime: number; paramsHash: string; result: any }> = new Map();
+  private indicatorCache: Map<string, { dataLength: number; lastTime: number; paramsHash: string; result: any }> = new Map();
   private cachedAimerFormatter: Intl.DateTimeFormat | null = null;
   private cachedAimerTz: string = '';
 
@@ -528,10 +531,15 @@ export class ChartEngine {
     this.partsCache.clear();
     this.timePartsCache.clear();
     this.levelsIndicatorCache.clear();
+    this.indicatorCache.clear();
     this.pointers.clear();
     if (this.longPressTimer) {
       clearTimeout(this.longPressTimer);
       this.longPressTimer = null;
+    }
+    if (this.isLoadingMoreTimeout) {
+      clearTimeout(this.isLoadingMoreTimeout);
+      this.isLoadingMoreTimeout = null;
     }
   }
 
@@ -544,7 +552,12 @@ export class ChartEngine {
   private startAnimationLoop() {
     const loop = () => {
       this.updateMomentum();
-      this.draw();
+      const isDragging = this.pointers.size > 0 || this.isAimerDragging;
+      const isMomentumActive = Math.abs(this.velocityX) > 0.05 || Math.abs(this.velocityY) > 0.05;
+      if (this.needsDraw || isDragging || isMomentumActive) {
+        this.needsDraw = false;
+        this.draw();
+      }
       this.animationId = requestAnimationFrame(loop);
     };
     this.animationId = requestAnimationFrame(loop);
@@ -600,6 +613,7 @@ export class ChartEngine {
   private setupEvents() {
     this.canvas.addEventListener('pointerdown', (e) => {
       this.lastInteractionTime = Date.now();
+      this.needsDraw = true;
       const x = e.clientX - this.canvasRect!.left;
       const y = e.clientY - this.canvasRect!.top;
 
@@ -959,6 +973,7 @@ export class ChartEngine {
         this.isSidebarDragging = false;
       }
       this.canvas.releasePointerCapture(e.pointerId);
+      this.needsDraw = true;
     });
 
     this.canvas.addEventListener('pointercancel', (e) => {
@@ -967,10 +982,12 @@ export class ChartEngine {
       this.isSidebarDragging = false;
       this.activeDrawing = null;
       this.draggingPointIdx = null;
+      this.needsDraw = true;
     });
 
     this.canvas.addEventListener('pointermove', (e) => {
       this.lastInteractionTime = Date.now();
+      this.needsDraw = true;
       if (!this.canvasRect) this.updateCanvasRect();
       const x = e.clientX - this.canvasRect!.left;
       const y = e.clientY - this.canvasRect!.top;
@@ -1790,6 +1807,8 @@ export class ChartEngine {
 
     this.tradeIndices.clear();
     this.timeToIdx.clear();
+    this.levelsIndicatorCache.clear();
+    this.indicatorCache.clear();
     for (let i = 0; i < data.length; i++) {
         this.timeToIdx.set(data[i].time, i);
     }
@@ -2323,35 +2342,37 @@ export class ChartEngine {
     this.needsRangeUpdate = false;
   }
 
-  public getXFromTime(time: number): number {
+  public getXFromTime(time: number, price?: number): number {
     const width = this.canvasWidth;
     const paddingRight = this.PADDING_RIGHT;
     const lastCandle = this.data[this.data.length - 1];
     
     if (!lastCandle) return 0;
 
+    let matchedTime = time;
+
     let idx: number;
-    const exactIdx = this.timeToIdx.get(time);
+    const exactIdx = this.timeToIdx.get(matchedTime);
     if (exactIdx !== undefined) {
       idx = exactIdx;
     } else if (this.data.length > 1) {
       const data = this.data;
-      if (time <= data[0].time) {
-        idx = (time - data[0].time) / (this.avgInterval || 3600);
-      } else if (time >= data[data.length - 1].time) {
-        idx = (time - data[data.length - 1].time) / (this.avgInterval || 3600) + (data.length - 1);
+      if (matchedTime <= data[0].time) {
+        idx = (matchedTime - data[0].time) / (this.avgInterval || 3600);
+      } else if (matchedTime >= data[data.length - 1].time) {
+        idx = (matchedTime - data[data.length - 1].time) / (this.avgInterval || 3600) + (data.length - 1);
       } else {
         // Binary search for bounding candles
         let low = 0;
         let high = data.length - 1;
         while (low <= high) {
           const mid = Math.floor((low + high) / 2);
-          if (data[mid].time < time) low = mid + 1;
+          if (data[mid].time < matchedTime) low = mid + 1;
           else high = mid - 1;
         }
         const c1 = data[high];
         const c2 = data[low];
-        idx = high + (time - c1.time) / (c2.time - c1.time || 1);
+        idx = high + (matchedTime - c1.time) / (c2.time - c1.time || 1);
       }
     } else {
       idx = 0;
@@ -2382,7 +2403,7 @@ export class ChartEngine {
   }
 
   private getPointCoords(p: DrawingPoint): { x: number; y: number } {
-    const x = this.getXFromTime(p.time);
+    const x = this.getXFromTime(p.time, p.price);
     const y = this.getYFromPrice(p.price);
     return { x, y };
   }
@@ -2398,6 +2419,9 @@ export class ChartEngine {
 
   public setIndicators(indicators: IndicatorInstance[]) {
     this.indicators = indicators;
+    this.levelsIndicatorCache.clear();
+    this.indicatorCache.clear();
+    this.draw();
   }
 
   public setPinnedText(text: string | null) {
@@ -3239,6 +3263,29 @@ export class ChartEngine {
     }
   }
 
+  private getCachedIndicatorResult<T>(indId: string, params: any, computeFn: () => T): T {
+    const dataLength = this.data.length;
+    const lastTime = dataLength > 0 ? this.data[dataLength - 1].time : 0;
+    const paramsHash = JSON.stringify(params);
+
+    const cached = this.indicatorCache.get(indId);
+    if (cached && 
+        cached.dataLength === dataLength && 
+        cached.lastTime === lastTime && 
+        cached.paramsHash === paramsHash) {
+      return cached.result as T;
+    }
+
+    const result = computeFn();
+    this.indicatorCache.set(indId, {
+      dataLength,
+      lastTime,
+      paramsHash,
+      result
+    });
+    return result;
+  }
+
   private renderIndicators(ctx: CanvasRenderingContext2D, startIdx: number, endIdx: number, getX: (i: number) => number, getY: (p: number) => number) {
     this.indicators.forEach(ind => {
       if (!ind.visible) return;
@@ -3267,14 +3314,17 @@ export class ChartEngine {
 
       if (ind.type === 'SMA' || ind.type === 'EMA' || ind.type === 'WMA' || ind.type === 'HMA') {
         const period = Number(ind.params.period) || 20;
-        let values: number[] = [];
-        if (ind.type === 'SMA') values = this.calculateSMA(period);
-        else if (ind.type === 'EMA') values = this.calculateEMA(period);
-        else if (ind.type === 'WMA') values = this.calculateWMA(period);
-        else if (ind.type === 'HMA') values = this.calculateHMA(period);
+        const values = this.getCachedIndicatorResult<number[]>(ind.id, { type: ind.type, period }, () => {
+          if (ind.type === 'SMA') return this.calculateSMA(period);
+          if (ind.type === 'EMA') return this.calculateEMA(period);
+          if (ind.type === 'WMA') return this.calculateWMA(period);
+          return this.calculateHMA(period);
+        });
         renderLine(values, ind.color, ind.lineWidth);
       } else if (ind.type === 'SCRIPT' && ind.code) {
-        const result = this.calculateScript(ind.code, ind.params);
+        const result = this.getCachedIndicatorResult<any>(ind.id, { code: ind.code, params: ind.params }, () => {
+          return this.calculateScript(ind.code!, ind.params);
+        });
         if (!result) return;
 
         // Handle structured output from new engine
@@ -3429,12 +3479,14 @@ export class ChartEngine {
           });
         }
       } else if (ind.type === 'VWAP') {
-        const values = this.calculateVWAP();
+        const values = this.getCachedIndicatorResult<number[]>(ind.id, ind.params, () => this.calculateVWAP());
         renderLine(values, ind.color, ind.lineWidth);
       } else if (ind.type === 'BB') {
         const period = Number(ind.params.period) || 20;
         const stdDev = Number(ind.params.stdDev) || 2;
-        const { middle, upper, lower } = this.calculateBB(period, stdDev);
+        const { middle, upper, lower } = this.getCachedIndicatorResult<{ middle: number[], upper: number[], lower: number[] }>(ind.id, { period, stdDev }, () => {
+          return this.calculateBB(period, stdDev);
+        });
         
         renderLine(middle, ind.color, ind.lineWidth * 0.5);
         renderLine(upper, ind.color, ind.lineWidth);
@@ -3462,7 +3514,9 @@ export class ChartEngine {
       } else if (ind.type === 'SUPERTREND') {
         const period = Number(ind.params.period) || 10;
         const mult = Number(ind.params.multiplier) || 3;
-        const { supertrend, direction } = this.calculateSupertrend(period, mult);
+        const { supertrend, direction } = this.getCachedIndicatorResult<{ supertrend: number[], direction: number[] }>(ind.id, { period, mult }, () => {
+          return this.calculateSupertrend(period, mult);
+        });
         
         ctx.lineWidth = ind.lineWidth * 2;
         for (let i = Math.max(1, startIdx); i <= endIdx; i++) {
@@ -3496,7 +3550,7 @@ export class ChartEngine {
 
         if (ind.type === 'RSI') {
             const period = Number(ind.params.period) || 14;
-            const values = this.calculateRSI(period);
+            const values = this.getCachedIndicatorResult<number[]>(ind.id, { period }, () => this.calculateRSI(period));
             
             // RSI specific levels
             ctx.strokeStyle = this.theme.grid;
@@ -3519,7 +3573,7 @@ export class ChartEngine {
             ctx.stroke();
         } else if (ind.type === 'ATR') {
             const period = Number(ind.params.period) || 14;
-            const values = this.calculateATR(period);
+            const values = this.getCachedIndicatorResult<number[]>(ind.id, { period }, () => this.calculateATR(period));
             const visibleValues = values.slice(startIdx, endIdx + 1).filter(v => !isNaN(v));
             const min = Math.min(...visibleValues) || 0;
             const max = Math.max(...visibleValues) || 1;
@@ -3537,7 +3591,7 @@ export class ChartEngine {
             }
             ctx.stroke();
         } else if (ind.type === 'MACD') {
-            const { macd, signalLine, histogram } = this.calculateMACD();
+            const { macd, signalLine, histogram } = this.getCachedIndicatorResult<{ macd: number[], signalLine: number[], histogram: number[] }>(ind.id, ind.params, () => this.calculateMACD());
             const visibleMacd = macd.slice(startIdx, endIdx + 1).concat(signalLine.slice(startIdx, endIdx + 1)).filter(v => !isNaN(v));
             const maxVal = Math.max(...visibleMacd.map(Math.abs)) || 1;
             const min = -maxVal;
@@ -3581,7 +3635,7 @@ export class ChartEngine {
             }
             ctx.stroke();
         } else if (ind.type === 'STOCH') {
-            const { k, d } = this.calculateStoch();
+            const { k, d } = this.getCachedIndicatorResult<{ k: number[], d: number[] }>(ind.id, ind.params, () => this.calculateStoch());
             
             ctx.strokeStyle = this.theme.grid;
             ctx.beginPath();
@@ -3699,8 +3753,8 @@ export class ChartEngine {
     priceScale: number
   ) {
     // Context-sensitive X from Time (including stable extrapolation)
-    const getXFromTime = (time: number) => {
-      return this.getXFromTime(time);
+    const getXFromTime = (time: number, price?: number) => {
+      return this.getXFromTime(time, price);
     };
 
     // Draw non-selected drawings first, and the selected drawing LAST so it is always on top (visible & accessible over overlaps)
@@ -3715,7 +3769,7 @@ export class ChartEngine {
 
       const isSelected = d.id === this.selectedDrawingId;
       const coords = d.points.map(p => ({
-        x: getXFromTime(p.time),
+        x: getXFromTime(p.time, p.price),
         y: getY(p.price)
       }));
 
@@ -5034,8 +5088,8 @@ export class ChartEngine {
     for (const d of sortedDrawings) {
         if (!this.isDrawingVisible(d)) continue;
         
-        const getXFromTime = (time: number) => {
-          return this.getXFromTime(time);
+        const getXFromTime = (time: number, price?: number) => {
+          return this.getXFromTime(time, price);
         };
 
         // NEW COMPACT & ULTRA PRECISION HIT-TEST FOR LONG/SHORT POSITIONS
@@ -5103,7 +5157,7 @@ export class ChartEngine {
 
         const coords = d.points.map((p) => {
           return {
-            x: getXFromTime(p.time),
+            x: getXFromTime(p.time, p.price),
             y: getY(p.price)
           };
         });
@@ -5280,8 +5334,8 @@ export class ChartEngine {
     const HIT_RADIUS = 14;
     const hits: { id: string; pointIdx: number }[] = [];
 
-    const getXFromTime = (time: number) => {
-      return this.getXFromTime(time);
+    const getXFromTime = (time: number, price?: number) => {
+      return this.getXFromTime(time, price);
     };
 
     for (const d of testDrawings) {
@@ -5349,7 +5403,7 @@ export class ChartEngine {
 
         const coords = d.points.map((p) => {
           return {
-            x: getXFromTime(p.time),
+            x: getXFromTime(p.time, p.price),
             y: getY(p.price)
           };
         });
@@ -5979,6 +6033,12 @@ export class ChartEngine {
         if (firstCandleX > -20) {
             this.isLoadingMore = true;
             this.onLoadMore();
+            
+            if (this.isLoadingMoreTimeout) clearTimeout(this.isLoadingMoreTimeout);
+            this.isLoadingMoreTimeout = setTimeout(() => {
+                this.isLoadingMore = false;
+                this.needsDraw = true;
+            }, 1000);
         }
     }
 
