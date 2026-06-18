@@ -88,10 +88,10 @@ import { IndicatorSettings } from './components/IndicatorSettings';
 import { SetupModal } from './components/SetupModal';
 import { SyncedSelectorModal } from './components/SyncedSelectorModal';
 import { TriggerSetupModal } from './components/TriggerSetupModal';
-import { ProfilePage } from './components/ProfilePage';
+import { ProfilePage, renderAvatarIcon } from './components/ProfilePage';
 import { SubscriptionPage } from './components/SubscriptionPage';
 import { DrawingType, Drawing } from './types/drawing';
-import { fetchMarketData as fetchCandleData, clearMarketDataCache } from './services/marketDataService';
+import { fetchMarketData as apiFetchCandleData, clearMarketDataCache } from './services/marketDataService';
 import { runBacktest } from './services/backtestEngine';
 import { StrategyParams, BacktestResult, Candle, ChartTheme, IndicatorInstance, JournalTrade, BacktestSession, MarketType, MarketSymbol } from './types';
 import { calculatePips, normalizeSymbol, getPipMultiplier } from './lib/marketUtils';
@@ -1438,61 +1438,7 @@ export default function App() {
 
   // Feature locking & subscription upgrades modal states
   const [isUpgradeModalOpen, setIsUpgradeModalOpen] = useState(false);
-  const [upgradeModalFeature, setUpgradeModalFeature] = useState<'replay' | 'sync' | 'competition' | 'timesync' | 'script' | 'watchlist' | 'news' | 'spread'>('replay');
-
-  // Pair limits tracking (Replay max 2, Synced view max 1, Trade execution max 3)
-  const [pairUsageLimits, setPairUsageLimits] = useState<Record<string, { replays: number; syncedCharts: number; trades: number; tradesResetAt?: number }>>(() => {
-    try {
-      const saved = localStorage.getItem('firstlook_pair_usage_limits');
-      return saved ? JSON.parse(saved) : {};
-    } catch {
-      return {};
-    }
-  });
-
-  const [isAdsLimitModalOpen, setIsAdsLimitModalOpen] = useState(false);
-  const [adsLimitFeature, setAdsLimitModalFeature] = useState<'replay' | 'sync' | 'trades' | null>(null);
-  
-  // Video AD player overlay states
-  const [isVideoAdPlaying, setIsVideoAdPlaying] = useState(false);
-  const [videoAdTimer, setVideoAdTimer] = useState(10);
-  const [videoAdMuted, setVideoAdMuted] = useState(false);
-
-  const updatePairLimit = useCallback((pairKey: string, updates: Partial<{ replays: number; syncedCharts: number; trades: number; tradesResetAt?: number }>) => {
-    setPairUsageLimits(prev => {
-      const current = prev[pairKey] || { replays: 0, syncedCharts: 0, trades: 0, tradesResetAt: 0 };
-      const updated = {
-        ...prev,
-        [pairKey]: {
-          ...current,
-          ...updates
-        }
-      };
-      localStorage.setItem('firstlook_pair_usage_limits', JSON.stringify(updated));
-      return updated;
-    });
-  }, []);
-
-  // Video AD countdown timer
-  useEffect(() => {
-    let interval: any = null;
-    if (isVideoAdPlaying) {
-      if (videoAdTimer > 0) {
-        interval = setInterval(() => {
-          setVideoAdTimer(prev => prev - 1);
-        }, 1000);
-      } else {
-        // Auto-close and claim rewards ("timer it self it out")
-        const pairKey = activeWatchlistItemId || (activePrefix ? `${selectedSymbol}_${activePrefix}` : selectedSymbol) || 'default';
-        updatePairLimit(pairKey, { replays: 0, syncedCharts: 0, trades: 0, tradesResetAt: Date.now() });
-        addNotification(`🎉 Watchlist pair limits successfully reset! Replays, Synced Views, and Trades are restored!`, 'success');
-        setIsVideoAdPlaying(false);
-      }
-    }
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [isVideoAdPlaying, videoAdTimer, activeWatchlistItemId, activePrefix, selectedSymbol, updatePairLimit, addNotification]);
+  const [upgradeModalFeature, setUpgradeModalFeature] = useState<'replay' | 'sync' | 'competition' | 'timesync' | 'script' | 'watchlist' | 'news' | 'spread' | 'candles'>('replay');
 
   const syncedTimeframe = syncedTimeframeState || selectedTimeframe;
   const [renderedTimeframeId, setRenderedTimeframeId] = useState<string>(selectedTimeframe.id);
@@ -2951,70 +2897,6 @@ export default function App() {
 
     let finalSymbolDrawings = [...newSymbolDrawings];
 
-    if (subscriptionPlan === 'basic') {
-      const usage = pairUsageLimits[pairKey] || { replays: 0, syncedCharts: 0, trades: 0, tradesResetAt: 0 };
-      const resetTime = usage.tradesResetAt || 0;
-
-      const currentClosedTakenCount = currentPositions.filter(cp => 
-        cp.isPipelineApproved && cp.isTriggered && (cp.status === 'won' || cp.status === 'lost') &&
-        (cp.approvedAt || 0) > resetTime
-      ).length;
-
-      const nextClosedTakenCount = newSymbolDrawings.filter(d => {
-        const isPosition = d.type === DrawingType.LONG_POSITION || d.type === DrawingType.SHORT_POSITION;
-        return isPosition && d.isPipelineApproved && d.isTriggered && (d.status === 'won' || d.status === 'lost') &&
-          (d.approvedAt || 0) > resetTime;
-      }).length;
-
-      // 1. Check if a pending position was just and newly executed/approved (Accepted) by the user
-      const newlyApprovedTrade = newSymbolDrawings.find(d => {
-        const isPosition = d.type === DrawingType.LONG_POSITION || d.type === DrawingType.SHORT_POSITION;
-        if (!isPosition) return false;
-        const isApprovedNow = d.isPipelineApproved;
-        if (!isApprovedNow) return false;
-
-        const prevDrawing = currentPositions.find(cp => cp.id === d.id);
-        const isApprovedBefore = prevDrawing ? prevDrawing.isPipelineApproved : false;
-        return !isApprovedBefore;
-      });
-
-      if (newlyApprovedTrade && (usage.trades >= 3 || currentClosedTakenCount >= 3)) {
-        // Enforce the trade limit check when the user tries to accept/take a new trade
-        const approvedIdx = finalSymbolDrawings.findIndex(d => d.id === newlyApprovedTrade.id);
-        if (approvedIdx !== -1) {
-          finalSymbolDrawings[approvedIdx] = {
-            ...finalSymbolDrawings[approvedIdx],
-            isPipelineApproved: false,
-            placedAt: undefined,
-            approvedAt: undefined
-          };
-        }
-
-        // Keep ChartEngine in sync immediately
-        if (chartEngineRef.current) {
-          chartEngineRef.current.updateDrawing({
-            ...newlyApprovedTrade,
-            isPipelineApproved: false,
-            placedAt: undefined,
-            approvedAt: undefined
-          });
-        }
-
-        addNotification("Trade limit reached! To take more trades, upgrade to Plus/Premium or watch an ad to reset.", "warning");
-        setAdsLimitModalFeature('trades');
-        setIsAdsLimitModalOpen(true);
-      } else if (nextClosedTakenCount > currentClosedTakenCount) {
-        // 2. Increment pair limit ONLY when a trade has successfully transitioned to closed ('won' or 'lost') after being accepted & triggered!
-        const nextTradesCount = Math.max(usage.trades + 1, nextClosedTakenCount);
-        updatePairLimit(pairKey, { trades: nextTradesCount });
-
-        if (nextTradesCount >= 3) {
-          setAdsLimitModalFeature('trades');
-          setIsAdsLimitModalOpen(true);
-        }
-      }
-    }
-
     setDrawings(prev => {
       const others = prev.filter(d => {
         if (activeWatchlistItemId) {
@@ -3032,7 +2914,7 @@ export default function App() {
       }));
       return [...others, ...updated];
     });
-  }, [selectedSymbol, activePrefix, activeWatchlistItemId, drawings, subscriptionPlan, pairUsageLimits, updatePairLimit, addNotification]);
+  }, [selectedSymbol, activePrefix, activeWatchlistItemId, drawings, subscriptionPlan, addNotification]);
 
   const handleSyncedDrawingsChange = useCallback((newSymbolDrawings: any[]) => {
     if (!syncedSymbol) return;
@@ -3535,6 +3417,16 @@ export default function App() {
       (item.prefix || '') === (prefix || '') && 
       item.dataSource === finalSource
     );
+    
+    if (subscriptionPlan === 'basic' && existingIndex === -1) {
+      const ongoingCount = watchlist.filter(item => (item.status || 'ongoing') === 'ongoing').length;
+      if (ongoingCount >= 3) {
+        setUpgradeModalFeature('watchlist');
+        setIsUpgradeModalOpen(true);
+        setShowBacktestSetup(null);
+        return;
+      }
+    }
     
     let nextWatchlist;
     if (existingIndex > -1) {
@@ -4113,6 +4005,53 @@ export default function App() {
   }, []);
 
   // Theme sync is handled via the preferences effect
+
+  // Daily Candle Limit Tracking
+  const checkAndTrackCandleLimit = useCallback((countToAdd: number): boolean => {
+    if (subscriptionPlan === 'premium') return true;
+
+    const limit = subscriptionPlan === 'plus' ? 5000 : 500;
+    const todayStr = new Date().toISOString().split('T')[0];
+    
+    let tracker = { date: todayStr, consumed: 0 };
+    try {
+      const saved = localStorage.getItem('firstlook_daily_candle_limit_v1');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.date === todayStr) {
+          tracker = parsed;
+        }
+      }
+    } catch (e) {
+      console.error("Error reading daily candle limit", e);
+    }
+
+    if (tracker.consumed >= limit) {
+      return false;
+    }
+
+    // Update the consumed count
+    tracker.consumed += countToAdd;
+    localStorage.setItem('firstlook_daily_candle_limit_v1', JSON.stringify(tracker));
+    return true;
+  }, [subscriptionPlan]);
+
+  const fetchCandleData = useCallback(async (
+    symbol: string,
+    timeframe: string,
+    limit: number,
+    endTime?: number,
+    startTime?: number,
+    source?: string,
+    marketType?: string
+  ) => {
+    if (!checkAndTrackCandleLimit(limit)) {
+      setUpgradeModalFeature('candles');
+      setIsUpgradeModalOpen(true);
+      throw new Error("DAILY_CANDLE_LIMIT_EXCEEDED");
+    }
+    return apiFetchCandleData(symbol, timeframe, limit, endTime, startTime, source, marketType);
+  }, [checkAndTrackCandleLimit]);
 
   const loadMarketData = async (symbol: string, timeframeId: string, initialEndTime?: number, sourceOverride?: string, marketTypeOverride?: MarketType, forceTimeSnap?: boolean) => {
     if (!symbol) return;
@@ -5725,35 +5664,6 @@ export default function App() {
     const chartSymbol = target === 'synced' ? syncedSymbol : selectedSymbol;
     if (!chartSymbol) return;
 
-    // Enforce trade limits for basic users
-    if (subscriptionPlan === 'basic' && target === 'main') {
-      const pairKey = activeWatchlistItemId || (activePrefix ? `${selectedSymbol}_${activePrefix}` : selectedSymbol) || '';
-      const usage = pairUsageLimits[pairKey] || { replays: 0, syncedCharts: 0, trades: 0, tradesResetAt: 0 };
-      const resetTime = usage.tradesResetAt || 0;
-      
-      const currentCategoryPositions = drawings.filter(d => {
-        if (activeWatchlistItemId) {
-          return d.watchlistId === activeWatchlistItemId;
-        } else {
-          const drawingSymbolNorm = normalizeSymbol(d.symbol);
-          const drawingPrefix = d.prefix || null;
-          return drawingSymbolNorm === normalizeSymbol(selectedSymbol || '') && drawingPrefix === (activePrefix || null);
-        }
-      }).filter(d => d.type === DrawingType.LONG_POSITION || d.type === DrawingType.SHORT_POSITION);
-
-      const currentClosedTakenCount = currentCategoryPositions.filter(cp => 
-        cp.isPipelineApproved && cp.isTriggered && (cp.status === 'won' || cp.status === 'lost') &&
-        (cp.approvedAt || 0) > resetTime
-      ).length;
-
-      if (usage.trades >= 3 || currentClosedTakenCount >= 3) {
-        addNotification("Trade limit reached! To take more trades, upgrade to Plus/Premium or watch an ad to reset.", "warning");
-        setAdsLimitModalFeature('trades');
-        setIsAdsLimitModalOpen(true);
-        return;
-      }
-    }
-
     const activeCandles = target === 'synced' ? syncedData : visibleData;
     if (!activeCandles || activeCandles.length === 0) return;
 
@@ -5843,7 +5753,6 @@ export default function App() {
     activePrefix, 
     activeWatchlistItemId, 
     subscriptionPlan, 
-    pairUsageLimits, 
     drawings, 
     setups
   ]);
@@ -6378,15 +6287,11 @@ export default function App() {
 
               <button 
                 onClick={() => setActiveTab('profile')}
-                className="group flex items-center gap-1.5 px-2 py-1.5 hover:bg-slate-50 rounded-lg transition-all text-slate-400 hover:text-slate-900 cursor-pointer"
+                className="group flex items-center transition-all cursor-pointer"
                 title="Profile & Analysis"
               >
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center transition-all shadow-sm ${
-                  activeTab === 'profile' || activeTab === 'subscription'
-                    ? 'bg-slate-950 text-white border border-slate-900'
-                    : 'bg-slate-100 text-slate-500 group-hover:bg-slate-900 group-hover:text-white'
-                }`}>
-                  <User size={15} />
+                <div className={activeTab === 'profile' || activeTab === 'subscription' ? 'ring-2 ring-slate-950 ring-offset-1 rounded-full' : 'hover:scale-[1.03] transition-all'}>
+                  {renderAvatarIcon(session?.user?.avatar_url, "w-8 h-8")}
                 </div>
               </button>
             </div>
@@ -6569,19 +6474,7 @@ export default function App() {
                           <button
                             onClick={() => {
                               setIsMenuOpen(false);
-                              if (subscriptionPlan === 'basic') {
-                                const pairKey = activeWatchlistItemId || (activePrefix ? `${selectedSymbol}_${activePrefix}` : selectedSymbol) || 'default';
-                                const usage = pairUsageLimits[pairKey] || { replays: 0, syncedCharts: 0, trades: 0 };
-                                if (usage.syncedCharts >= 1) {
-                                  setAdsLimitModalFeature('sync');
-                                  setIsAdsLimitModalOpen(true);
-                                } else {
-                                  updatePairLimit(pairKey, { syncedCharts: usage.syncedCharts + 1 });
-                                  setIsSyncedSelectorOpen(true);
-                                }
-                              } else {
-                                setIsSyncedSelectorOpen(true);
-                              }
+                              setIsSyncedSelectorOpen(true);
                               setIsMobileNavOpen(false);
                             }}
                             className="flex items-center gap-2.5 px-2.5 py-1.5 text-[10px] font-black text-slate-600 hover:text-indigo-600 hover:bg-slate-50 rounded-xl transition-all text-left w-full whitespace-nowrap cursor-pointer"
@@ -7211,19 +7104,7 @@ export default function App() {
 
                   <button
                     onClick={() => {
-                      if (subscriptionPlan === 'basic') {
-                        const pairKey = activeWatchlistItemId || (activePrefix ? `${selectedSymbol}_${activePrefix}` : selectedSymbol) || 'default';
-                        const usage = pairUsageLimits[pairKey] || { replays: 0, syncedCharts: 0, trades: 0 };
-                        if (usage.syncedCharts >= 1) {
-                          setAdsLimitModalFeature('sync');
-                          setIsAdsLimitModalOpen(true);
-                        } else {
-                          updatePairLimit(pairKey, { syncedCharts: usage.syncedCharts + 1 });
-                          setIsSyncedSelectorOpen(true);
-                        }
-                      } else {
-                        setIsSyncedSelectorOpen(true);
-                      }
+                      setIsSyncedSelectorOpen(true);
                       setIsDesktopMenuOpen(false);
                     }}
                     className="flex items-center gap-2.5 px-2.5 py-2 text-[10px] font-black text-slate-600 hover:text-indigo-600 hover:bg-slate-50 rounded-xl transition-all text-left w-full whitespace-nowrap cursor-pointer"
@@ -8333,17 +8214,15 @@ export default function App() {
                                             </button>
                                             <button 
                                               onClick={() => {
-                                                const pairKey = trade.watchlistId || activeWatchlistItemId || (trade.prefix ? `${trade.symbol}_${trade.prefix}` : trade.symbol);
-                                                const usage = pairUsageLimits[pairKey] || { replays: 0, syncedCharts: 0, trades: 0 };
-                                                
                                                 if (subscriptionPlan === 'basic') {
-                                                  if (usage.replays >= 2) {
-                                                    setAdsLimitModalFeature('replay');
-                                                    setIsAdsLimitModalOpen(true);
+                                                  const sortedTrades = [...journalTrades].sort((a, b) => new Date(b.realizedAt || b.createdAt || 0).getTime() - new Date(a.realizedAt || a.createdAt || 0).getTime());
+                                                  const tradeIndex = sortedTrades.findIndex(t => t.id === trade.id);
+                                                  if (tradeIndex > 9 || tradeIndex === -1) {
+                                                    setUpgradeModalFeature('replay');
+                                                    setIsUpgradeModalOpen(true);
                                                     setTradeMenuId(null);
+                                                    addNotification("Basic plan is limited to replaying the last 10 trades. Upgrade to unlock all historical custom replays!", "info");
                                                     return;
-                                                  } else {
-                                                    updatePairLimit(pairKey, { replays: usage.replays + 1 });
                                                   }
                                                 }
                                                 setPreReplayDrawings([...drawings]);
@@ -9034,7 +8913,7 @@ export default function App() {
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
               className="relative w-full max-w-sm z-[1000]"
             >
-              <TradeDetailsCard trade={viewingTradeDetails} onClose={() => setViewingTradeDetails(null)} />
+              <TradeDetailsCard trade={viewingTradeDetails} subscriptionPlan={subscriptionPlan} onClose={() => setViewingTradeDetails(null)} />
             </motion.div>
           </div>
         )}
@@ -9103,9 +8982,11 @@ export default function App() {
                 )}
                 {upgradeModalFeature === 'script' && (
                   <>
-                    <h4 className="text-[11px] font-black uppercase tracking-wide text-slate-905">LiteScript Custom Indicators are Locked</h4>
+                    <h4 className="text-[11px] font-black uppercase tracking-wide text-slate-905">LiteScript Custom Indicators Lock</h4>
                     <p className="text-[11px] text-slate-500 font-semibold leading-relaxed">
-                      Creating, editing, or testing custom indicator algorithms using LiteScript requires a premium plan. Plus or Premium tier lets you compose indicators instantly!
+                      {subscriptionPlan === 'basic' 
+                        ? "Creating or testing custom indicators requires a Plus or Premium tier. Basic accounts do not support custom LiteScripts." 
+                        : "Plus accounts are limited to exactly 1 active compiled custom LiteScript indicator. Upgrade to Premium for unconstrained, infinite custom indicators!"}
                     </p>
                   </>
                 )}
@@ -9130,6 +9011,14 @@ export default function App() {
                     <h4 className="text-[11px] font-black uppercase tracking-wide text-slate-905">Raw Spread is Locked</h4>
                     <p className="text-[11px] text-slate-500 font-semibold leading-relaxed">
                       Upgrade to Plus or Premium plan to enable raw spread.
+                    </p>
+                  </>
+                )}
+                {upgradeModalFeature === 'candles' && (
+                  <>
+                    <h4 className="text-[11px] font-black uppercase tracking-wide text-slate-905">Daily Candle Load Limit Reached</h4>
+                    <p className="text-[11px] text-slate-500 font-semibold leading-relaxed">
+                      You have reached your daily candle data extraction budget. Under the Basic free tier, daily loading limit is capped at 500 candles. Plus accounts get 5,000 candles/day, and Premium accounts enjoy completely unlimited data.
                     </p>
                   </>
                 )}
@@ -9158,237 +9047,6 @@ export default function App() {
                 </button>
               </div>
             </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* Basic Ads Quota Reset Modal */}
-      <AnimatePresence>
-        {isAdsLimitModalOpen && (
-          <div className="fixed inset-0 z-[1002] flex items-center justify-center p-4">
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setIsAdsLimitModalOpen(false)}
-              className="absolute inset-0 bg-slate-950/70 backdrop-blur-sm"
-            />
-            
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 15 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 15 }}
-              className="relative w-full max-w-md bg-white rounded-3xl shadow-2xl border border-slate-100 overflow-hidden z-[1003] flex flex-col p-6 space-y-4"
-            >
-              <div className="flex items-center gap-3 border-b border-slate-100 pb-3.5">
-                <div className="w-10 h-10 rounded-2xl bg-amber-50 text-amber-650 flex items-center justify-center border border-amber-100/50 animate-bounce">
-                  <AlertTriangle size={18} className="text-amber-500 animate-pulse" />
-                </div>
-                <div>
-                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 leading-none">Basic Quota Limit Reached</h3>
-                  <span className="text-[7.5px] font-bold text-slate-400 uppercase tracking-widest mt-0.5 block">Watchlist Asset Pair Playback Quotas</span>
-                </div>
-              </div>
-
-              <div className="space-y-3 py-1 text-left">
-                {adsLimitFeature === 'replay' && (
-                  <>
-                    <h4 className="text-[11px] font-black uppercase tracking-wide text-slate-900">Replay Quota Exhausted (2/2)</h4>
-                    <p className="text-[11px] text-slate-500 font-semibold leading-relaxed">
-                      You have used up your draft limit of <strong className="text-slate-950 font-black">2 replays</strong> for this watchlist pair.
-                    </p>
-                  </>
-                )}
-                {adsLimitFeature === 'sync' && (
-                  <>
-                    <h4 className="text-[11px] font-black uppercase tracking-wide text-slate-900">Synced Chart Quota Exhausted (1/1)</h4>
-                    <p className="text-[11px] text-slate-500 font-semibold leading-relaxed">
-                      You have used your <strong className="text-slate-950 font-black">1 free synced chart</strong> for this watchlist pair.
-                    </p>
-                  </>
-                )}
-                {adsLimitFeature === 'trades' && (
-                  <>
-                    <h4 className="text-[11px] font-black uppercase tracking-wide text-slate-905">Trade Limit Reached (3/3)</h4>
-                    <p className="text-[11px] text-rose-500 font-semibold leading-relaxed">
-                      You have reached the limit of <strong className="font-extrabold">3 trades</strong> for this watchlist pair. Your 3rd trade has been instantly auto-closed.
-                    </p>
-                  </>
-                )}
-
-                <div className="p-3 bg-slate-50/70 border border-slate-100 rounded-2xl text-[10.5px] font-semibold text-slate-600 leading-normal">
-                  💡 Reset all limits (<strong className="text-slate-950 font-extrabold">2 Replays, 1 Synced Chart, 3 Trades</strong>) for this pair instantly by watching a quick 10-second video ad.
-                </div>
-
-
-              </div>
-
-              <div className="flex flex-col gap-2 pt-1">
-                <button
-                  onClick={() => {
-                    setIsAdsLimitModalOpen(false);
-                    setVideoAdTimer(10);
-                    setIsVideoAdPlaying(true);
-                  }}
-                  className="w-full bg-indigo-600 text-white rounded-xl py-3.5 text-[9px] font-black uppercase tracking-widest hover:bg-indigo-700 cursor-pointer shadow-md transition-all text-center active:scale-95 flex items-center justify-center gap-2"
-                >
-                  <Video size={13} strokeWidth={2.5} />
-                  <span>Watch Video Ad & Reset (10s)</span>
-                </button>
-                
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    onClick={() => {
-                      setIsAdsLimitModalOpen(false);
-                      // Force out of the chart and set back target to watchlist
-                      setSavedSymbolBeforeSubscription(null);
-                      setSubscriptionBackTarget('watchlist');
-                      setSelectedSymbol(null);
-                      // go to subscription instantly
-                      setActiveTab('subscription');
-                    }}
-                    className="w-full bg-slate-950 text-white rounded-xl py-2.5 text-[8.5px] font-black uppercase tracking-wider hover:bg-slate-850 cursor-pointer shadow-sm transition-all text-center active:scale-95"
-                  >
-                    Go Premium (No Ads)
-                  </button>
-                  <button
-                    onClick={() => setIsAdsLimitModalOpen(false)}
-                    className="w-full bg-slate-50 rounded-xl py-2.5 text-[8.5px] font-bold text-slate-500 uppercase tracking-wide hover:bg-slate-100 cursor-pointer text-center"
-                  >
-                    Dismiss
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* Full-Screen Video Ad Simulation Player Overlay */}
-      <AnimatePresence>
-        {isVideoAdPlaying && (
-          <div className="fixed inset-0 z-[10001] bg-slate-950 flex flex-col justify-between overflow-hidden text-slate-100 p-0 select-none">
-            {/* Top Bar for Ad */}
-            <div className="bg-slate-900/90 backdrop-blur-md px-6 py-4 flex items-center justify-between border-b border-slate-800 relative z-30">
-              <div className="flex items-center gap-3">
-                <span className="bg-amber-400 text-slate-950 text-[8px] font-black uppercase tracking-wider px-2 py-0.5 rounded leading-none">SPONSORED REWARD VIDEO</span>
-                <span className="text-[10px] font-black tracking-widest text-slate-350 uppercase">FirstLook Premium Partner Network</span>
-              </div>
-              <div className="flex items-center gap-2 text-[10px] font-mono font-bold bg-slate-950 px-3 py-1 rounded-full text-amber-400 border border-amber-400/20">
-                <Clock size={11} className="text-amber-400 animate-spin" style={{ animationDuration: '4s' }} />
-                <span>Auto-closing in {videoAdTimer}s</span>
-              </div>
-            </div>
-
-            {/* Immersive Candlestick Chart Simulation Area */}
-            <div className="flex-1 w-full bg-slate-950 relative flex flex-col justify-center items-center overflow-hidden p-6 z-10 select-none">
-              {/* Background Glow effects */}
-              <div className="absolute top-1/4 left-1/3 w-[80vh] h-[80vh] rounded-full bg-indigo-500/5 blur-[120px] pointer-events-none" />
-              <div className="absolute bottom-1/4 right-1/3 w-[80vh] h-[80vh] rounded-full bg-emerald-500/5 blur-[120px] pointer-events-none" />
-
-              {/* Real-time moving candlesticks full-bleed display */}
-              <div className="w-full max-w-5xl h-64 flex items-end justify-center gap-3 relative select-none">
-                {Array.from({ length: 42 }).map((_, idx) => {
-                  // Generate complex candle heights to look incredibly genuine and professional
-                  const seed = (idx + videoAdTimer) * 1.35;
-                  const isGreen = Math.sin(seed) > -0.2;
-                  const bodyHeight = 25 + Math.abs(Math.sin(seed * 0.7) * 45); 
-                  const wickTop = bodyHeight + 10 + Math.abs(Math.cos(seed) * 15);
-                  const wickBottom = Math.max(5, bodyHeight - 15 - Math.abs(Math.sin(seed) * 12));
-
-                  return (
-                    <div key={idx} className="flex-1 flex flex-col items-center relative h-full justify-end">
-                      {/* High-Low Wick line */}
-                      <div 
-                        className={`absolute w-[1.5px] rounded-full transition-all duration-350 ${isGreen ? 'bg-emerald-500/40' : 'bg-red-500/40'}`}
-                        style={{
-                          height: `${wickTop}%`,
-                          bottom: `${wickBottom}%`
-                        }}
-                      />
-                      {/* Body */}
-                      <motion.div 
-                        layout
-                        className={`w-full rounded-sm transition-all duration-300 relative border ${
-                          isGreen 
-                            ? 'bg-emerald-500/20 border-emerald-500/80 shadow-[0_0_12px_rgba(16,185,129,0.15)]' 
-                            : 'bg-red-500/20 border-red-500/80 shadow-[0_0_12px_rgba(239,68,68,0.15)]'
-                        }`}
-                        style={{ 
-                          height: `${bodyHeight}%`,
-                          bottom: `${Math.min(wickBottom + 5, 80)}%`
-                        }}
-                      >
-                        {/* Dynamic glow effect index */}
-                        {idx === 41 && (
-                          <span className={`absolute -right-2 text-[6px] font-mono leading-none font-bold px-1 py-0.5 rounded ${isGreen ? 'bg-emerald-500 text-slate-950 animate-pulse' : 'bg-red-500 text-white animate-pulse'}`}>
-                            LIVE
-                          </span>
-                        )}
-                      </motion.div>
-                    </div>
-                  );
-                })}
-
-                {/* Target Level gridlines overlay */}
-                <div className="absolute left-0 right-0 top-1/4 border-t border-dashed border-indigo-500/10 flex items-center justify-between pointer-events-none">
-                  <span className="text-[6px] text-indigo-500/50 font-mono tracking-widest uppercase pl-4">REWARD MULTIPLIER REGISTRY</span>
-                  <span className="text-[6px] text-indigo-500/50 font-mono tracking-widest uppercase pr-4">INDEX @1.05423</span>
-                </div>
-                <div className="absolute left-0 right-0 top-3/4 border-t border-dashed border-emerald-500/10 flex items-center justify-between pointer-events-none">
-                  <span className="text-[6px] text-emerald-500/50 font-mono tracking-widest uppercase pl-4">DAILY QUOTA CALIBRATION</span>
-                  <span className="text-[6px] text-emerald-550/50 font-mono tracking-widest uppercase pr-4">INDEX @0.99842</span>
-                </div>
-                <div className="absolute left-0 right-0 top-1/2 border-t border-indigo-500/20 flex items-center justify-between pointer-events-none">
-                  <span className="text-[7px] text-indigo-400 font-mono tracking-wider font-semibold pl-4">AD CAMPAIGN VERIFYING ACTIVE TIMELINE</span>
-                  <span className="text-[7px] text-amber-500 font-mono tracking-wider font-black pr-4 uppercase flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
-                    AUTOCLOSING REWARD RUN
-                  </span>
-                </div>
-              </div>
-
-              {/* Subliminal Elegant Sponsor Content inside screen */}
-              <div className="mt-6 flex flex-col items-center max-w-lg w-full text-center space-y-3 px-6">
-                <span className="text-[9px] font-black tracking-widest text-indigo-400 uppercase">FirstLook Analytics Pro Suite</span>
-                <p className="text-[11px] text-slate-400 font-bold leading-normal">
-                  Professional-grade multi-timeframe sandboxing, unlimited fast historical playbacks, and real-time raw feed comparisons.
-                </p>
-                
-                <div className="flex items-center gap-1.5 justify-center text-[8.5px] bg-slate-900 border border-slate-800 px-3 py-1 rounded-xl text-slate-500 font-semibold font-mono">
-                  <Sparkles size={11} className="text-amber-500 animate-pulse" />
-                  <span>Get immediate ad-free bypass on premium levels starting at $9/mo</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Muted and footer timeline bottom block */}
-            <div className="bg-slate-900 px-6 py-5 border-t border-slate-800 flex items-center justify-between relative z-20">
-              <button 
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setVideoAdMuted(!videoAdMuted);
-                }}
-                className="w-10 h-10 rounded-2xl bg-slate-950 hover:bg-slate-850 text-white flex items-center justify-center border border-slate-800 active:scale-95 transition-all shadow-md cursor-pointer"
-              >
-                {videoAdMuted ? <VolumeX size={15} /> : <Volume2 size={15} className="animate-pulse" />}
-              </button>
-
-              <div className="flex items-center gap-2">
-                <span className="text-[9.5px] font-bold text-slate-400 uppercase tracking-wide">Sponsored Interactive Reward Ad Session</span>
-                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-              </div>
-            </div>
-
-            {/* Progress Timeline bar */}
-            <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-slate-900 z-30">
-              <motion.div 
-                initial={{ width: "0%" }}
-                animate={{ width: `${((10 - videoAdTimer) / 10) * 100}%` }}
-                transition={{ ease: "linear" }}
-                className="h-full bg-gradient-to-r from-indigo-500 via-purple-500 to-emerald-500"
-              />
-            </div>
           </div>
         )}
       </AnimatePresence>

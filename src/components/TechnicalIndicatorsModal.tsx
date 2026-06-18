@@ -170,6 +170,8 @@ export function TechnicalIndicatorsModal({
                          onClick={() => {
                            if (subscriptionPlan === 'basic') {
                              onLockedFeature?.('script');
+                           } else if (subscriptionPlan === 'plus' && activeIndicators.filter(ind => ind.type === 'SCRIPT' || ind.category === 'SCRIPT').length >= 1) {
+                             onLockedFeature?.('script');
                            } else {
                              setIsEditorOpen(true);
                            }

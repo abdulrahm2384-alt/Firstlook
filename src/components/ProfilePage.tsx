@@ -42,6 +42,89 @@ import { JournalTrade } from '../types';
 import { supabase } from '../lib/supabase';
 import { COUNTRIES } from '../constants/countries';
 
+export function renderAvatarIcon(id: string, sizeClass = "w-16 h-16") {
+  const currentId = id || 'avatar_1';
+  let gradient = "from-indigo-500 to-slate-900";
+  let content = null;
+
+  if (currentId === 'avatar_1') {
+    gradient = "from-indigo-500 to-slate-900";
+    content = (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="w-1/2 h-1/2 text-white">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
+      </svg>
+    );
+  } else if (currentId === 'avatar_2') {
+    gradient = "from-emerald-400 to-teal-900";
+    content = (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className="w-1/2 h-1/2 text-white">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l7.5-7.5 7.5 7.5m-15 6l7.5-7.5 7.5 7.5" />
+      </svg>
+    );
+  } else if (currentId === 'avatar_3') {
+    gradient = "from-rose-500 to-red-950";
+    content = (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="w-1/2 h-1/2 text-white">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.57-.599-3.751A11.959 11.959 0 0112 2.714z" />
+      </svg>
+    );
+  } else if (currentId === 'avatar_4') {
+    gradient = "from-purple-500 to-indigo-950";
+    content = (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="w-1/2 h-1/2 text-white">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M12 18a3.75 3.75 0 0 0 .495-7.467 5.99 5.99 0 0 0-1.925 3.546 5.974 5.974 0 0 1-2.133-1A3.75 3.75 0 0 0 12 18Z" />
+        <path strokeLinecap="round" strokeLinejoin="round" d="M12 2.25v2.25m0 15v2.25m-9.75-9.75h2.25m15 0h2.25m-2.903-7.113l-1.59 1.59M5.244 18.756l-1.59 1.59m0-16.645l1.59 1.59m11.922 11.922l1.59 1.59" />
+      </svg>
+    );
+  } else if (currentId === 'avatar_5') {
+    gradient = "from-amber-400 to-yellow-900";
+    content = (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="w-1/2 h-1/2 text-white">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v1.5a1.5 1.5 0 003 0V3m-6 9h1.5a1.5 1.5 0 003 0V9.75" />
+        <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.499a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442a.562.562 0 01.3.977l-4.137 3.63a.563.563 0 00-.182.557l1.01 5.399a.562.562 0 01-.84.61l-4.725-2.834a.563.563 0 00-.586 0L5.008 20.51a.562.562 0 01-.84-.61l1.012-5.399a.563.563 0 00-.182-.557l-4.137-3.63a.562.562 0 01.3-.977l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z" />
+      </svg>
+    );
+  } else if (currentId === 'avatar_6') {
+    gradient = "from-green-400 via-emerald-600 to-slate-950";
+    content = (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="w-1/2 h-1/2 text-white">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+      </svg>
+    );
+  } else if (currentId === 'avatar_7') {
+    gradient = "from-cyan-400 via-blue-500 to-indigo-950";
+    content = (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="w-1/2 h-1/2 text-white">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M12 21a9.004 9.004 0 008.716-6.747M12 21a9.004 9.004 0 01-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 017.843 4.582M12 3a8.997 8.997 0 00-7.843 4.582m15.686 0A11.953 11.953 0 0112 10.5c-2.905 0-5.62-.515-8.129-1.458" />
+      </svg>
+    );
+  } else {
+    gradient = "from-pink-500 via-purple-700 to-slate-950";
+    content = (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="w-1/2 h-1/2 text-white">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 21m0 0l-.813-5.096M9 21h7.8a4.5 4.5 0 110 9H3a4.5 4.5 0 110-9h6zm8-3h-.1m-2.9 0h-.1M12 9.75V3m0 0l-1.5 1.5M12 3l1.5 1.5" />
+      </svg>
+    );
+  }
+
+  return (
+    <div className={`rounded-full bg-gradient-to-br ${gradient} flex items-center justify-center border border-white/20 shadow-inner overflow-hidden shrink-0 ${sizeClass}`}>
+      {content}
+    </div>
+  );
+}
+
+export const AVATAR_LIST = [
+  { id: 'avatar_1', name: 'Alpha Trader' },
+  { id: 'avatar_2', name: 'Market Bull' },
+  { id: 'avatar_3', name: 'Hedge Bear' },
+  { id: 'avatar_4', name: 'Quantum Core' },
+  { id: 'avatar_5', name: 'Apex Zenith' },
+  { id: 'avatar_6', name: 'Zen Flow' },
+  { id: 'avatar_7', name: 'Infinite Grid' },
+  { id: 'avatar_8', name: 'Vortex Loop' },
+];
+
 const BADGES_CONFIG = [
   {
     id: 'trade_10',
@@ -221,6 +304,7 @@ export function ProfilePage({
   const [editCountry, setEditCountry] = useState('United States');
   const [editBio, setEditBio] = useState('');
   const [editExperienceLevel, setEditExperienceLevel] = useState('Intermediate');
+  const [editAvatarUrl, setEditAvatarUrl] = useState('avatar_1');
   const [editLoading, setEditLoading] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
   const [editSuccess, setEditSuccess] = useState(false);
@@ -231,6 +315,7 @@ export function ProfilePage({
     setEditCountry(user?.country || 'United States');
     setEditBio(user?.bio || '');
     setEditExperienceLevel(user?.experience_level || 'Intermediate');
+    setEditAvatarUrl(user?.avatar_url || 'avatar_1');
     setIsEditing(true);
     setEditError(null);
     setEditSuccess(false);
@@ -247,6 +332,7 @@ export function ProfilePage({
         country: editCountry,
         bio: editBio,
         experience_level: editExperienceLevel,
+        avatar_url: editAvatarUrl,
       });
 
       if (error) throw error;
@@ -508,9 +594,9 @@ export function ProfilePage({
         <div className="relative overflow-hidden p-6 bg-white border border-neutral-200 shadow-sm">
           <div className="relative flex flex-col lg:flex-row gap-8 items-start">
             <div className="flex flex-col md:flex-row gap-6 items-start md:items-center shrink-0">
-              <div className="w-16 h-16 bg-black flex items-center justify-center border border-black shrink-0 relative">
-                <User size={28} className="text-white" />
-                <div className="absolute -bottom-1 -right-1 w-6 h-6 bg-black flex items-center justify-center border border-white shadow-md">
+              <div className="relative shrink-0">
+                {renderAvatarIcon(user?.avatar_url, "w-16 h-16")}
+                <div className="absolute -bottom-1 -right-1 w-6 h-6 bg-black flex items-center justify-center border border-white shadow-md rounded-full">
                   <Zap size={10} className="text-white fill-current" />
                 </div>
               </div>
@@ -1229,6 +1315,37 @@ export function ProfilePage({
                       {lvl.substring(0, 3).toUpperCase()}
                     </button>
                   ))}
+                </div>
+              </div>
+
+              {/* Select Active Avatar Option */}
+              <div className="space-y-2 sm:col-span-2 border-t border-slate-100 pt-4">
+                <label className="text-[9px] font-black text-slate-400 uppercase tracking-wider block">Select Platform Identity Avatar</label>
+                <div className="grid grid-cols-4 sm:grid-cols-8 gap-2.5">
+                  {AVATAR_LIST.map((av) => {
+                    const isSelected = editAvatarUrl === av.id;
+                    return (
+                      <button
+                        type="button"
+                        key={av.id}
+                        onClick={() => setEditAvatarUrl(av.id)}
+                        className={`flex flex-col items-center gap-1 p-1 rounded-xl transition-all outline-none cursor-pointer group ${isSelected ? 'bg-indigo-50/50' : 'hover:bg-slate-50 border-transparent'}`}
+                        title={av.name}
+                      >
+                        <div className={`relative transition-transform duration-200 group-hover:scale-105 active:scale-95 ${isSelected ? 'ring-2 ring-indigo-600 ring-offset-2' : ''}`}>
+                          {renderAvatarIcon(av.id, "w-11 h-11")}
+                          {isSelected && (
+                            <div className="absolute -top-1 -right-1 w-4 h-4 bg-indigo-600 rounded-full flex items-center justify-center border border-white text-white">
+                              <Check size={8} strokeWidth={3} />
+                            </div>
+                          )}
+                        </div>
+                        <span className={`text-[7px] font-black uppercase text-center tracking-tight truncate w-full ${isSelected ? 'text-indigo-600' : 'text-slate-400'}`}>
+                          {av.name.split(' ')[1]}
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 

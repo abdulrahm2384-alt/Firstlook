@@ -749,13 +749,13 @@ export const FavoriteDrawingsToolbar = memo(function FavoriteDrawingsToolbar({
                   {isExpanded && (
                     <motion.div
                       key="dropup-favorites-panel"
-                      initial={{ opacity: 0, y: 15, scale: 0.9, x: '-50%' }}
-                      animate={{ opacity: 1, y: 0, scale: 1, x: '-50%' }}
-                      exit={{ opacity: 0, y: 10, scale: 0.9, x: '-50%' }}
-                      transition={{ type: 'spring', damping: 20, stiffness: 350 }}
+                      initial={{ opacity: 0, y: 30, scale: 0.85, x: '-50%' }}
+                      animate={{ opacity: 1, y: -12, scale: 1.15, x: '-50%' }}
+                      exit={{ opacity: 0, y: 20, scale: 0.85, x: '-50%' }}
+                      transition={{ type: 'spring', damping: 18, stiffness: 300 }}
                       onPointerDown={(e) => e.stopPropagation()}
                       onMouseDown={(e) => e.stopPropagation()}
-                      className="absolute bottom-full mb-3 left-1/2 bg-white/95 backdrop-blur-md border border-slate-200 shadow-2xl rounded-2xl flex flex-col items-center gap-1.5 z-[210] p-2.5 min-w-[150px]"
+                      className="absolute bottom-full mb-4 left-1/2 bg-white/95 backdrop-blur-md border border-slate-200 shadow-2xl rounded-2xl flex flex-col items-center gap-1.5 z-[210] p-3 min-w-[160px] origin-bottom shadow-indigo-500/10"
                     >
                       {/* Label badge to identify the panel */}
                       <div className="px-2 py-0.5 border-b border-slate-100 w-full text-center select-none flex items-center justify-between gap-2">

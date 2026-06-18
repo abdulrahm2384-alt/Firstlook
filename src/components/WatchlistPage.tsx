@@ -26,6 +26,7 @@ import {
   Trophy,
   LifeBuoy,
   MessageSquare,
+  MessageCircle,
   Send,
   User,
   Sparkles,
@@ -1304,10 +1305,14 @@ export function WatchlistPage({
   }, []);
 
   const handleOpenExtendModal = useCallback((item: WatchlistItem) => {
+    if (subscriptionPlan === 'basic') {
+      onLockedFeature?.('watchlist');
+      return;
+    }
     setExtendingItem(item);
     setExtendError(null);
     setSelectedNewDate('');
-  }, []);
+  }, [subscriptionPlan, onLockedFeature]);
 
   return (
     <div className="flex flex-col h-full bg-white text-slate-900 relative overflow-hidden antialiased">
@@ -2183,10 +2188,10 @@ export function WatchlistPage({
 
       {/* Modern Floating Support Chat Button Overlay */}
       <motion.button
-        whileHover={{ scale: 1.06, y: -2 }}
-        whileTap={{ scale: 0.94 }}
+        whileHover={{ scale: 1.08, y: -2 }}
+        whileTap={{ scale: 0.92 }}
         onClick={() => setIsSupportOpen(prev => !prev)}
-        className="fixed bottom-6 right-6 z-[2040] flex items-center justify-center w-10 h-10 rounded-full bg-[#011b33] border border-slate-700/50 text-white hover:text-emerald-400 shadow-[0_10px_25px_rgba(1,27,51,0.2)] hover:shadow-[0_12px_30px_rgba(1,27,51,0.3)] transition-all cursor-pointer"
+        className="fixed bottom-6 right-6 z-[2040] flex items-center justify-center w-8 h-8 rounded-full bg-[#011b33] border border-slate-700/60 text-white hover:text-emerald-400 hover:border-emerald-500/40 shadow-[0_6px_15px_rgba(1,27,51,0.25)] hover:shadow-[0_8px_18px_rgba(1,27,51,0.35)] transition-all cursor-pointer group"
         title={isSupportOpen ? "Close Support Chat" : "Direct Support Chat"}
       >
         <AnimatePresence mode="wait">
@@ -2198,7 +2203,7 @@ export function WatchlistPage({
               exit={{ rotate: 90, opacity: 0 }}
               transition={{ duration: 0.15 }}
             >
-              <X size={14} strokeWidth={2.5} />
+              <X size={11} strokeWidth={2.8} />
             </motion.div>
           ) : (
             <motion.div
@@ -2209,10 +2214,10 @@ export function WatchlistPage({
               transition={{ duration: 0.15 }}
               className="relative flex items-center justify-center"
             >
-              <LifeBuoy size={14} className="animate-spin" style={{ animationDuration: '8s' }} />
-              <span className="absolute -top-1.5 -right-1.5 flex h-2 w-2">
+              <MessageSquare size={13} strokeWidth={2.5} className="text-white group-hover:text-emerald-400 group-hover:scale-105 transition-all" />
+              <span className="absolute -top-1 -right-1 flex h-1.5 w-1.5">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
               </span>
             </motion.div>
           )}
