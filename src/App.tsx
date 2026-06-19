@@ -2199,7 +2199,7 @@ export default function App() {
           const firstCandleTime = currentData[0].time;
           const lastCandleTime = currentData[currentData.length - 1].time;
           if (playheadTime < firstCandleTime) {
-            playheadTime = firstCandleTime;
+            // Keep original target to prevent snapping forward to a separate date when data covers a different period
           } else if (playheadTime > lastCandleTime) {
             // Target is beyond currently available candles. Keep original target to prevent snapping backward.
           } else {
@@ -2228,7 +2228,7 @@ export default function App() {
           const firstCandleTime = currentData[0].time;
           const lastCandleTime = currentData[currentData.length - 1].time;
           if (playheadTime < firstCandleTime) {
-            playheadTime = firstCandleTime;
+            // Keep original target to prevent snapping forward to a separate date when data covers a different period
           } else if (playheadTime > lastCandleTime) {
             // Target is beyond currently available candles. Keep original target to prevent snapping backward.
           } else {
@@ -4075,6 +4075,10 @@ export default function App() {
     lastRequestedTimeframeRef.current = timeframeId;
     hasNoMoreFutureDataRef.current = false;
 
+    // Define whether the symbol or timeframe is changing BEFORE we update any refs!
+    const isChangingTimeframeOrSymbol = loadedSymbolRef.current !== symbol || loadedTimeframeRef.current !== timeframeId;
+    const finalForceSnap = forceTimeSnap || isChangingTimeframeOrSymbol;
+
     // Use explicit source/marketType if provided, otherwise find in watchlist
     let activeItem = watchlist.find(i => i.id === activeWatchlistItemId);
     
@@ -4109,13 +4113,13 @@ export default function App() {
 
       if (isReplayMode) {
         // Replay Mode priority hierarchy (Sync Cache layer):
-        // 1. Strict last_play_candle_time limit to prevent future jumps
-        if (activeItem?.last_play_candle_time) {
-          replayToSet = activeItem.last_play_candle_time;
-        }
-        // 2. Current active replay ref (if switching within same symbol/trade)
-        else if (replayCurrentTimeRef.current !== null && loadedSymbolRef.current === symbol && lastLoadedSessionKeyRef.current === currentSessionKey && (!replayTrade || lastLoadedReplayTradeIdRef.current === replayTrade.id)) {
+        // 1. Current active replay ref (if switching within same symbol/trade)
+        if (replayCurrentTimeRef.current !== null && loadedSymbolRef.current === symbol && lastLoadedSessionKeyRef.current === currentSessionKey && (!replayTrade || lastLoadedReplayTradeIdRef.current === replayTrade.id)) {
           replayToSet = replayCurrentTimeRef.current;
+        }
+        // 2. Strict last_play_candle_time limit to prevent future jumps
+        else if (activeItem?.last_play_candle_time) {
+          replayToSet = activeItem.last_play_candle_time;
         }
         // 3. Database symbol-level playhead (shared across all devices & timeframes)
         else if (viewStateKey && symbolViewStates[viewStateKey]?.replayCurrentTime) {
@@ -4140,7 +4144,7 @@ export default function App() {
           const firstCandleTime = syncCachedState.candles[0].time;
           const lastCandleTime = syncCachedState.candles[syncCachedState.candles.length - 1].time;
           if (snappedPlayToSet < firstCandleTime) {
-            snappedPlayToSet = firstCandleTime;
+            // Keep original target to prevent snapping forward to a separate date when data covers a different period
           } else if (snappedPlayToSet > lastCandleTime) {
             // Target is beyond currently available candles. Keep original target to prevent snapping backward.
           } else {
@@ -4154,13 +4158,13 @@ export default function App() {
         setReplayCurrentTime(snappedPlayToSet);
       } else {
         // Simulation Playhead priority hierarchy (Sync Cache layer):
-        // 1. Strict last_play_candle_time limit to prevent future jumps
-        if (activeItem?.last_play_candle_time) {
-          simToSet = activeItem.last_play_candle_time;
-        }
-        // 2. Current active simulation ref (if switching within same session/symbol)
-        else if (simCurrentTimeRef.current !== null && loadedSymbolRef.current === symbol && lastLoadedSessionKeyRef.current === currentSessionKey) {
+        // 1. Current active simulation ref (if switching within same session/symbol)
+        if (simCurrentTimeRef.current !== null && loadedSymbolRef.current === symbol && lastLoadedSessionKeyRef.current === currentSessionKey) {
           simToSet = simCurrentTimeRef.current;
+        }
+        // 2. Strict last_play_candle_time limit to prevent future jumps
+        else if (activeItem?.last_play_candle_time) {
+          simToSet = activeItem.last_play_candle_time;
         }
         // 3. Database active session currentTime
         else if (currentSessionKey && backtestSessions[currentSessionKey]?.currentTime) {
@@ -4189,7 +4193,7 @@ export default function App() {
           const firstCandleTime = syncCachedState.candles[0].time;
           const lastCandleTime = syncCachedState.candles[syncCachedState.candles.length - 1].time;
           if (snappedSimToSet < firstCandleTime) {
-            snappedSimToSet = firstCandleTime;
+            // Keep original target to prevent snapping forward to a separate date when data covers a different period
           } else if (snappedSimToSet > lastCandleTime) {
             // Target is beyond currently available candles. Keep original target to prevent snapping backward.
           } else {
@@ -4287,13 +4291,13 @@ export default function App() {
 
             if (isReplayMode) {
               // Replay Mode priority hierarchy (Async layer):
-              // 1. Strict last_play_candle_time limit to prevent future jumps
-              if (activeItem?.last_play_candle_time) {
-                replayToSet = activeItem.last_play_candle_time;
-              }
-              // 2. Current active replay ref (if switching within same symbol/trade)
-              else if (replayCurrentTimeRef.current !== null && loadedSymbolRef.current === symbol && lastLoadedSessionKeyRef.current === currentSessionKey && (!replayTrade || lastLoadedReplayTradeIdRef.current === replayTrade.id)) {
+              // 1. Current active replay ref (if switching within same symbol/trade)
+              if (replayCurrentTimeRef.current !== null && loadedSymbolRef.current === symbol && lastLoadedSessionKeyRef.current === currentSessionKey && (!replayTrade || lastLoadedReplayTradeIdRef.current === replayTrade.id)) {
                 replayToSet = replayCurrentTimeRef.current;
+              }
+              // 2. Strict last_play_candle_time limit to prevent future jumps
+              else if (activeItem?.last_play_candle_time) {
+                replayToSet = activeItem.last_play_candle_time;
               }
               // 3. Database symbol-level playhead (shared across all devices & timeframes)
               else if (viewStateKey && symbolViewStates[viewStateKey]?.replayCurrentTime) {
@@ -4318,7 +4322,7 @@ export default function App() {
                 const firstCandleTime = combinedCandles[0].time;
                 const lastCandleTime = combinedCandles[combinedCandles.length - 1].time;
                 if (snappedPlayToSet < firstCandleTime) {
-                  snappedPlayToSet = firstCandleTime;
+                  // Keep original target to prevent snapping forward to a separate date when data covers a different period
                 } else if (snappedPlayToSet > lastCandleTime) {
                   // Target is beyond currently available candles. Keep original target to prevent snapping backward.
                 } else {
@@ -4332,13 +4336,13 @@ export default function App() {
               setReplayCurrentTime(snappedPlayToSet);
             } else {
               // Simulation Playhead priority hierarchy (Async layer):
-              // 1. Strict last_play_candle_time limit to prevent future jumps
-              if (activeItem?.last_play_candle_time) {
-                simToSet = activeItem.last_play_candle_time;
-              }
-              // 2. Current active simulation ref (if switching within same session/symbol)
-              else if (simCurrentTimeRef.current !== null && loadedSymbolRef.current === symbol && lastLoadedSessionKeyRef.current === currentSessionKey) {
+              // 1. Current active simulation ref (if switching within same session/symbol)
+              if (simCurrentTimeRef.current !== null && loadedSymbolRef.current === symbol && lastLoadedSessionKeyRef.current === currentSessionKey) {
                 simToSet = simCurrentTimeRef.current;
+              }
+              // 2. Strict last_play_candle_time limit to prevent future jumps
+              else if (activeItem?.last_play_candle_time) {
+                simToSet = activeItem.last_play_candle_time;
               }
               // 3. Database active session currentTime
               else if (currentSessionKey && backtestSessions[currentSessionKey]?.currentTime) {
@@ -4367,7 +4371,7 @@ export default function App() {
                 const firstCandleTime = combinedCandles[0].time;
                 const lastCandleTime = combinedCandles[combinedCandles.length - 1].time;
                 if (snappedSimToSet < firstCandleTime) {
-                  snappedSimToSet = firstCandleTime;
+                  // Keep original target to prevent snapping forward to a separate date when data covers a different period
                 } else if (snappedSimToSet > lastCandleTime) {
                   // Target is beyond currently available candles. Keep original target to prevent snapping backward.
                 } else {
@@ -4430,23 +4434,31 @@ export default function App() {
 
         if (lastRequestedSymbolRef.current === symbol && lastRequestedTimeframeRef.current === timeframeId) {
           if (combined.length > 0) {
-            const isFirstLoadOrChanging = loadedSymbolRef.current !== symbol || loadedTimeframeRef.current !== timeframeId;
+            const isFirstLoadOrChanging = isChangingTimeframeOrSymbol;
             setHistoricalData(combined);
             setRenderedTimeframeId(timeframeId);
             loadedSymbolRef.current = symbol;
             loadedTimeframeRef.current = timeframeId;
             
             if (!isReplayMode) {
-              if (simCurrentTimeRef.current === null || lastLoadedSessionKeyRef.current !== currentSessionKey || isFirstLoadOrChanging || forceTimeSnap) {
-                const targetTime = activeItem?.last_play_candle_time || initialEndTime;
-                let snapCandle = combined.find(c => c.time >= targetTime);
-                if (!snapCandle && combined.length > 0) {
+              if (simCurrentTimeRef.current === null || lastLoadedSessionKeyRef.current !== currentSessionKey || finalForceSnap) {
+                const targetTime = initialEndTime || activeItem?.last_play_candle_time;
+                let snappedTimeToSet = targetTime;
+                if (combined.length > 0) {
+                  const firstCandleTime = combined[0].time;
                   const lastCandleTime = combined[combined.length - 1].time;
-                  if (targetTime <= lastCandleTime) {
-                    snapCandle = findLastCandleAtOrBefore(combined, targetTime);
+                  if (targetTime < firstCandleTime) {
+                    // Keep original target to prevent snapping forward to a separate date when data covers a different period
+                  } else if (targetTime > lastCandleTime) {
+                    // Keep original target to prevent snapping backward
+                  } else {
+                    const snapCandle = findLastCandleAtOrBefore(combined, targetTime);
+                    if (snapCandle) {
+                      snappedTimeToSet = snapCandle.time;
+                    }
                   }
                 }
-                const timeToSet = snapCandle ? snapCandle.time : targetTime;
+                const timeToSet = snappedTimeToSet;
                 
                 simCurrentTimeRef.current = timeToSet;
                 if (currentSessionKey && sessionCurrentTimesRef.current) {
@@ -4455,16 +4467,24 @@ export default function App() {
                 setSimCurrentTime(timeToSet);
               }
             } else {
-              if (replayCurrentTimeRef.current === null || lastLoadedSessionKeyRef.current !== currentSessionKey || isFirstLoadOrChanging || forceTimeSnap) {
-                const targetTime = activeItem?.last_play_candle_time || initialEndTime;
-                let snapCandle = combined.find(c => c.time >= targetTime);
-                if (!snapCandle && combined.length > 0) {
+              if (replayCurrentTimeRef.current === null || lastLoadedSessionKeyRef.current !== currentSessionKey || finalForceSnap) {
+                const targetTime = initialEndTime || activeItem?.last_play_candle_time;
+                let snappedTimeToSet = targetTime;
+                if (combined.length > 0) {
+                  const firstCandleTime = combined[0].time;
                   const lastCandleTime = combined[combined.length - 1].time;
-                  if (targetTime <= lastCandleTime) {
-                    snapCandle = findLastCandleAtOrBefore(combined, targetTime);
+                  if (targetTime < firstCandleTime) {
+                    // Keep original target to prevent snapping forward to a separate date when data covers a different period
+                  } else if (targetTime > lastCandleTime) {
+                    // Keep original target to prevent snapping backward
+                  } else {
+                    const snapCandle = findLastCandleAtOrBefore(combined, targetTime);
+                    if (snapCandle) {
+                      snappedTimeToSet = snapCandle.time;
+                    }
                   }
                 }
-                const timeToSet = snapCandle ? snapCandle.time : targetTime;
+                const timeToSet = snappedTimeToSet;
                 replayCurrentTimeRef.current = timeToSet;
                 setReplayCurrentTime(timeToSet);
               }
