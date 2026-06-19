@@ -39,6 +39,23 @@ export interface UserPreferences {
   symbolViewStates?: Record<string, any>;
 }
 
+// Helper to handle fetch abort on timeout to prevent hanging when offline
+async function fetchWithTimeout(resource: string, options?: RequestInit & { timeout?: number }) {
+  const { timeout = 3500, ...rest } = options || {};
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+  
+  try {
+    const response = await fetch(resource, {
+      ...rest,
+      signal: controller.signal
+    });
+    return response;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // --- Drawing Compression & Optimization Helpers to Minimize Database & Payload Space ---
 function simplifyPathPoints(points: any[]): any[] {
   if (!points || points.length <= 2) return points;
@@ -184,7 +201,20 @@ export const persistenceService = {
         realizedAt: trade.realizedAt || new Date().toISOString()
       };
 
-      const response = await fetch('/api/persistence/save-trade', {
+      // 1. Save locally first for offline availability
+      try {
+        const localKey = `trades_${userId}`;
+        const existingRaw = localStorage.getItem(localKey);
+        const list = existingRaw ? JSON.parse(existingRaw) : [];
+        const filtered = list.filter((t: any) => t.id !== trade.id);
+        filtered.push(payload);
+        localStorage.setItem(localKey, JSON.stringify(filtered));
+      } catch (localErr) {
+        console.error('[PersistenceService] Local storage saveTrade failed', localErr);
+      }
+
+      // 2. Sync with server database in background
+      const response = await fetchWithTimeout('/api/persistence/save-trade', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId, trade: payload })
@@ -194,48 +224,93 @@ export const persistenceService = {
         throw new Error('Failed to save trade to backend database');
       }
     } catch (err) {
-      console.warn('[PersistenceService] saveTrade error:', err);
+      console.warn('[PersistenceService] saveTrade error (using local backup):', err);
     }
   },
 
   async getTrades(userId: string): Promise<JournalTrade[]> {
+    // 1. Load from localStorage immediately so we can fallback instantly (or merge)
+    let localBackup: any[] = [];
     try {
-      const response = await fetch(`/api/persistence/get-trades?userId=${userId}`);
-      if (!response.ok) return [];
+      const localKey = `trades_${userId}`;
+      const existingRaw = localStorage.getItem(localKey);
+      if (existingRaw) {
+        localBackup = JSON.parse(existingRaw);
+      }
+    } catch (e) {
+      console.error('[PersistenceService] getTrades local cache read failed', e);
+    }
+
+    try {
+      const response = await fetchWithTimeout(`/api/persistence/get-trades?userId=${userId}`);
+      if (!response.ok) {
+        throw new Error('Network error loading trades');
+      }
 
       const data = await response.json();
       const rawTrades = data.trades || [];
 
+      // Save to local cache
+      try {
+        localStorage.setItem(`trades_${userId}`, JSON.stringify(rawTrades));
+      } catch (lsErr) {}
+
       return rawTrades.map((t: any) => {
-        const entryTime = Number(t.entry_time);
-        const exitTime = Number(t.exit_time);
+        const entryTime = Number(t.entry_time ?? t.entryTime);
+        const exitTime = Number(t.exit_time ?? t.exitTime);
         return {
           id: t.id,
-          user_id: t.user_id,
+          user_id: t.user_id || t.userId,
           symbol: t.symbol || '',
           prefix: t.prefix,
           type: (t.type || 'LONG') as 'LONG' | 'SHORT',
           entryTime: isFinite(entryTime) ? entryTime : 0,
           exitTime: isFinite(exitTime) ? exitTime : 0,
-          entryPrice: Number(t.entry_price) || 0,
-          exitPrice: Number(t.exit_price) || 0,
+          entryPrice: Number(t.entry_price ?? t.entryPrice) || 0,
+          exitPrice: Number(t.exit_price ?? t.exitPrice) || 0,
           rr: Number(t.rr) || 0,
           status: (t.status || 'SL') as 'TP' | 'SL',
           pips: Number(t.pips) || 0,
           timeframe: t.timeframe || '1m',
           duration: t.duration || '0m',
-          drawingId: t.drawing_id,
-          watchlistId: t.watchlist_id,
-          setupGrade: t.setup_grade,
+          drawingId: t.drawing_id ?? t.drawingId,
+          watchlistId: t.watchlist_id ?? t.watchlistId,
+          setupGrade: t.setup_grade ?? t.setupGrade,
           confluences: typeof t.confluences === 'string' ? JSON.parse(t.confluences) : (t.confluences || []),
           notes: t.notes,
-          createdAt: t.created_at,
-          realizedAt: t.realized_at
+          createdAt: t.created_at ?? t.createdAt,
+          realizedAt: t.realized_at ?? t.realizedAt
         };
       });
     } catch (err) {
-      console.warn('[PersistenceService] getTrades error:', err);
-      return [];
+      console.warn('[PersistenceService] getTrades (falling back to local storage):', err);
+      return localBackup.map((t: any) => {
+        const entryTime = Number(t.entryTime ?? t.entry_time);
+        const exitTime = Number(t.exitTime ?? t.exit_time);
+        return {
+          id: t.id,
+          user_id: t.userId ?? t.user_id,
+          symbol: t.symbol || '',
+          prefix: t.prefix,
+          type: (t.type || 'LONG') as 'LONG' | 'SHORT',
+          entryTime: isFinite(entryTime) ? entryTime : 0,
+          exitTime: isFinite(exitTime) ? exitTime : 0,
+          entryPrice: Number(t.entryPrice ?? t.entry_price) || 0,
+          exitPrice: Number(t.exitPrice ?? t.exit_price) || 0,
+          rr: Number(t.rr) || 0,
+          status: (t.status || 'SL') as 'TP' | 'SL',
+          pips: Number(t.pips) || 0,
+          timeframe: t.timeframe || '1m',
+          duration: t.duration || '0m',
+          drawingId: t.drawingId ?? t.drawing_id,
+          watchlistId: t.watchlistId ?? t.watchlist_id,
+          setupGrade: t.setupGrade ?? t.setup_grade,
+          confluences: typeof t.confluences === 'string' ? JSON.parse(t.confluences) : (t.confluences || []),
+          notes: t.notes,
+          createdAt: t.createdAt ?? t.created_at,
+          realizedAt: t.realizedAt ?? t.realized_at
+        };
+      });
     }
   },
 
@@ -243,7 +318,14 @@ export const persistenceService = {
   async saveDrawings(userId: string, drawings: Drawing[]) {
     try {
       const optimized = drawings.map(compressDrawing);
-      const response = await fetch('/api/persistence/save-drawings', {
+
+      // 1. Cache locally first
+      try {
+        localStorage.setItem(`drawings_${userId}`, JSON.stringify(optimized));
+      } catch (lsErr) {}
+
+      // 2. Transmit to server database
+      const response = await fetchWithTimeout('/api/persistence/save-drawings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId, drawings: optimized })
@@ -252,55 +334,105 @@ export const persistenceService = {
         throw new Error('Drawing autosave failed');
       }
     } catch (err) {
-      console.warn('[PersistenceService] saveDrawings error:', err);
+      console.warn('[PersistenceService] saveDrawings (written to local backup):', err);
     }
   },
 
   async getDrawings(userId: string): Promise<Drawing[]> {
+    let localBackup: any[] = [];
     try {
-      const response = await fetch(`/api/persistence/get-drawings?userId=${userId}`);
-      if (!response.ok) return [];
+      const rawLoc = localStorage.getItem(`drawings_${userId}`);
+      if (rawLoc) {
+        localBackup = JSON.parse(rawLoc);
+      }
+    } catch (e) {}
+
+    try {
+      const response = await fetchWithTimeout(`/api/persistence/get-drawings?userId=${userId}`);
+      if (!response.ok) {
+        throw new Error('Network error loading drawings');
+      }
       const data = await response.json();
       const raw = data.drawings || [];
+      
+      try {
+        localStorage.setItem(`drawings_${userId}`, JSON.stringify(raw));
+      } catch (e) {}
+
       return raw.map(decompressDrawing);
     } catch (err) {
-      console.warn('[PersistenceService] getDrawings error:', err);
-      return [];
+      console.warn('[PersistenceService] getDrawings (falling back to local storage):', err);
+      return localBackup.map(decompressDrawing);
     }
   },
 
   // --- Preferences ---
   async savePreferences(userId: string, prefs: Partial<UserPreferences>) {
     try {
-      const response = await fetch('/api/persistence/save-preferences', {
+      // 1. Get existing preferences from LocalStorage, merge, and save immediately
+      let nextPrefs = { ...prefs };
+      try {
+        const existingRaw = localStorage.getItem(`preferences_${userId}`);
+        const existing = existingRaw ? JSON.parse(existingRaw) : {};
+        nextPrefs = { ...existing, ...prefs };
+        localStorage.setItem(`preferences_${userId}`, JSON.stringify(nextPrefs));
+      } catch (lsErr) {
+        console.error('[PersistenceService] savePreferences local storage failed', lsErr);
+      }
+
+      // 2. Save merged copy to server
+      const response = await fetchWithTimeout('/api/persistence/save-preferences', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, prefs })
+        body: JSON.stringify({ userId, prefs: nextPrefs })
       });
       if (!response.ok) {
         throw new Error('Preferences sync failed');
       }
     } catch (err) {
-      console.warn('[PersistenceService] savePreferences error:', err);
+      console.warn('[PersistenceService] savePreferences (saved to local backup):', err);
     }
   },
 
   async getPreferences(userId: string): Promise<Partial<UserPreferences> | null> {
+    let localBackup: Partial<UserPreferences> | null = null;
     try {
-      const response = await fetch(`/api/persistence/get-preferences?userId=${userId}`);
-      if (!response.ok) return null;
+      const rawLoc = localStorage.getItem(`preferences_${userId}`);
+      if (rawLoc) {
+        localBackup = JSON.parse(rawLoc);
+      }
+    } catch (e) {}
+
+    try {
+      const response = await fetchWithTimeout(`/api/persistence/get-preferences?userId=${userId}`);
+      if (!response.ok) {
+        throw new Error('Network error loading preferences');
+      }
       const data = await response.json();
-      return data.preferences || null;
+      const serverPrefs = data.preferences || null;
+
+      if (serverPrefs) {
+        try {
+          localStorage.setItem(`preferences_${userId}`, JSON.stringify(serverPrefs));
+        } catch (e) {}
+      }
+      return serverPrefs || localBackup;
     } catch (err) {
-      console.warn('[PersistenceService] getPreferences error:', err);
-      return null;
+      console.warn('[PersistenceService] getPreferences (falling back to local storage):', err);
+      return localBackup;
     }
   },
 
   // --- Watchlist ---
   async saveWatchlist(userId: string, items: any[]) {
     try {
-      const response = await fetch('/api/persistence/save-watchlist', {
+      // 1. Save locally first
+      try {
+        localStorage.setItem(`watchlist_${userId}`, JSON.stringify(items));
+      } catch (lsErr) {}
+
+      // 2. Post to API
+      const response = await fetchWithTimeout('/api/persistence/save-watchlist', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId, items })
@@ -309,26 +441,48 @@ export const persistenceService = {
         throw new Error('Watchlist sync failed');
       }
     } catch (err) {
-      console.warn('[PersistenceService] saveWatchlist error:', err);
+      console.warn('[PersistenceService] saveWatchlist (saved to local backup):', err);
     }
   },
 
   async getWatchlist(userId: string): Promise<any[]> {
+    let localBackup: any[] = [];
     try {
-      const response = await fetch(`/api/persistence/get-watchlist?userId=${userId}`);
-      if (!response.ok) return [];
+      const rawLoc = localStorage.getItem(`watchlist_${userId}`);
+      if (rawLoc) {
+        localBackup = JSON.parse(rawLoc);
+      }
+    } catch (e) {}
+
+    try {
+      const response = await fetchWithTimeout(`/api/persistence/get-watchlist?userId=${userId}`);
+      if (!response.ok) {
+        throw new Error('Network error loading watchlist');
+      }
       const data = await response.json();
-      return data.items || [];
+      const serverItems = data.items || [];
+
+      try {
+        localStorage.setItem(`watchlist_${userId}`, JSON.stringify(serverItems));
+      } catch (e) {}
+
+      return serverItems;
     } catch (err) {
-      console.warn('[PersistenceService] getWatchlist error:', err);
-      return [];
+      console.warn('[PersistenceService] getWatchlist (falling back to local storage):', err);
+      return localBackup;
     }
   },
 
   // --- Backtest Sessions ---
-  async saveBacktestSessions(userId: string, sessionsMap: Record<string, number>) {
+  async saveBacktestSessions(userId: string, sessionsMap: Record<string, any>) {
     try {
-      const response = await fetch('/api/persistence/save-backtest-sessions', {
+      // 1. Save locally first
+      try {
+        localStorage.setItem(`backtest_sessions_${userId}`, JSON.stringify(sessionsMap));
+      } catch (lsErr) {}
+
+      // 2. Sync to DB
+      const response = await fetchWithTimeout('/api/persistence/save-backtest-sessions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId, sessions: sessionsMap })
@@ -338,33 +492,49 @@ export const persistenceService = {
       }
     } catch (err: any) {
       if (err instanceof TypeError && err.message === 'Failed to fetch') {
-        console.warn('[PersistenceService] saveBacktestSessions postponed: Connection busy or dev server restarting.');
+        console.warn('[PersistenceService] saveBacktestSessions postponed (locally saved): Connection busy or dev server restarting.');
       } else {
         console.warn('[PersistenceService] saveBacktestSessions warning:', err);
       }
     }
   },
 
-  async getBacktestSessions(userId: string): Promise<Record<string, number>> {
+  async getBacktestSessions(userId: string): Promise<Record<string, any>> {
+    let localBackup: Record<string, any> = {};
     try {
-      const response = await fetch(`/api/persistence/get-backtest-sessions?userId=${userId}`);
-      if (!response.ok) return {};
+      const rawLoc = localStorage.getItem(`backtest_sessions_${userId}`);
+      if (rawLoc) {
+        localBackup = JSON.parse(rawLoc);
+      }
+    } catch (e) {}
+
+    try {
+      const response = await fetchWithTimeout(`/api/persistence/get-backtest-sessions?userId=${userId}`);
+      if (!response.ok) {
+        throw new Error('Network error loading backtest sessions');
+      }
       const data = await response.json();
-      return data.sessions || {};
+      const serverSessions = data.sessions || {};
+
+      try {
+        localStorage.setItem(`backtest_sessions_${userId}`, JSON.stringify(serverSessions));
+      } catch (e) {}
+
+      return serverSessions;
     } catch (err: any) {
       if (err instanceof TypeError && err.message === 'Failed to fetch') {
         console.warn('[PersistenceService] getBacktestSessions postponed: Connection busy or page reloading.');
       } else {
-        console.warn('[PersistenceService] getBacktestSessions warning:', err);
+        console.warn('[PersistenceService] getBacktestSessions warning (falling back to local storage):', err);
       }
-      return {};
+      return localBackup;
     }
   },
 
   // --- Session Management ---
   async updateActiveSession(userId: string, sessionId: string) {
     try {
-      const response = await fetch('/api/persistence/update-active-session', {
+      const response = await fetchWithTimeout('/api/persistence/update-active-session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId, sessionId })
@@ -384,7 +554,7 @@ export const persistenceService = {
   async watchSession(userId: string, onMismatch: () => void, currentSessionId: string) {
     const interval = setInterval(async () => {
       try {
-        const response = await fetch(`/api/persistence/get-active-session?userId=${userId}`);
+        const response = await fetchWithTimeout(`/api/persistence/get-active-session?userId=${userId}`, { timeout: 2500 });
         if (response.ok) {
           const data = await response.json();
           if (data?.active_session_id && data.active_session_id !== currentSessionId) {
@@ -404,7 +574,27 @@ export const persistenceService = {
   // --- Setups ---
   async saveSetup(userId: string, grade: string, imageUrl: string | null, confluences: string[]) {
     try {
-      const response = await fetch('/api/persistence/save-setup', {
+      const setupObj = {
+        id: `setup_${Date.now()}_${grade}`,
+        user_id: userId,
+        grade,
+        image_url: imageUrl,
+        confluences,
+        updated_at: new Date().toISOString()
+      };
+
+      // 1. Cache setup locally
+      try {
+        const localKey = `setups_${userId}`;
+        const existingRaw = localStorage.getItem(localKey);
+        const list = existingRaw ? JSON.parse(existingRaw) : [];
+        const filtered = list.filter((s: any) => s.grade !== grade);
+        filtered.push(setupObj);
+        localStorage.setItem(localKey, JSON.stringify(filtered));
+      } catch (e) {}
+
+      // 2. Send setup to API
+      const response = await fetchWithTimeout('/api/persistence/save-setup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId, grade, imageUrl, confluences })
@@ -413,33 +603,66 @@ export const persistenceService = {
         throw new Error('Failed to save trade setup rules');
       }
     } catch (err) {
-      console.warn('[PersistenceService] saveSetup error:', err);
+      console.warn('[PersistenceService] saveSetup error (saved to local backup):', err);
     }
   },
 
   async getSetups(userId: string) {
+    let localBackup: any[] = [];
     try {
-      const response = await fetch(`/api/persistence/get-setups?userId=${userId}`);
-      if (!response.ok) return [];
+      const rawLoc = localStorage.getItem(`setups_${userId}`);
+      if (rawLoc) {
+        localBackup = JSON.parse(rawLoc);
+      }
+    } catch (e) {}
+
+    try {
+      const response = await fetchWithTimeout(`/api/persistence/get-setups?userId=${userId}`);
+      if (!response.ok) {
+        throw new Error('Network error loading setups');
+      }
       const data = await response.json();
       const rawSetups = data.setups || [];
+      
+      try {
+        localStorage.setItem(`setups_${userId}`, JSON.stringify(rawSetups));
+      } catch (e) {}
+
       return rawSetups.map((s: any) => ({
         id: s.id,
-        user_id: s.user_id,
+        user_id: s.user_id || s.userId,
         grade: s.grade,
-        image_url: s.image_url,
+        image_url: s.image_url ?? s.imageUrl,
         confluences: typeof s.confluences === 'string' ? JSON.parse(s.confluences) : (s.confluences || []),
-        updated_at: s.updated_at
+        updated_at: s.updated_at ?? s.updatedAt
       }));
     } catch (err) {
-      console.warn('[PersistenceService] getSetups error:', err);
-      return [];
+      console.warn('[PersistenceService] getSetups (falling back to local storage):', err);
+      return localBackup.map((s: any) => ({
+        id: s.id,
+        user_id: s.user_id ?? s.userId,
+        grade: s.grade,
+        image_url: s.image_url ?? s.imageUrl,
+        confluences: typeof s.confluences === 'string' ? JSON.parse(s.confluences) : (s.confluences || []),
+        updated_at: s.updated_at ?? s.updatedAt
+      }));
     }
   },
 
   async deleteTradesByWatchlistId(userId: string, watchlistId: string) {
     try {
-      await fetch('/api/persistence/delete-trades-by-watchlist', {
+      // Clean up local trades as well
+      try {
+        const localKey = `trades_${userId}`;
+        const existingRaw = localStorage.getItem(localKey);
+        if (existingRaw) {
+          const list = JSON.parse(existingRaw);
+          const filtered = list.filter((t: any) => t.watchlistId !== watchlistId && t.watchlist_id !== watchlistId);
+          localStorage.setItem(localKey, JSON.stringify(filtered));
+        }
+      } catch (lsErr) {}
+
+      await fetchWithTimeout('/api/persistence/delete-trades-by-watchlist', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId, watchlistId })
@@ -451,7 +674,23 @@ export const persistenceService = {
 
   async deleteTradesForSymbol(userId: string, symbol: string, prefix?: string, watchlistId?: string) {
     try {
-      await fetch('/api/persistence/delete-trades-for-symbol', {
+      // Clean up local trades as well
+      try {
+        const localKey = `trades_${userId}`;
+        const existingRaw = localStorage.getItem(localKey);
+        if (existingRaw) {
+          const list = JSON.parse(existingRaw);
+          const filtered = list.filter((t: any) => {
+            const matchSymbol = t.symbol === symbol;
+            const matchPrefix = prefix === undefined || t.prefix === prefix;
+            const matchWatchlist = watchlistId === undefined || t.watchlistId === watchlistId || t.watchlist_id === watchlistId;
+            return !(matchSymbol && matchPrefix && matchWatchlist);
+          });
+          localStorage.setItem(localKey, JSON.stringify(filtered));
+        }
+      } catch (lsErr) {}
+
+      await fetchWithTimeout('/api/persistence/delete-trades-for-symbol', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId, symbol, prefix, watchlistId })
@@ -517,7 +756,7 @@ export const persistenceService = {
       compressImageFile(file)
         .then(async (base64String) => {
           try {
-            const response = await fetch('/api/persistence/upload-setup-image', {
+            const response = await fetchWithTimeout('/api/persistence/upload-setup-image', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ userId, grade, imageBase64: base64String })
@@ -539,7 +778,7 @@ export const persistenceService = {
           reader.onloadend = async () => {
             const base64String = reader.result as string;
             try {
-              const response = await fetch('/api/persistence/upload-setup-image', {
+              const response = await fetchWithTimeout('/api/persistence/upload-setup-image', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ userId, grade, imageBase64: base64String })

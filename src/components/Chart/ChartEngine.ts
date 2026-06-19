@@ -5622,6 +5622,7 @@ export class ChartEngine {
     
     // Explicitly update range for the new dimensions
     this.calculateVisibleRange(width, height);
+    this.draw();
   }
 
   private roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number, fill: boolean, stroke: boolean) {

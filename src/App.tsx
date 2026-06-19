@@ -2001,11 +2001,8 @@ export default function App() {
     const end_time = activeItem.end_time || linkedSession?.endTime || undefined;
 
     const currentPlayoutTime = isReplayMode ? (replayCurrentTime || 0) : (simCurrentTime || 0);
-    // Find the last candle played or rendered
-    const playedCandles = historicalData.filter(c => c.time <= currentPlayoutTime);
-    const last_play_candle_time = playedCandles.length > 0 
-      ? playedCandles[playedCandles.length - 1].time 
-      : start_time;
+    // Keep exact unsnapped continuous playout time to ensure sub-candle precision across all timeframes and prevent snapping after refresh
+    const last_play_candle_time = currentPlayoutTime || start_time;
 
     // Prices
     const startCandle = historicalData[0];
@@ -3164,6 +3161,7 @@ export default function App() {
   ) => {
     if (!symbol) return;
     setIsSyncedLoading(true);
+    setSyncedData([]);
     try {
       const dataPast = await fetchCandleData(symbol, timeframeId, 500, targetTime, undefined, source, marketType);
       
@@ -4148,10 +4146,7 @@ export default function App() {
           } else if (snappedPlayToSet > lastCandleTime) {
             // Target is beyond currently available candles. Keep original target to prevent snapping backward.
           } else {
-            const snapCandle = findLastCandleAtOrBefore(syncCachedState.candles, snappedPlayToSet);
-            if (snapCandle) {
-              snappedPlayToSet = snapCandle.time;
-            }
+            // Keep exact unsnapped continuous playhead time to ensure sub-candle precision across all timeframes and prevent snapping after refresh
           }
         }
         replayCurrentTimeRef.current = snappedPlayToSet;
@@ -4197,10 +4192,7 @@ export default function App() {
           } else if (snappedSimToSet > lastCandleTime) {
             // Target is beyond currently available candles. Keep original target to prevent snapping backward.
           } else {
-            const snapCandle = findLastCandleAtOrBefore(syncCachedState.candles, snappedSimToSet);
-            if (snapCandle) {
-              snappedSimToSet = snapCandle.time;
-            }
+            // Keep exact unsnapped continuous playhead time to ensure sub-candle precision across all timeframes and prevent snapping after refresh
           }
         }
         simCurrentTimeRef.current = snappedSimToSet;
@@ -4219,14 +4211,18 @@ export default function App() {
         setIsLoadingPast(false);
         return;
       }
-    } else if (selectedSymbol !== symbol) {
+    } else {
+      // Clear previous timeframe's candles to avoid rendering mismatch while fetching the new one
       setHistoricalData([]);
-      loadedSymbolRef.current = null;
       loadedTimeframeRef.current = null;
-      simCurrentTimeRef.current = null;
-      setSimCurrentTime(null);
-      replayCurrentTimeRef.current = null;
-      setReplayCurrentTime(null);
+      
+      if (selectedSymbol !== symbol) {
+        loadedSymbolRef.current = null;
+        simCurrentTimeRef.current = null;
+        setSimCurrentTime(null);
+        replayCurrentTimeRef.current = null;
+        setReplayCurrentTime(null);
+      }
     }
     
     if (!initialEndTime) {
@@ -4326,10 +4322,7 @@ export default function App() {
                 } else if (snappedPlayToSet > lastCandleTime) {
                   // Target is beyond currently available candles. Keep original target to prevent snapping backward.
                 } else {
-                  const snapCandle = findLastCandleAtOrBefore(combinedCandles, snappedPlayToSet);
-                  if (snapCandle) {
-                    snappedPlayToSet = snapCandle.time;
-                  }
+                  // Keep exact unsnapped continuous playhead time to ensure sub-candle precision across all timeframes and prevent snapping after refresh
                 }
               }
               replayCurrentTimeRef.current = snappedPlayToSet;
@@ -4375,10 +4368,7 @@ export default function App() {
                 } else if (snappedSimToSet > lastCandleTime) {
                   // Target is beyond currently available candles. Keep original target to prevent snapping backward.
                 } else {
-                  const snapCandle = findLastCandleAtOrBefore(combinedCandles, snappedSimToSet);
-                  if (snapCandle) {
-                    snappedSimToSet = snapCandle.time;
-                  }
+                  // Keep exact unsnapped continuous playhead time to ensure sub-candle precision across all timeframes and prevent snapping after refresh
                 }
               }
               simCurrentTimeRef.current = snappedSimToSet;
