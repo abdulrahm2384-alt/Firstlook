@@ -250,51 +250,96 @@ interface TickingState {
 
 export function getTickingCandleState(candle: Candle, tickIndex: number, totalTicks: number): TickingState {
   const p = Math.max(0, Math.min(1.0, tickIndex / (totalTicks - 1 || 1)));
+  const step = Math.min(5, Math.floor(p * 6));
   const isBullish = candle.close >= candle.open;
+  
   let price = candle.open;
   let formingHigh = candle.open;
   let formingLow = candle.open;
 
+  const o = candle.open;
+  const h = candle.high;
+  const l = candle.low;
+  const c = candle.close;
+
   if (isBullish) {
-    if (p <= 0.25) {
-      const t = p / 0.25;
-      price = candle.open + (candle.low - candle.open) * t;
-      formingHigh = candle.open;
-      formingLow = price;
-    } else if (p <= 0.75) {
-      const t = (p - 0.25) / 0.5;
-      price = candle.low + (candle.high - candle.low) * t;
-      formingHigh = price;
-      formingLow = candle.low;
-    } else {
-      const t = (p - 0.75) / 0.25;
-      price = candle.high + (candle.close - candle.high) * t;
-      formingHigh = candle.high;
-      formingLow = candle.low;
+    switch (step) {
+      case 0:
+        price = o;
+        formingHigh = o;
+        formingLow = o;
+        break;
+      case 1: {
+        const dip = (o - l) > 0 ? (o - l) * 0.5 : 0;
+        price = Math.max(l, o - dip);
+        formingHigh = o;
+        formingLow = Math.min(o, price);
+        break;
+      }
+      case 2:
+        price = o + (c - o) * 0.3;
+        formingHigh = Math.max(o, price);
+        formingLow = l;
+        break;
+      case 3:
+        price = o + (c - o) * 0.7;
+        formingHigh = Math.max(o, price);
+        formingLow = l;
+        break;
+      case 4:
+        price = h;
+        formingHigh = h;
+        formingLow = l;
+        break;
+      case 5:
+      default:
+        price = c;
+        formingHigh = h;
+        formingLow = l;
+        break;
     }
   } else {
-    if (p <= 0.25) {
-      const t = p / 0.25;
-      price = candle.open + (candle.high - candle.open) * t;
-      formingHigh = price;
-      formingLow = candle.open;
-    } else if (p <= 0.75) {
-      const t = (p - 0.25) / 0.5;
-      price = candle.high + (candle.low - candle.high) * t;
-      formingHigh = candle.high;
-      formingLow = price;
-    } else {
-      const t = (p - 0.75) / 0.25;
-      price = candle.low + (candle.close - candle.low) * t;
-      formingHigh = candle.high;
-      formingLow = candle.low;
+    switch (step) {
+      case 0:
+        price = o;
+        formingHigh = o;
+        formingLow = o;
+        break;
+      case 1: {
+        const bounce = (h - o) > 0 ? (h - o) * 0.5 : 0;
+        price = Math.min(h, o + bounce);
+        formingHigh = Math.max(o, price);
+        formingLow = o;
+        break;
+      }
+      case 2:
+        price = o - (o - c) * 0.3;
+        formingHigh = h;
+        formingLow = Math.min(o, price);
+        break;
+      case 3:
+        price = o - (o - c) * 0.7;
+        formingHigh = h;
+        formingLow = Math.min(o, price);
+        break;
+      case 4:
+        price = l;
+        formingHigh = h;
+        formingLow = l;
+        break;
+      case 5:
+      default:
+        price = c;
+        formingHigh = h;
+        formingLow = l;
+        break;
     }
   }
 
   return {
     close: price,
-    high: Math.max(formingHigh, price),
-    low: Math.min(formingLow, price)
+    high: Math.max(formingHigh, price, o),
+    low: Math.min(formingLow, price, o)
   };
 }
 
@@ -2109,7 +2154,7 @@ export default function App() {
       const timeframeSeconds = selectedTimeframe.seconds;
       const elapsedSeconds = Math.max(0, activeTime - currentCandle.time);
       const progress = Math.max(0, Math.min(0.9999, elapsedSeconds / timeframeSeconds));
-      const totalTicks = Math.max(1, Math.floor(timeframeSeconds / 2));
+      const totalTicks = 6;
       const calculatedTickIndex = Math.floor(progress * totalTicks);
 
       setNonPlayingTickIndex(calculatedTickIndex);
@@ -2261,7 +2306,7 @@ export default function App() {
         }
         if (nonPlayingTickIndex > 0 && replayTrade) {
           const timeframeSeconds = TIMEFRAMES.find(tf => tf.id.toLowerCase() === replayTrade.timeframe.toLowerCase() || tf.label.toLowerCase() === replayTrade.timeframe.toLowerCase())?.seconds || 60;
-          const totalTicks = Math.max(1, Math.floor(timeframeSeconds / 2));
+          const totalTicks = 6;
           const curCandle = findLastCandleAtOrBefore(currentData, playheadTime);
           if (curCandle) {
             const elapsedSeconds = (nonPlayingTickIndex / totalTicks) * timeframeSeconds;
@@ -2291,7 +2336,7 @@ export default function App() {
         }
         if (nonPlayingTickIndex > 0) {
           const timeframeSeconds = selectedTimeframeRef.current?.seconds || 60;
-          const totalTicks = Math.max(1, Math.floor(timeframeSeconds / 2));
+          const totalTicks = 6;
           const curCandle = findLastCandleAtOrBefore(currentData, playheadTime);
           if (curCandle) {
             const elapsedSeconds = (nonPlayingTickIndex / totalTicks) * timeframeSeconds;
@@ -2347,8 +2392,7 @@ export default function App() {
 
     const intervalId = setInterval(() => {
       const timeframeSeconds = selectedTimeframe?.seconds || 60;
-      const totalTicks = Math.max(1, Math.floor(timeframeSeconds / 2));
-
+      const totalTicks = 6;
       setNonPlayingTickIndex((prevTickIdx) => {
         const nextTickIndex = prevTickIdx + 1;
         if (nextTickIndex >= totalTicks) {
@@ -2594,7 +2638,7 @@ export default function App() {
     if (candle) {
       if (theme.tickingEnabled !== false && nonPlayingTickIndex > 0) {
         const timeframeSeconds = selectedTimeframe.seconds;
-        const totalTicks = Math.max(1, Math.floor(timeframeSeconds / 2));
+        const totalTicks = 6;
         const ticking = getTickingCandleState(candle, nonPlayingTickIndex, totalTicks);
         setSimCurrentPrice(ticking.close);
       } else {
@@ -5368,29 +5412,15 @@ export default function App() {
             }
           }
 
-          const tT = Math.max(1, Math.floor(timeframeSeconds / 2));
+          const tT = 6;
           lastActiveTickIndexRef.current = Math.floor(nextProgress * tT);
 
           const nextGapSeconds = (nextCandleIdx + 1 < currentData.length) ? (currentData[nextCandleIdx + 1].time - currentData[nextCandleIdx].time) : timeframeSeconds;
           const nextTime = currentData[nextCandleIdx].time + nextProgress * nextGapSeconds;
 
-          const step = Math.floor(nextProgress * 4);
-          let stepPrice = currentData[nextCandleIdx].open;
-          const o = currentData[nextCandleIdx].open;
-          const h = currentData[nextCandleIdx].high;
-          const l = currentData[nextCandleIdx].low;
-          const c = currentData[nextCandleIdx].close;
-          if (c >= o) {
-            if (step === 0) stepPrice = o;
-            else if (step === 1) stepPrice = l;
-            else if (step === 2) stepPrice = h;
-            else stepPrice = c;
-          } else {
-            if (step === 0) stepPrice = o;
-            else if (step === 1) stepPrice = h;
-            else if (step === 2) stepPrice = l;
-            else stepPrice = c;
-          }
+          const step = Math.floor(nextProgress * 6);
+          const tickingVal = getTickingCandleState(currentData[nextCandleIdx], step, 6);
+          const stepPrice = tickingVal.close;
 
           replayCurrentTimeRef.current = nextTime;
           setReplayCurrentTime(nextTime);
@@ -5531,29 +5561,15 @@ export default function App() {
             }
           }
 
-          const tT = Math.max(1, Math.floor(timeframeSeconds / 2));
+          const tT = 6;
           lastActiveTickIndexRef.current = Math.floor(nextProgress * tT);
 
           const nextGapSeconds = (nextCandleIdx + 1 < currentData.length) ? (currentData[nextCandleIdx + 1].time - currentData[nextCandleIdx].time) : timeframeSeconds;
           const nextTime = currentData[nextCandleIdx].time + nextProgress * nextGapSeconds;
 
-          const step = Math.floor(nextProgress * 4);
-          let stepPrice = currentData[nextCandleIdx].open;
-          const o = currentData[nextCandleIdx].open;
-          const h = currentData[nextCandleIdx].high;
-          const l = currentData[nextCandleIdx].low;
-          const c = currentData[nextCandleIdx].close;
-          if (c >= o) {
-            if (step === 0) stepPrice = o;
-            else if (step === 1) stepPrice = l;
-            else if (step === 2) stepPrice = h;
-            else stepPrice = c;
-          } else {
-            if (step === 0) stepPrice = o;
-            else if (step === 1) stepPrice = h;
-            else if (step === 2) stepPrice = l;
-            else stepPrice = c;
-          }
+          const step = Math.floor(nextProgress * 6);
+          const tickingVal = getTickingCandleState(currentData[nextCandleIdx], step, 6);
+          const stepPrice = tickingVal.close;
 
           simCurrentTimeRef.current = nextTime;
           if (sessionCurrentTimesRef.current) {
@@ -5643,7 +5659,7 @@ export default function App() {
 
     if (mainCandle) {
       const timeframeSeconds = renderedTimeframe.seconds;
-      const totalTicks = Math.max(1, Math.floor(timeframeSeconds / 2));
+      const totalTicks = 6;
       const p_main = Math.max(0, Math.min(1.0, nonPlayingTickIndex / (totalTicks - 1 || 1)));
       return mainCandle.time + p_main * timeframeSeconds;
     }
@@ -5673,7 +5689,7 @@ export default function App() {
       const lastIndex = copy.length - 1;
       const lastCandle = copy[lastIndex];
       const timeframeSeconds = renderedTimeframe.seconds;
-      const totalTicks = Math.max(1, Math.floor(timeframeSeconds / 2));
+      const totalTicks = 6;
       
       if (theme.tickingEnabled !== false) {
         const ticking = getTickingCandleState(lastCandle, nonPlayingTickIndex, totalTicks);
@@ -5704,7 +5720,7 @@ export default function App() {
         const lastIndex = filtered.length - 1;
         const lastCandle = filtered[lastIndex];
         const timeframeSeconds = renderedTimeframe.seconds;
-        const totalTicks = Math.max(1, Math.floor(timeframeSeconds / 2));
+        const totalTicks = 6;
         
         const progress = Math.max(0, Math.min(1.0, (targetTime - lastCandle.time) / timeframeSeconds));
         const tickIdx = Math.floor(progress * (totalTicks - 1));
@@ -5726,80 +5742,14 @@ export default function App() {
       if (targetTime < lastCandle.time + timeframeSeconds) {
         const elapsed = Math.max(0, targetTime - lastCandle.time);
         const progress = Math.max(0, Math.min(0.999, elapsed / timeframeSeconds));
-        const step = Math.floor(progress * 6);
-        
-        const o = lastCandle.open;
-        const h = lastCandle.high;
-        const l = lastCandle.low;
-        const c = lastCandle.close;
-        
-        let formingHigh = o;
-        let formingLow = o;
-        const isBullish = c >= o;
-        
-        if (isBullish) {
-          switch (step) {
-            case 0:
-              formingHigh = o;
-              formingLow = o;
-              break;
-            case 1:
-              formingHigh = o;
-              formingLow = l;
-              break;
-            case 2:
-              formingHigh = o + (h - o) * 0.25;
-              formingLow = l;
-              break;
-            case 3:
-              formingHigh = o + (h - o) * 0.75;
-              formingLow = l;
-              break;
-            case 4:
-              formingHigh = h;
-              formingLow = l;
-              break;
-            case 5:
-            default:
-              formingHigh = h;
-              formingLow = l;
-              break;
-          }
-        } else {
-          switch (step) {
-            case 0:
-              formingHigh = o;
-              formingLow = o;
-              break;
-            case 1:
-              formingHigh = h;
-              formingLow = o;
-              break;
-            case 2:
-              formingHigh = h;
-              formingLow = o - (o - l) * 0.25;
-              break;
-            case 3:
-              formingHigh = h;
-              formingLow = o - (o - l) * 0.75;
-              break;
-            case 4:
-              formingHigh = h;
-              formingLow = l;
-              break;
-            case 5:
-            default:
-              formingHigh = h;
-              formingLow = l;
-              break;
-          }
-        }
+        const step = Math.min(5, Math.floor(progress * 6));
+        const ticking = getTickingCandleState(lastCandle, step, 6);
 
         filtered[lastIndex] = {
           ...lastCandle,
-          close: simCurrentPrice,
-          high: Math.max(formingHigh, simCurrentPrice),
-          low: Math.min(formingLow, simCurrentPrice)
+          close: ticking.close,
+          high: ticking.high,
+          low: ticking.low
         };
       }
     }
@@ -5819,7 +5769,7 @@ export default function App() {
       const lastIndex = copy.length - 1;
       const lastCandle = copy[lastIndex];
       const timeframeSeconds = renderedSyncedTimeframe?.seconds || 60;
-      const totalTicks = Math.max(1, Math.floor(timeframeSeconds / 2));
+      const totalTicks = 6;
       
       if (theme.tickingEnabled !== false) {
         const ticking = getTickingCandleState(lastCandle, nonPlayingTickIndex, totalTicks);
@@ -5850,7 +5800,7 @@ export default function App() {
         const lastIndex = filtered.length - 1;
         const lastCandle = filtered[lastIndex];
         const timeframeSeconds = renderedSyncedTimeframe?.seconds || 60;
-        const totalTicks = Math.max(1, Math.floor(timeframeSeconds / 2));
+        const totalTicks = 6;
         
         const progress = Math.max(0, Math.min(1.0, (targetTime - lastCandle.time) / timeframeSeconds));
         const tickIdx = Math.floor(progress * (totalTicks - 1));
