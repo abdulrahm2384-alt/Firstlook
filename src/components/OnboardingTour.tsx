@@ -129,23 +129,20 @@ export const OnboardingTour: React.FC<OnboardingTourProps> = ({
 
   if (dismissed) return null;
 
-  const handleFinish = async () => {
+  const handleFinish = () => {
     setDismissed(true);
     localStorage.setItem('firstlook_onboarding_dismissed', 'true');
     
     if (user?.id) {
-      try {
-        await supabase.auth.updateProfile({ onboarding_dismissed: true });
-      } catch (e) {
-        console.warn('Silent sync error updating user profile:', e);
-      }
+      supabase.auth.updateProfile({ onboarding_dismissed: true })
+        .catch(e => console.warn('Silent sync error updating user profile:', e));
     }
     onDismiss();
   };
 
-  const handleSkip = async () => {
+  const handleSkip = () => {
     // Dismiss/cancel immediately with no confirmation popups for ultra-slick native feeling
-    await handleFinish();
+    handleFinish();
   };
 
   const isTargetNearBottom = coords ? coords.top > window.innerHeight * 0.55 : false;
@@ -196,33 +193,39 @@ export const OnboardingTour: React.FC<OnboardingTourProps> = ({
         )}
       </AnimatePresence>
 
-      {/* 2. FLOATING STEP STATUS CONTROLLER BAR (SMALL & AT THE TOP-LEFT EDGE) */}
-      <div className="fixed top-16 left-4 z-[99999] max-w-[280px] w-[85vw] md:w-[280px]">
+      {/* 2. FLOATING STEP STATUS CONTROLLER BAR (DYNAMICALLY POSITIONED - COMPACT & POLISHED) */}
+      <div 
+        className={`fixed z-[99999] max-w-[218px] w-[88vw] md:w-[218px] transition-all duration-300 ${
+          selectedSymbol 
+            ? "top-16 left-4 md:top-20 md:left-6" 
+            : "bottom-24 left-1/2 -translate-x-1/2"
+        }`}
+      >
         <motion.div
-          initial={{ opacity: 0, x: -30, scale: 0.95 }}
-          animate={{ opacity: 1, x: 0, scale: 1 }}
-          exit={{ opacity: 0, x: -30, scale: 0.9 }}
-          transition={{ type: 'spring', damping: 20, stiffness: 200 }}
-          className="bg-slate-950/95 backdrop-blur-md text-white rounded-2xl p-3.5 border border-slate-800/80 shadow-[0_15px_40px_rgba(0,0,0,0.5)] flex flex-col gap-3 overflow-hidden relative"
+          initial={{ opacity: 0, y: selectedSymbol ? -15 : 15, scale: 0.95 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ opacity: 0, y: selectedSymbol ? -15 : 15, scale: 0.9 }}
+          transition={{ type: 'spring', damping: 22, stiffness: 220 }}
+          className="bg-slate-950/95 backdrop-blur-md text-white rounded-xl p-2.5 border border-slate-800/80 shadow-[0_12px_30px_rgba(0,0,0,0.5)] flex flex-col gap-2 overflow-hidden relative"
         >
           {/* Subtle Ambient Background Flare */}
-          <div className="absolute -top-12 -right-12 w-24 h-24 bg-indigo-500/10 rounded-full blur-2xl pointer-events-none" />
+          <div className="absolute -top-12 -right-12 w-16 h-16 bg-indigo-500/10 rounded-full blur-2xl pointer-events-none" />
 
           {/* Header */}
-          <div className="flex items-center justify-between border-b border-white/[0.04] pb-2">
-            <div className="flex items-center gap-1.5">
-              <div className="w-5 h-5 bg-indigo-950/30 rounded-lg flex items-center justify-center border border-indigo-500/30">
-                <Sparkles size={10} className="text-indigo-400 animate-pulse" />
+          <div className="flex items-center justify-between border-b border-white/[0.04] pb-1">
+            <div className="flex items-center gap-1">
+              <div className="w-3.5 h-3.5 bg-indigo-950/30 rounded flex items-center justify-center border border-indigo-500/20">
+                <Sparkles size={7} className="text-indigo-400 animate-pulse" />
               </div>
-              <span className="text-[9px] font-black tracking-[0.15em] text-slate-300 uppercase">FirstLook Guide</span>
+              <span className="text-[8px] font-black tracking-[0.12em] text-slate-300 uppercase">FirstLook Guide</span>
             </div>
             
             <button 
               onClick={handleSkip}
-              className="p-1 hover:bg-white/[0.06] rounded-lg transition-colors text-slate-400 hover:text-white"
+              className="p-1 hover:bg-white/[0.06] rounded-md transition-colors text-slate-400 hover:text-white"
               title="Skip Walkthrough"
             >
-              <X size={12} />
+              <X size={10} />
             </button>
           </div>
 
@@ -230,17 +233,17 @@ export const OnboardingTour: React.FC<OnboardingTourProps> = ({
             {step === 1 && (
               <motion.div
                 key="step1"
-                initial={{ opacity: 0, x: 15 }}
+                initial={{ opacity: 0, x: 10 }}
                 animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -15 }}
-                className="space-y-2"
+                exit={{ opacity: 0, x: -10 }}
+                className="space-y-1"
               >
-                <h4 className="text-[10.5px] font-black tracking-[0.05em] text-indigo-400 uppercase">Step 1: Set Target Pair</h4>
-                <p className="text-[10px] text-slate-300 font-medium leading-relaxed">
-                  Let's load up an active pair! Add your first trading pair (like <strong className="text-white font-black bg-white/[0.06] px-1 py-0.5 rounded-md">EURUSD</strong>) inside the input box, and then click on the pair to open the chart.
+                <h4 className="text-[9.5px] font-bold tracking-wide text-indigo-400 uppercase">1: Set Pair</h4>
+                <p className="text-[9px] text-slate-300 font-medium leading-relaxed">
+                  Search a trading pair (e.g., <strong className="text-white font-extrabold bg-white/[0.06] px-1 py-0.2 rounded">EURUSD</strong>) on the Watchlist to load the chart.
                 </p>
-                <div className="text-[9px] bg-slate-900/40 p-2 rounded-xl text-slate-400 font-semibold flex items-center gap-2 border border-white/[0.02]">
-                  <span className="flex h-1.5 w-1.5 rounded-full bg-indigo-500 animate-pulse" />
+                <div className="text-[8px] bg-slate-900/40 p-1 rounded text-slate-400 font-semibold flex items-center gap-1 border border-white/[0.02]">
+                  <span className="flex h-1 w-1 rounded-full bg-indigo-500 animate-pulse" />
                   <span>Waiting for target symbol...</span>
                 </div>
               </motion.div>
@@ -249,18 +252,18 @@ export const OnboardingTour: React.FC<OnboardingTourProps> = ({
             {step === 2 && (
               <motion.div
                 key="step2"
-                initial={{ opacity: 0, x: 15 }}
+                initial={{ opacity: 0, x: 10 }}
                 animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -15 }}
-                className="space-y-2"
+                exit={{ opacity: 0, x: -10 }}
+                className="space-y-1"
               >
-                <h4 className="text-[10.5px] font-black tracking-[0.05em] text-indigo-400 uppercase">Step 2: Stream Live Candles</h4>
-                <p className="text-[10px] text-slate-300 font-medium leading-relaxed">
-                  Click the <strong className="text-emerald-400 font-black">Play</strong> button in the floating bar to initiate the bar-by-bar candle feed stream.
+                <h4 className="text-[9.5px] font-bold tracking-wide text-indigo-400 uppercase">2: Stream Candles</h4>
+                <p className="text-[9px] text-slate-300 font-medium leading-relaxed">
+                  Press <strong className="text-emerald-400 font-bold">Play</strong> in the toolbar to stream historical bar-by-bar candle ticks.
                 </p>
-                <div className="text-[9px] bg-slate-900/40 p-2 rounded-xl text-slate-400 font-semibold flex items-center gap-2 border border-white/[0.02]">
-                  <span className="flex h-1.5 w-1.5 rounded-full bg-indigo-500 animate-pulse" />
-                  <span>Tap Play to see active candles...</span>
+                <div className="text-[8px] bg-slate-900/40 p-1 rounded text-slate-400 font-semibold flex items-center gap-1 border border-white/[0.02]">
+                  <span className="flex h-1 w-1 rounded-full bg-indigo-500 animate-pulse" />
+                  <span>Waiting for play click...</span>
                 </div>
               </motion.div>
             )}
@@ -268,18 +271,18 @@ export const OnboardingTour: React.FC<OnboardingTourProps> = ({
             {step === 3 && (
               <motion.div
                 key="step3"
-                initial={{ opacity: 0, x: 15 }}
+                initial={{ opacity: 0, x: 10 }}
                 animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -15 }}
-                className="space-y-2"
+                exit={{ opacity: 0, x: -10 }}
+                className="space-y-1"
               >
-                <h4 className="text-[10.5px] font-black tracking-[0.05em] text-indigo-400 uppercase">Step 3: Deploy Setup</h4>
-                <p className="text-[10px] text-slate-300 font-medium leading-relaxed">
-                  Tap the <strong className="text-emerald-400 font-black">BUY</strong> or <strong className="text-rose-400 font-black">SELL</strong> tool to place a live risk-reward forecasting layout on the chart.
+                <h4 className="text-[9.5px] font-bold tracking-wide text-indigo-400 uppercase">3: Deploy Setup</h4>
+                <p className="text-[9px] text-slate-300 font-medium leading-relaxed">
+                  Click <strong className="text-emerald-400 font-bold">BUY</strong> or <strong className="text-rose-400 font-bold">SELL</strong> on the chart to apply your risk-to-reward forecast tool.
                 </p>
-                <div className="text-[9px] bg-slate-900/40 p-2 rounded-xl text-slate-400 font-semibold flex items-center gap-2 border border-white/[0.02]">
-                  <span className="flex h-1.5 w-1.5 rounded-full bg-indigo-500 animate-pulse" />
-                  <span>Deploy setup tool...</span>
+                <div className="text-[8px] bg-slate-900/40 p-1 rounded text-slate-400 font-semibold flex items-center gap-1 border border-white/[0.02]">
+                  <span className="flex h-1 w-1 rounded-full bg-indigo-500 animate-pulse" />
+                  <span>Waiting for drawing placement...</span>
                 </div>
               </motion.div>
             )}
@@ -290,40 +293,49 @@ export const OnboardingTour: React.FC<OnboardingTourProps> = ({
                 initial={{ opacity: 0, scale: 0.95 }}
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.95 }}
-                className="space-y-2.5"
+                className="space-y-1.5"
               >
-                <div className="flex items-center gap-1.5 text-emerald-400">
-                  <Award size={14} className="animate-bounce" />
-                  <h4 className="text-[10.5px] font-black uppercase tracking-wider">Strategy Deployed!</h4>
+                <div className="flex items-center gap-1 text-emerald-400">
+                  <Award size={11} className="animate-bounce" />
+                  <h4 className="text-[9.5px] font-bold uppercase tracking-wider">Strategy Deployed!</h4>
                 </div>
-                <p className="text-[10px] text-slate-300 font-medium leading-relaxed">
-                  Superb execution! Drag the green and red handle limits on the chart to adjust Stop Loss and Take Profit levels.
+                <p className="text-[9px] text-slate-300 font-medium leading-relaxed">
+                  Excellent! Drag the red/green handle limits on the chart to adjust Take Profit and Stop Loss levels.
                 </p>
                 <button
                   onClick={handleFinish}
-                  className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-black uppercase tracking-widest text-[9px] py-2.5 rounded-xl transition-all shadow-md hover:shadow-indigo-600/35 flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 duration-200"
+                  className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold uppercase tracking-widest text-[8px] py-1.5 rounded-lg transition-all shadow-md hover:shadow-indigo-600/20 flex items-center justify-center gap-1 cursor-pointer active:scale-95 duration-150 text-center"
                 >
-                  <span>Sandbox Terminal</span>
-                  <ArrowRight size={11} strokeWidth={2.5} />
+                  <span>Finish Tutorial</span>
+                  <ArrowRight size={9} strokeWidth={2.5} />
                 </button>
               </motion.div>
             )}
           </AnimatePresence>
 
-          {/* Bottom Step Dots Indicator Tracker */}
+          {/* Bottom Step Dots Indicator Tracker and Skip Link */}
           {step <= 3 && (
-            <div className="flex items-center justify-between border-t border-white/[0.04] pt-2 text-[8px] font-black uppercase tracking-wider text-slate-500">
+            <div className="flex items-center justify-between border-t border-white/[0.04] pt-1.5 text-[7.5px] font-black uppercase tracking-wider text-slate-500">
               <div className="flex items-center gap-1">
                 {[1, 2, 3].map((s) => (
                   <div
                     key={s}
-                    className={`h-1 rounded-full transition-all duration-300 ${
-                      step === s ? 'w-4 bg-indigo-500' : 'w-1 bg-slate-800'
+                    className={`h-0.5 rounded-full transition-all duration-300 ${
+                      step === s ? 'w-2.5 bg-indigo-500' : 'w-0.5 bg-slate-800'
                     }`}
                   />
                 ))}
               </div>
-              <span>Step {step} of 3</span>
+              <div className="flex items-center gap-1.5">
+                <span>Step {step}/3</span>
+                <span>•</span>
+                <button 
+                  onClick={handleSkip} 
+                  className="text-slate-400 hover:text-white capitalize font-medium underline decoration-slate-700 cursor-pointer text-[7.5px]"
+                >
+                  Skip
+                </button>
+              </div>
             </div>
           )}
         </motion.div>

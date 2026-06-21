@@ -311,7 +311,7 @@ export function getMissingCandleRanges(
     const futureCandles = cachedCandles.filter(c => c.time > targetTime);
     if (futureCandles.length < 500) {
       needFutureReq = true;
-      needFutureStartTime = newestTime + 1;
+      needFutureStartTime = Math.max(newestTime + 1, targetTime + 1);
     }
   }
 

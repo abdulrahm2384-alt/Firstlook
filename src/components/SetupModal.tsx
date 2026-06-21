@@ -176,7 +176,7 @@ export function SetupModal({ isOpen, onClose, userId, pinnedText, onPinChange, o
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={handleClose}
-            className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[200]"
+            className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[3000]"
           />
 
           <motion.div 
@@ -184,7 +184,7 @@ export function SetupModal({ isOpen, onClose, userId, pinnedText, onPinChange, o
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: '100%', opacity: 0 }}
             transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-            className="fixed bottom-0 left-0 right-0 lg:top-1/2 lg:left-1/2 lg:-translate-x-1/2 lg:-translate-y-1/2 lg:bottom-auto lg:w-[480px] bg-white lg:rounded-[2.5rem] shadow-[-20px_0_50px_rgba(0,0,0,0.1)] z-[201] flex flex-col rounded-t-[2.5rem] overflow-hidden max-h-[85vh] lg:max-h-[80vh]"
+            className="fixed bottom-0 left-0 right-0 lg:top-1/2 lg:left-1/2 lg:-translate-x-1/2 lg:-translate-y-1/2 lg:bottom-auto lg:w-[480px] bg-white lg:rounded-[2.5rem] shadow-[-20px_0_50px_rgba(0,0,0,0.1)] z-[3001] flex flex-col rounded-t-[2.5rem] overflow-hidden max-h-[85vh] lg:max-h-[80vh]"
           >
             {/* Header */}
             <div className="px-6 py-4 border-b border-slate-50 flex items-center justify-between bg-white/80 backdrop-blur-md sticky top-0 z-10">

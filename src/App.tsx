@@ -2333,6 +2333,9 @@ export default function App() {
 
   // Passive, background real-time ticker running when playback is idle/paused
   useEffect(() => {
+    if (!selectedSymbol) {
+      return;
+    }
     const isPlaying = isReplayMode ? replayIsPlaying : simIsPlaying;
     if (isPlaying) {
       return;
@@ -4338,9 +4341,9 @@ export default function App() {
         return;
       }
     } else {
-      // Sensationally Fast Transitions: ONLY clear candles if switching to a completely different symbol to keep old timeframe visible during transition.
+      setHistoricalData([]);
+      setRenderedTimeframeId(timeframeId);
       if (selectedSymbol !== symbol) {
-        setHistoricalData([]);
         loadedSymbolRef.current = null;
         simCurrentTimeRef.current = null;
         setSimCurrentTime(null);
@@ -4557,8 +4560,11 @@ export default function App() {
             loadedSymbolRef.current = symbol;
             loadedTimeframeRef.current = timeframeId;
             
+            const isSameSymbolTimeframeChange = loadedSymbolRef.current === symbol && loadedTimeframeRef.current !== timeframeId;
+            
             if (!isReplayMode) {
-              if (simCurrentTimeRef.current === null || lastLoadedSessionKeyRef.current !== currentSessionKey || finalForceSnap) {
+              const shouldSnap = simCurrentTimeRef.current === null || lastLoadedSessionKeyRef.current !== currentSessionKey || (finalForceSnap && !isSameSymbolTimeframeChange);
+              if (shouldSnap) {
                 const targetTime = initialEndTime || activeItem?.last_play_candle_time;
                 let snappedTimeToSet = targetTime;
                 if (combined.length > 0) {
@@ -4581,7 +4587,8 @@ export default function App() {
                 setSimCurrentTime(timeToSet);
               }
             } else {
-              if (replayCurrentTimeRef.current === null || lastLoadedSessionKeyRef.current !== currentSessionKey || finalForceSnap) {
+              const shouldSnap = replayCurrentTimeRef.current === null || lastLoadedSessionKeyRef.current !== currentSessionKey || (finalForceSnap && !isSameSymbolTimeframeChange);
+              if (shouldSnap) {
                 const targetTime = initialEndTime || activeItem?.last_play_candle_time;
                 let snappedTimeToSet = targetTime;
                 if (combined.length > 0) {
@@ -6582,7 +6589,7 @@ export default function App() {
                   onClick={() => setIsMobileNavOpen(false)} 
                 />
               )}
-              <div className="absolute top-1.5 left-3 md:left-6 z-50 flex items-center gap-1.5">
+              <div className="absolute top-1.5 left-3 md:left-6 z-[140] flex items-center gap-1.5">
                 {!isReplayMode ? (
                   <div className="relative">
                     <button 
@@ -7591,6 +7598,11 @@ export default function App() {
                         />
                       )}
                     </AnimatePresence>
+
+                    {/* Loading glassmorphism blur overlay when changing timeframe/symbol with existing candles on screen */}
+                    {isSyncedLoading && visibleSyncedData.length > 0 && (
+                      <div className="absolute inset-0 bg-slate-100/15 backdrop-blur-[6px] z-[90] transition-all duration-300 pointer-events-auto" />
+                    )}
                   </div>
                 );
 
@@ -7707,6 +7719,11 @@ export default function App() {
                         />
                       )}
                     </AnimatePresence>
+
+                    {/* Loading glassmorphism blur overlay when changing timeframe/symbol with existing candles on screen */}
+                    {isLoadingPast && historicalData.length > 0 && (
+                      <div className="absolute inset-0 bg-slate-100/15 backdrop-blur-[6px] z-[90] transition-all duration-300 pointer-events-auto" />
+                    )}
                   </div>
                 );
 
@@ -7982,7 +7999,10 @@ export default function App() {
                         <div className="flex items-center justify-between px-1">
                           <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">Class Filters</label>
                           <button
-                            onClick={() => setIsSetupModalOpen(true)}
+                            onClick={() => {
+                              setIsSetupModalOpen(true);
+                              setIsMenuOpen(false);
+                            }}
                             className="text-[9px] font-black text-indigo-600 hover:text-indigo-800 uppercase tracking-wider flex items-center gap-1 cursor-pointer selection:bg-transparent"
                             title="Configure Setup Rules"
                           >
@@ -8064,7 +8084,10 @@ export default function App() {
                                           <div className="text-[9px] font-bold text-slate-400 italic">Rules documented in setup configuration.</div>
                                         )}
                                         <button
-                                          onClick={() => setIsSetupModalOpen(true)}
+                                          onClick={() => {
+                                            setIsSetupModalOpen(true);
+                                            setIsMenuOpen(false);
+                                          }}
                                           className="mt-3 w-full py-2 bg-indigo-50/70 hover:bg-indigo-100/60 text-indigo-600 rounded-xl text-[9px] font-black uppercase tracking-wider transition-all active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer border border-indigo-100/40"
                                         >
                                           <LayoutGrid size={11} />
@@ -8536,7 +8559,7 @@ export default function App() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={() => setShowSyncInfoModal(false)}
-            className="fixed inset-0 bg-slate-950/60 backdrop-blur-md z-[200] flex items-center justify-center p-4 cursor-default"
+            className="fixed inset-0 bg-slate-950/60 backdrop-blur-md z-[3000] flex items-center justify-center p-4 cursor-default"
           >
             <motion.div
               initial={{ scale: 0.95, y: 15, opacity: 0 }}
@@ -8700,18 +8723,6 @@ export default function App() {
 
       {/* PWA Install Prompt */}
       <InstallPrompt />
-
-      {/* Onboarding Tour Walkthrough */}
-      {isOnboardingTourOpen && (
-        <OnboardingTour
-          user={session?.user}
-          selectedSymbol={selectedSymbol}
-          simIsPlaying={simIsPlaying}
-          drawingsCount={drawings.length}
-          watchlistCount={watchlist.length}
-          onDismiss={() => setIsOnboardingTourOpen(false)}
-        />
-      )}
 
       {/* Settings Modal (Appearance) */}
       <AnimatePresence>
@@ -9790,6 +9801,18 @@ export default function App() {
           </div>
         )}
       </AnimatePresence>
+
+      {/* Onboarding Tour Walkthrough (Mounted globally at root) */}
+      {isOnboardingTourOpen && (
+        <OnboardingTour
+          user={session?.user}
+          selectedSymbol={selectedSymbol}
+          simIsPlaying={simIsPlaying}
+          drawingsCount={drawings.length}
+          watchlistCount={watchlist.length}
+          onDismiss={() => setIsOnboardingTourOpen(false)}
+        />
+      )}
     </div>
   );
 }

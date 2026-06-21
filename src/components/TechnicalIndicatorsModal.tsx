@@ -66,7 +66,7 @@ export function TechnicalIndicatorsModal({
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={onClose}
-            className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[200]"
+            className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[3000]"
           />
 
           {/* Modal / Drawer */}
@@ -75,7 +75,7 @@ export function TechnicalIndicatorsModal({
             animate={{ y: 0 }}
             exit={{ y: '100%' }}
             transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-            className={`fixed bottom-0 left-0 right-0 lg:top-1/2 lg:left-1/2 lg:-translate-x-1/2 lg:-translate-y-1/2 lg:bottom-auto lg:w-[650px] lg:h-[600px] bg-white lg:rounded-3xl shadow-2xl z-[201] flex flex-col rounded-t-3xl overflow-hidden max-h-[90vh] transition-all duration-300`}
+            className={`fixed bottom-0 left-0 right-0 lg:top-1/2 lg:left-1/2 lg:-translate-x-1/2 lg:-translate-y-1/2 lg:bottom-auto lg:w-[650px] lg:h-[600px] bg-white lg:rounded-3xl shadow-2xl z-[3001] flex flex-col rounded-t-3xl overflow-hidden max-h-[90vh] transition-all duration-300`}
           >
             {/* Header */}
             <div className="p-6 border-b border-slate-100 flex items-center justify-between">

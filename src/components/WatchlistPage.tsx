@@ -1125,14 +1125,10 @@ export function WatchlistPage({
     }
   }, []);
 
-  // Set up periodic slide carousel transition every 5 seconds
+  // Set up periodic slide carousel transition (disabled to stop background re-render loops and reduce CPU overhead)
   useEffect(() => {
-    if (sponsorPool.length <= 1) return;
-    const timer = setInterval(() => {
-      setCurrentAdIndex((prev) => (prev + 1) % sponsorPool.length);
-    }, 5000); // Rotate every 5 seconds
-    return () => clearInterval(timer);
-  }, [sponsorPool.length]);
+    // Disabled background timer
+  }, []);
 
   // Track isAddModalOpen transition to detect returning from 'Explore Markets'
   const prevAddModalOpenRef = useRef(isAddModalOpen);
@@ -2240,7 +2236,7 @@ export function WatchlistPage({
         whileHover={{ scale: 1.08, y: -2 }}
         whileTap={{ scale: 0.92 }}
         onClick={() => setIsSupportOpen(prev => !prev)}
-        className="fixed bottom-6 right-6 z-[2040] flex items-center justify-center w-8 h-8 rounded-full bg-[#011b33] border border-slate-700/60 text-white hover:text-emerald-400 hover:border-emerald-500/40 shadow-[0_6px_15px_rgba(1,27,51,0.25)] hover:shadow-[0_8px_18px_rgba(1,27,51,0.35)] transition-all cursor-pointer group"
+        className="fixed bottom-6 left-6 z-[2040] flex items-center justify-center w-8 h-8 rounded-full bg-[#011b33] border border-slate-700/60 text-white hover:text-emerald-400 hover:border-emerald-500/40 shadow-[0_6px_15px_rgba(1,27,51,0.25)] hover:shadow-[0_8px_18px_rgba(1,27,51,0.35)] transition-all cursor-pointer group"
         title={isSupportOpen ? "Close Support Chat" : "Direct Support Chat"}
       >
         <AnimatePresence mode="wait">
