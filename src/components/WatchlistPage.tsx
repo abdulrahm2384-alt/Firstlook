@@ -1475,6 +1475,7 @@ export function WatchlistPage({
 
             {/* Add Asset Button */}
             <motion.button 
+              id="onboarding-add-pair-btn"
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
               type="button"
@@ -1563,24 +1564,25 @@ export function WatchlistPage({
               </div>
 
               <Reorder.Group axis="y" values={currentItems} onReorder={handleReorder} className="space-y-0">
-                {currentItems.map((item) => {
+                {currentItems.map((item, idx) => {
                   const sessionKey = item.prefix ? `${item.symbol}_${item.prefix}` : item.symbol;
                   return (
-                    <WatchlistItemRow
-                      key={item.id}
-                      item={item}
-                      session={backtestSessions[item.id] || backtestSessions[sessionKey]}
-                      onSelect={handleSelect}
-                      onToggleStatus={toggleStatus}
-                      onDelete={deleteItem}
-                      onEditNotes={handleEditNotes}
-                      onExtend={handleOpenExtendModal}
-                      isMenuOpen={menuOpenId === sessionKey}
-                      onToggleMenu={handleToggleMenu}
-                      menuRef={menuRef}
-                      setups={setups}
-                      journalTrades={journalTrades}
-                    />
+                    <div id={idx === 0 ? "onboarding-watchlist-item-0" : undefined} key={item.id}>
+                      <WatchlistItemRow
+                        item={item}
+                        session={backtestSessions[item.id] || backtestSessions[sessionKey]}
+                        onSelect={handleSelect}
+                        onToggleStatus={toggleStatus}
+                        onDelete={deleteItem}
+                        onEditNotes={handleEditNotes}
+                        onExtend={handleOpenExtendModal}
+                        isMenuOpen={menuOpenId === sessionKey}
+                        onToggleMenu={handleToggleMenu}
+                        menuRef={menuRef}
+                        setups={setups}
+                        journalTrades={journalTrades}
+                      />
+                    </div>
                   );
                 })}
               </Reorder.Group>

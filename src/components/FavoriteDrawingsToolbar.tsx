@@ -670,6 +670,7 @@ export const FavoriteDrawingsToolbar = memo(function FavoriteDrawingsToolbar({
                 <div className="flex items-center gap-1 shrink-0">
                   {/* Buy Button */}
                   <button
+                    id="onboarding-buy-btn"
                     onClick={(e) => {
                       e.stopPropagation();
                       const activeSetups = (setups || []).filter(s => (s.confluences && s.confluences.length > 0) || s.image_url);
@@ -686,6 +687,7 @@ export const FavoriteDrawingsToolbar = memo(function FavoriteDrawingsToolbar({
 
                   {/* Sell Button */}
                   <button
+                    id="onboarding-sell-btn"
                     onClick={(e) => {
                       e.stopPropagation();
                       const activeSetups = (setups || []).filter(s => (s.confluences && s.confluences.length > 0) || s.image_url);
@@ -755,24 +757,10 @@ export const FavoriteDrawingsToolbar = memo(function FavoriteDrawingsToolbar({
                       transition={{ type: 'spring', damping: 18, stiffness: 300 }}
                       onPointerDown={(e) => e.stopPropagation()}
                       onMouseDown={(e) => e.stopPropagation()}
-                      className="absolute bottom-full mb-4 left-1/2 bg-white/95 backdrop-blur-md border border-slate-200 shadow-2xl rounded-2xl flex flex-col items-center gap-1.5 z-[210] p-3 min-w-[160px] origin-bottom shadow-indigo-500/10"
+                      className="absolute bottom-full mb-3 left-1/2 bg-white/95 backdrop-blur-md border border-slate-200 shadow-2xl rounded-2xl flex flex-col items-center gap-1.5 z-[210] p-1.5 min-w-[42px] origin-bottom shadow-indigo-500/10"
                     >
-                      {/* Label badge to identify the panel */}
-                      <div className="px-2 py-0.5 border-b border-slate-100 w-full text-center select-none flex items-center justify-between gap-2">
-                        <span className="text-[8.5px] font-black uppercase text-indigo-500 tracking-wider flex items-center gap-1.5">
-                          <Star size={8} className="fill-amber-400 text-amber-500" />
-                          Favorite Tools
-                        </span>
-                        <button 
-                          onClick={() => setFavoritesExpanded(false)}
-                          className="text-slate-400 hover:text-slate-650 transition-colors cursor-pointer"
-                        >
-                          <X size={10} className="stroke-[3px]" />
-                        </button>
-                      </div>
-
-                      {/* Flex row of favorites (generously sized, elegant rounded buttons) */}
-                      <div className={`flex flex-wrap items-center justify-center ${isMobileLandscape ? 'gap-[1.5vh] p-[1vh]' : isPortrait ? 'gap-1.5 p-0.5' : 'gap-2 p-1'}`}>
+                      {/* Vertical stack of favorites (generously sized, elegant rounded buttons) */}
+                      <div className="flex flex-col items-center gap-1.5 p-0.5">
                         {favorites.map(toolId => {
                           const Icon = TOOL_ICONS[toolId] || Star;
                           const isToolActive = activeTool === toolId;
@@ -788,17 +776,17 @@ export const FavoriteDrawingsToolbar = memo(function FavoriteDrawingsToolbar({
                               className={`rounded-xl transition-all shrink-0 cursor-pointer border flex items-center justify-center ${
                                 isToolActive 
                                   ? 'bg-blue-600 text-white border-blue-700 shadow-md scale-105' 
-                                  : 'text-slate-700 bg-slate-50/70 border-slate-200/50 hover:bg-slate-100/90 hover:text-slate-900 hover:border-slate-300 hover:scale-110 active:scale-95'
+                                  : 'text-slate-705 bg-slate-50/70 border-slate-200/50 hover:bg-slate-100/90 hover:text-slate-900 hover:border-slate-300 hover:scale-110 active:scale-95'
                               } ${
                                 isMobileLandscape 
-                                  ? 'p-[2vh]' 
+                                  ? 'p-[2vh] min-w-[5vh] min-h-[5vh]' 
                                   : isPortrait 
                                     ? 'p-2 min-w-[32px] min-h-[32px]' 
-                                    : 'p-2.5 min-w-[36px] min-h-[36px]'
+                                    : 'p-2 min-w-[34px] min-h-[34px]'
                               }`}
                               title={toolId.replace('_', ' ').toLowerCase()}
                             >
-                              <Icon size={isMobileLandscape ? '5.5vh' : isPortrait ? 15 : 20} strokeWidth={2.5} />
+                              <Icon size={isMobileLandscape ? '5.5vh' : isPortrait ? 15 : 18} strokeWidth={2.5} />
                             </button>
                           );
                         })}
@@ -815,6 +803,7 @@ export const FavoriteDrawingsToolbar = memo(function FavoriteDrawingsToolbar({
                   {(!isSimulating && !isReplayMode && !simIsPlaying) ? (
                     /* Play button launcher when not active */
                     <button
+                      id="onboarding-play-btn"
                       onClick={() => setIsSimulating?.(true)}
                       className="h-7 w-7 flex items-center justify-center rounded-full bg-slate-900 hover:bg-slate-800 text-white shadow-md active:scale-95 transition-all cursor-pointer shrink-0 ml-1"
                       title="Start Simulation"
@@ -826,6 +815,7 @@ export const FavoriteDrawingsToolbar = memo(function FavoriteDrawingsToolbar({
                     <div className="flex items-center gap-1">
                       {/* Play/Pause Button */}
                       <button
+                        id="onboarding-play-btn"
                         onClick={togglePlayback}
                         className={`w-7 h-7 flex items-center justify-center rounded-full transition-all ${(isReplayMode ? replayIsPlaying : simIsPlaying) ? 'bg-indigo-50 text-indigo-600' : 'bg-slate-900 text-white shadow-md'}`}
                         title={(isReplayMode ? replayIsPlaying : simIsPlaying) ? "Pause" : "Play"}

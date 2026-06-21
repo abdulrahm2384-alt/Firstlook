@@ -92,7 +92,7 @@ export const supabase = {
       }
     },
 
-    async updateProfile(details: { username?: string; full_name?: string; country?: string; bio?: string; experience_level?: string; avatar_url?: string }) {
+    async updateProfile(details: { username?: string; full_name?: string; country?: string; bio?: string; experience_level?: string; avatar_url?: string; onboarding_dismissed?: boolean }) {
       try {
         const token = localStorage.getItem('firstlook_session_token') || getSessionCookie();
         if (!token) throw new Error('No active session token');

@@ -222,6 +222,43 @@ export async function clearAllLocalChartCaches(): Promise<void> {
 }
 
 /**
+ * Preload all valid cached records from IndexedDB to the fast synchronous in-memory RAM cache.
+ * This completely unlocks instant timeframe and symbol changes upon application startup.
+ */
+export async function preloadAllCachesToMemory(): Promise<void> {
+  try {
+    const db = await dbInstance.init();
+    return new Promise<void>((resolve) => {
+      const transaction = db.transaction('candles_v3', 'readonly');
+      const store = transaction.objectStore('candles_v3');
+      const request = store.getAll();
+      request.onsuccess = () => {
+        const results = request.result;
+        if (results && Array.isArray(results)) {
+          let preloadedCount = 0;
+          for (const item of results) {
+            if (item && item.key && item.data) {
+              if (item.data.candles && item.data.candles.length >= 50) {
+                inMemoryCache.set(item.key, item.data);
+                preloadedCount++;
+              }
+            }
+          }
+          console.log(`[CacheDB] Successfully preloaded ${preloadedCount} sets into fast RAM cache.`);
+        }
+        resolve();
+      };
+      request.onerror = () => {
+        console.warn('[CacheDB] Failed to preload cache keys on warm startup.');
+        resolve();
+      };
+    });
+  } catch (err) {
+    console.warn('[CacheDB] Error during warm startup preload:', err);
+  }
+}
+
+/**
  * Assesses whether the cached candles cover the requested past and future time ranges.
  * If there is some coverage but some parts are missing, we query only the missing intervals.
  */

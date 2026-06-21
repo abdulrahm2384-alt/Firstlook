@@ -1104,7 +1104,8 @@ async function startServer() {
                 country: user.country,
                 bio: user.bio,
                 experience_level: user.experience_level,
-                avatar_url: user.avatar_url
+                avatar_url: user.avatar_url,
+                onboarding_dismissed: !!user.onboarding_dismissed
               }
             }
           }
@@ -1179,7 +1180,8 @@ async function startServer() {
               country: user.country,
               bio: user.bio,
               experience_level: user.experience_level,
-              avatar_url: user.avatar_url
+              avatar_url: user.avatar_url,
+              onboarding_dismissed: !!user.onboarding_dismissed
             }
           }
         },
@@ -1329,7 +1331,8 @@ async function startServer() {
               country: user.country || "",
               bio: user.bio || "",
               experience_level: user.experience_level || "",
-              avatar_url: user.avatar_url || ""
+              avatar_url: user.avatar_url || "",
+              onboarding_dismissed: !!user.onboarding_dismissed
             }
           }
         },
@@ -1368,7 +1371,8 @@ async function startServer() {
               country: user.country || "",
               bio: user.bio || "",
               experience_level: user.experience_level || "",
-              avatar_url: user.avatar_url || ""
+              avatar_url: user.avatar_url || "",
+              onboarding_dismissed: !!user.onboarding_dismissed
             }
           }
         }
@@ -1388,7 +1392,7 @@ async function startServer() {
 
       const token = authHeader.split(" ")[1];
       const decoded = jwt.verify(token, JWT_SECRET) as any;
-      const { username, full_name, country, bio, experience_level, avatar_url } = req.body;
+      const { username, full_name, country, bio, experience_level, avatar_url, onboarding_dismissed } = req.body;
 
       const updated = await db.updateUserProfile(decoded.id, {
         username,
@@ -1396,7 +1400,8 @@ async function startServer() {
         country,
         bio,
         experience_level,
-        avatar_url
+        avatar_url,
+        onboarding_dismissed: onboarding_dismissed !== undefined ? onboarding_dismissed : undefined
       });
 
       if (!updated) {
@@ -1413,7 +1418,8 @@ async function startServer() {
           country: updated.country || "",
           bio: updated.bio || "",
           experience_level: updated.experience_level || "",
-          avatar_url: updated.avatar_url || ""
+          avatar_url: updated.avatar_url || "",
+          onboarding_dismissed: !!updated.onboarding_dismissed
         }
       });
     } catch (err: any) {

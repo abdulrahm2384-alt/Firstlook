@@ -9,7 +9,38 @@ import { MarketDataSource } from '../types/watchlist';
 import { normalizeTimestampToMs, normalizeTimestampToSeconds, getPipMultiplier } from '../lib/marketUtils';
 
 const dataCache = new Map<string, { data: Candle[], timestamp: number }>();
-const CACHE_TTL = 30000; // 30 seconds
+const CACHE_TTL = 300000; // 5 minutes cache TTL for blazing fast timeframe switches
+
+// Memory cache to store fetched news per symbol to completely prevent redundant background network fetches
+const symbolNewsCache = new Map<string, any[]>();
+const newsFetchingSymbols = new Set<string>();
+
+// Helper to inject news events into candles
+function injectNewsEvents(candles: Candle[], newsEvents: any[]): void {
+  if (!newsEvents || newsEvents.length === 0 || !candles || candles.length === 0) return;
+  for (const item of newsEvents) {
+    if (!item || typeof item.time !== 'number') continue;
+    const t = item.time;
+    
+    // Find the closest preceding candle in candles
+    let targetIdx = -1;
+    for (let i = candles.length - 1; i >= 0; i--) {
+      if (candles[i].time <= t) {
+        targetIdx = i;
+        break;
+      }
+    }
+    
+    if (targetIdx !== -1) {
+      const candle = candles[targetIdx];
+      candle.news = candle.news || [];
+      const exists = candle.news.some((n: any) => n.id === item.id || n.title === item.title);
+      if (!exists) {
+        candle.news.push(item);
+      }
+    }
+  }
+}
 
 export function clearMarketDataCache(): void {
   dataCache.clear();
@@ -77,70 +108,69 @@ export async function fetchMarketData(symbol: string, timeframeId: string, limit
 
     // Timeframe-independent news injection (Asynchronously non-blocking to prevent UI/API render delays!)
     if (result && result.length > 0 && timeframeId !== '1h') {
-      // Execute as a background promise without awaiting it, returning main results instantly
-      (async () => {
-        try {
-          const firstTime = result[0].time;
-          const lastTime = result[result.length - 1].time;
-          
-          // Calculate the total duration spanned by the loaded candles in hours
-          const totalDurationHours = Math.ceil((lastTime - firstTime) / 3600);
-          
-          // The API supports up to 500 candles per query.
-          // Limit to maximum 4 chunks of 500 hours (2000 hours of history) to prevent heavy network and server overhead.
-          const chunkSize = 500;
-          const numChunks = Math.min(4, Math.ceil(totalDurationHours / chunkSize));
-          
-          const chunkPromises: Promise<Candle[]>[] = [];
-          for (let i = 0; i < numChunks; i++) {
-            const chunkEndTime = lastTime + 18000 - (i * chunkSize * 3600);
-            if (chunkEndTime > firstTime - 18000) {
-              chunkPromises.push(
-                fetchMarketData(symbol, '1h', chunkSize, chunkEndTime, undefined, source, marketType)
-              );
+      const symbolKey = symbol.toUpperCase();
+      const cachedNewsForSymbol = symbolNewsCache.get(symbolKey);
+      
+      if (cachedNewsForSymbol && cachedNewsForSymbol.length > 0) {
+        // Instant memory lookup! Completely bypasses background network calls.
+        injectNewsEvents(result, cachedNewsForSymbol);
+      } else if (!newsFetchingSymbols.has(symbolKey)) {
+        newsFetchingSymbols.add(symbolKey);
+        (async () => {
+          try {
+            const firstTime = result[0].time;
+            const lastTime = result[result.length - 1].time;
+            
+            // Calculate the total duration spanned by the loaded candles in hours
+            const totalDurationHours = Math.ceil((lastTime - firstTime) / 3600);
+            const chunkSize = 500;
+            const numChunks = Math.min(4, Math.ceil(totalDurationHours / chunkSize));
+            
+            const chunkPromises: Promise<Candle[]>[] = [];
+            for (let i = 0; i < numChunks; i++) {
+              const chunkEndTime = lastTime + 18000 - (i * chunkSize * 3600);
+              if (chunkEndTime > firstTime - 18000) {
+                // Fetch directly from the backend API warehouse to keep it extremely light and isolated
+                chunkPromises.push(
+                  fetchWarehouseData(symbol, '1h', chunkSize, chunkEndTime, undefined, source, marketType)
+                );
+              }
             }
-          }
-          
-          const chunkResults = await Promise.all(chunkPromises);
-          let newsEvents: any[] = [];
-          for (const h1Candles of chunkResults) {
-            if (h1Candles) {
-              for (const c of h1Candles) {
-                if (c.news && Array.isArray(c.news)) {
-                  newsEvents.push(...c.news);
+            
+            const chunkResults = await Promise.all(chunkPromises);
+            let newsEvents: any[] = [];
+            for (const h1Candles of chunkResults) {
+              if (h1Candles) {
+                for (const c of h1Candles) {
+                  if (c.news && Array.isArray(c.news)) {
+                    newsEvents.push(...c.news);
+                  }
                 }
               }
             }
-          }
-          
-          if (newsEvents.length > 0) {
-            for (const item of newsEvents) {
-              if (!item || typeof item.time !== 'number') continue;
-              const t = item.time;
+            
+            if (newsEvents.length > 0) {
+              // De-duplicate news events
+              const uniqueNewsMap = new Map<string, any>();
+              for (const item of newsEvents) {
+                if (item && item.id) {
+                  uniqueNewsMap.set(String(item.id), item);
+                } else if (item && item.title) {
+                  uniqueNewsMap.set(item.title, item);
+                }
+              }
+              const deduplicatedNews = Array.from(uniqueNewsMap.values());
               
-              // Find the closest preceding candle in result
-              let targetIdx = -1;
-              for (let i = result.length - 1; i >= 0; i--) {
-                if (result[i].time <= t) {
-                  targetIdx = i;
-                  break;
-                }
-              }
-              
-              if (targetIdx !== -1) {
-                const candle = result[targetIdx];
-                candle.news = candle.news || [];
-                const exists = candle.news.some((n: any) => n.id === item.id || n.title === item.title);
-                if (!exists) {
-                  candle.news.push(item);
-                }
-              }
+              symbolNewsCache.set(symbolKey, deduplicatedNews);
+              injectNewsEvents(result, deduplicatedNews);
             }
+          } catch (newsErr) {
+            console.warn('[News Aggregator] Failed to load background 1h candles for news injection:', newsErr);
+          } finally {
+            newsFetchingSymbols.delete(symbolKey);
           }
-        } catch (newsErr) {
-          console.warn('[News Aggregator] Failed to load background 1h candles for news injection:', newsErr);
-        }
-      })();
+        })();
+      }
     }
 
     return result;

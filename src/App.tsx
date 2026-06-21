@@ -66,6 +66,17 @@ import {
   Lock
 } from 'lucide-react';
 import { 
+  Layers, 
+  Grid, 
+  Globe, 
+  Palette, 
+  Newspaper, 
+  Percent, 
+  Coins, 
+  RotateCcw, 
+  Sliders 
+} from 'lucide-react';
+import { 
   AreaChart,
   Area,
   LineChart, 
@@ -98,13 +109,16 @@ import { calculatePips, normalizeSymbol, getPipMultiplier } from './lib/marketUt
 import { supabase, isSupabasePlaceholder } from './lib/supabase';
 import { LoginPage } from './components/LoginPage';
 import { WatchlistPage } from './components/WatchlistPage';
+import { OnboardingTour } from './components/OnboardingTour';
+import { SettingsPanel } from './components/SettingsPanel';
 import { persistenceService } from './services/persistenceService';
 import {
   saveChartStateToCache,
   getChartStateFromCache,
   getChartStateFromCacheSync,
   getMissingCandleRanges,
-  clearAllLocalChartCaches
+  clearAllLocalChartCaches,
+  preloadAllCachesToMemory
 } from './services/chartCacheService';
 
 import { WatchlistItem } from './types/watchlist';
@@ -756,6 +770,7 @@ const getStreakBadgeInfo = (target: number) => {
 // Update the export of App or the main component as well
 export default function App() {
   const [session, setSession] = useState<any>(null);
+  const [isOnboardingTourOpen, setIsOnboardingTourOpen] = useState<boolean>(false);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [params, setParams] = useState<StrategyParams>({});
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
@@ -787,6 +802,13 @@ export default function App() {
       window.removeEventListener('popstate', handleLocationChange);
       window.history.pushState = originalPushState;
     };
+  }, []);
+
+  // Warm cache preload on app startup
+  useEffect(() => {
+    preloadAllCachesToMemory()
+      .then(() => console.log('[Cache] Preload complete.'))
+      .catch(err => console.warn('[Cache] Preload error:', err));
   }, []);
   
   // PWA states and hooks detection
@@ -921,6 +943,7 @@ export default function App() {
   const desktopMenuPopupRef = useRef<HTMLDivElement>(null);
   const timeframePopupRef = useRef<HTMLDivElement>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [activeSettingsTab, setActiveSettingsTab] = useState<'canvas' | 'candles' | 'broker' | 'layout' | 'resets'>('canvas');
   const [selectedNewsGroup, setSelectedNewsGroup] = useState<{ newsItems: any[]; isFuture: boolean } | null>(null);
   const [isIndicatorsOpen, setIsIndicatorsOpen] = useState(false);
   const [isSetupModalOpen, setIsSetupModalOpen] = useState(false);
@@ -2067,12 +2090,41 @@ export default function App() {
 
   const lastActiveTickIndexRef = useRef<number>(0);
 
-  // Reset ticking indices on relevant symbol, timeframe, or mode shifts
+  // Sync ticking index and price from high-precision current playhead when timeframe, symbol, or mode shifts to prevent snapping
   useEffect(() => {
-    setNonPlayingTickIndex(0);
-    setNonPlayingTickPrice(null);
-    lastActiveTickIndexRef.current = 0;
-  }, [selectedSymbol, selectedTimeframe, isSimulating, isReplayMode]);
+    // Determine the active playhead time
+    const activeTime = isReplayMode 
+      ? replayCurrentTimeRef.current 
+      : (simCurrentTimeRef.current || (currentSessionKey && backtestSessionsRef.current[currentSessionKey]?.currentTime));
+    
+    if (!activeTime || historicalData.length === 0) {
+      setNonPlayingTickIndex(0);
+      setNonPlayingTickPrice(null);
+      lastActiveTickIndexRef.current = 0;
+      return;
+    }
+
+    const currentCandle = findLastCandleAtOrBefore(historicalData, activeTime);
+    if (currentCandle) {
+      const timeframeSeconds = selectedTimeframe.seconds;
+      const elapsedSeconds = Math.max(0, activeTime - currentCandle.time);
+      const progress = Math.max(0, Math.min(0.9999, elapsedSeconds / timeframeSeconds));
+      const totalTicks = Math.max(1, Math.floor(timeframeSeconds / 2));
+      const calculatedTickIndex = Math.floor(progress * totalTicks);
+
+      setNonPlayingTickIndex(calculatedTickIndex);
+      lastActiveTickIndexRef.current = calculatedTickIndex;
+
+      // Compute and set the exact price corresponding to that index so there's no price jump on chart
+      const ticking = getTickingCandleState(currentCandle, calculatedTickIndex, totalTicks);
+      setNonPlayingTickPrice(ticking.close);
+      setSimCurrentPrice(ticking.close);
+    } else {
+      setNonPlayingTickIndex(0);
+      setNonPlayingTickPrice(null);
+      lastActiveTickIndexRef.current = 0;
+    }
+  }, [selectedSymbol, selectedTimeframe, isSimulating, isReplayMode, historicalData, simCurrentTime, replayCurrentTime]);
 
   // Clean ticking when actively playing so it doesn't pollute next pause transition
   const wasPlayingRef = useRef(false);
@@ -2202,7 +2254,8 @@ export default function App() {
           } else {
             const snapCandle = findLastCandleAtOrBefore(currentData, playheadTime);
             if (snapCandle) {
-              playheadTime = snapCandle.time;
+              // Keep exact unsnapped playheadTime to preserve precise multi-timeframe synchronization
+              // playheadTime = snapCandle.time;
             }
           }
         }
@@ -2231,7 +2284,8 @@ export default function App() {
           } else {
             const snapCandle = findLastCandleAtOrBefore(currentData, playheadTime);
             if (snapCandle) {
-              playheadTime = snapCandle.time;
+              // Keep exact unsnapped playheadTime to preserve precise multi-timeframe synchronization
+              // playheadTime = snapCandle.time;
             }
           }
         }
@@ -2535,9 +2589,16 @@ export default function App() {
     if (!time || historicalData.length === 0) return;
     const candle = findLastCandleAtOrBefore(historicalData, time);
     if (candle) {
-      setSimCurrentPrice(candle.close);
+      if (theme.tickingEnabled !== false && nonPlayingTickIndex > 0) {
+        const timeframeSeconds = selectedTimeframe.seconds;
+        const totalTicks = Math.max(1, Math.floor(timeframeSeconds / 2));
+        const ticking = getTickingCandleState(candle, nonPlayingTickIndex, totalTicks);
+        setSimCurrentPrice(ticking.close);
+      } else {
+        setSimCurrentPrice(candle.close);
+      }
     }
-  }, [simCurrentTime, replayCurrentTime, isReplayMode, historicalData, simIsPlaying, replayIsPlaying]);
+  }, [simCurrentTime, replayCurrentTime, isReplayMode, historicalData, simIsPlaying, replayIsPlaying, nonPlayingTickIndex, selectedTimeframe, theme]);
 
   // Sync simCurrentTime to backtestSessions with throttling to prevent excessive re-renders and save to persistence
   const lastSyncRef = useRef<number>(0);
@@ -2718,6 +2779,19 @@ export default function App() {
 
     return () => subscription.unsubscribe();
   }, [mySessionId]);
+
+  // Synchronize onboarding tour status based on profile settings and localStorage
+  useEffect(() => {
+    const isLocalDismissed = localStorage.getItem('firstlook_onboarding_dismissed') === 'true';
+    const isProfileDismissed = session?.user?.onboarding_dismissed === true;
+    
+    // Open onboarding if neither is dismissed
+    if (!isLocalDismissed && !isProfileDismissed) {
+      setIsOnboardingTourOpen(true);
+    } else {
+      setIsOnboardingTourOpen(false);
+    }
+  }, [session?.user?.onboarding_dismissed, session]);
 
   // Session conflict watcher
   useEffect(() => {
@@ -4067,6 +4141,57 @@ export default function App() {
     return apiFetchCandleData(symbol, timeframe, limit, endTime, startTime, source, marketType);
   }, []);
 
+  const prefetchAdjacentTimeframes = useCallback((
+    symbol: string,
+    timeframeId: string,
+    initialEndTime: number,
+    source?: string,
+    marketType?: string
+  ) => {
+    if (!symbol || !initialEndTime || simIsPlaying) return;
+
+    // Define adjacent timeframes to warm-load
+    const candidates = ['5m', '15m', '1h', '4h'].filter(tf => tf !== timeframeId);
+
+    setTimeout(async () => {
+      for (let i = 0; i < candidates.length; i++) {
+        const tf = candidates[i];
+
+        // Abort if user selected a different symbol
+        if (lastRequestedSymbolRef.current !== symbol) break;
+
+        // Check cache synchronously first, if present - do not refetch
+        const syncCached = getChartStateFromCacheSync(symbol, tf, activeWatchlistItemId || activePrefix || undefined);
+        if (syncCached && syncCached.candles && syncCached.candles.length >= 50) {
+          continue;
+        }
+
+        // Stagger requests to avoid traffic bursts
+        await new Promise(r => setTimeout(r, i * 800));
+
+        if (lastRequestedSymbolRef.current !== symbol) break;
+
+        try {
+          const past = await fetchCandleData(symbol, tf, 500, initialEndTime, undefined, source, marketType);
+          if (past && past.length >= 50) {
+            await saveChartStateToCache(
+              symbol,
+              tf,
+              activeWatchlistItemId || activePrefix || undefined,
+              past,
+              simCurrentTimeRef.current,
+              replayCurrentTimeRef.current,
+              indicators
+            );
+            console.log(`[CacheWarm] Warmed background timeframe ${tf} for ${symbol}`);
+          }
+        } catch (err) {
+          console.warn(`[CacheWarm] Silent prefetch failed for timeframe ${tf}:`, err);
+        }
+      }
+    }, 1500);
+  }, [simIsPlaying, activeWatchlistItemId, activePrefix, indicators, fetchCandleData]);
+
   const loadMarketData = async (symbol: string, timeframeId: string, initialEndTime?: number, sourceOverride?: string, marketTypeOverride?: MarketType, forceTimeSnap?: boolean) => {
     if (!symbol) return;
     lastRequestedSymbolRef.current = symbol;
@@ -4209,20 +4334,20 @@ export default function App() {
       // If we have 100% complete coverage in memory cache, we short-circuit the entire block synchronously
       if (initialEndTime && missingRanges && !missingRanges.needPast && !missingRanges.needFuture) {
         setIsLoadingPast(false);
+        prefetchAdjacentTimeframes(symbol, timeframeId, initialEndTime, source, marketType);
         return;
       }
     } else {
-      // Clear previous timeframe's candles to avoid rendering mismatch while fetching the new one
-      setHistoricalData([]);
-      loadedTimeframeRef.current = null;
-      
+      // Sensationally Fast Transitions: ONLY clear candles if switching to a completely different symbol to keep old timeframe visible during transition.
       if (selectedSymbol !== symbol) {
+        setHistoricalData([]);
         loadedSymbolRef.current = null;
         simCurrentTimeRef.current = null;
         setSimCurrentTime(null);
         replayCurrentTimeRef.current = null;
         setReplayCurrentTime(null);
       }
+      loadedTimeframeRef.current = null;
     }
     
     if (!initialEndTime) {
@@ -4393,7 +4518,9 @@ export default function App() {
             simCurrentTimeRef.current,
             replayCurrentTimeRef.current,
             indicators
-          ).catch(() => {});
+          ).then(() => {
+            prefetchAdjacentTimeframes(symbol, timeframeId, initialEndTime, source, marketType);
+          }).catch(() => {});
         }
       } else {
         // 2. Fallback to full API retrieve if no cache exists
@@ -4442,10 +4569,7 @@ export default function App() {
                   } else if (targetTime > lastCandleTime) {
                     // Keep original target to prevent snapping backward
                   } else {
-                    const snapCandle = findLastCandleAtOrBefore(combined, targetTime);
-                    if (snapCandle) {
-                      snappedTimeToSet = snapCandle.time;
-                    }
+                    // Keep exact unsnapped continuous playhead time to ensure sub-candle precision across all timeframes and prevent snapping after refresh
                   }
                 }
                 const timeToSet = snappedTimeToSet;
@@ -4468,10 +4592,7 @@ export default function App() {
                   } else if (targetTime > lastCandleTime) {
                     // Keep original target to prevent snapping backward
                   } else {
-                    const snapCandle = findLastCandleAtOrBefore(combined, targetTime);
-                    if (snapCandle) {
-                      snappedTimeToSet = snapCandle.time;
-                    }
+                    // Keep exact unsnapped continuous playhead time to ensure sub-candle precision across all timeframes and prevent snapping after refresh
                   }
                 }
                 const timeToSet = snappedTimeToSet;
@@ -4497,7 +4618,9 @@ export default function App() {
             simCurrentTimeRef.current,
             replayCurrentTimeRef.current,
             indicators
-          ).catch(() => {});
+          ).then(() => {
+            prefetchAdjacentTimeframes(symbol, timeframeId, initialEndTime, source, marketType);
+          }).catch(() => {});
         }
       }
     } catch (err: any) {
@@ -6455,7 +6578,7 @@ export default function App() {
             <>
               {isMobileNavOpen && (
                 <div 
-                  className="fixed inset-0 z-40 bg-transparent" 
+                  className="fixed inset-0 z-[120] bg-slate-900/60 backdrop-blur-sm" 
                   onClick={() => setIsMobileNavOpen(false)} 
                 />
               )}
@@ -6464,115 +6587,142 @@ export default function App() {
                   <div className="relative">
                     <button 
                       onClick={() => setIsMobileNavOpen(!isMobileNavOpen)}
-                      className="w-8 h-8 bg-white hover:bg-slate-50 border border-slate-100 rounded-full shadow-lg transition-all active:scale-95 text-slate-600 hover:text-slate-950 flex items-center justify-center"
+                      className="w-8 h-8 bg-white hover:bg-slate-50 border border-slate-100 rounded-full shadow-lg transition-all active:scale-95 text-slate-600 hover:text-slate-950 flex items-center justify-center animate-bounce-subtle"
                       title="Menu"
                     >
-                      <Settings2 size={16} strokeWidth={2.2} className="text-indigo-600" />
+                      <ChevronDown 
+                        size={16} 
+                        strokeWidth={2.5} 
+                        className={`text-indigo-600 transition-transform duration-300 ${isMobileNavOpen ? 'rotate-180' : ''}`} 
+                      />
                     </button>
                     
                     <AnimatePresence>
                       {isMobileNavOpen && (
                         <motion.div
-                          initial={{ opacity: 0, scale: 0.8 }}
-                          animate={{ opacity: 1, scale: 1 }}
-                          exit={{ opacity: 0, scale: 0.8 }}
-                          transition={{ type: "spring", stiffness: 450, damping: 28 }}
-                          style={{ transformOrigin: "top left" }}
-                          className="absolute -top-1 -left-1 bg-white/95 backdrop-blur-2xl border border-slate-100 rounded-2xl shadow-2xl p-1.5 flex flex-col gap-0.5 min-w-[145px] z-50 text-slate-800"
+                          initial={{ y: '-100%', opacity: 0 }}
+                          animate={{ y: 0, opacity: 1 }}
+                          exit={{ y: '-100%', opacity: 0 }}
+                          transition={{ type: 'spring', damping: 25, stiffness: 220 }}
+                          className="fixed top-0 inset-x-0 bg-white z-[130] rounded-b-[28px] shadow-2xl overflow-hidden border-b border-slate-200/50 font-sans flex flex-col text-slate-800"
                         >
-                          <div className="flex items-center justify-between px-2.5 py-1 border-b border-slate-100 pb-1.5 mb-1">
-                            <span className="text-[9px] font-black text-slate-400 tracking-wider uppercase">Menu</span>
+                          {/* Navigation Bar Header inside menu */}
+                          <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Advanced Controls</span>
                             <button 
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setIsMobileNavOpen(false);
-                              }}
-                              className="text-slate-400 hover:text-slate-900 transition-colors p-0.5"
+                              onClick={() => setIsMobileNavOpen(false)}
+                              className="w-7 h-7 bg-slate-100 hover:bg-slate-200 text-slate-500 rounded-full flex items-center justify-center transition-all cursor-pointer"
                             >
-                              <X size={10} strokeWidth={2.5} />
+                              <X size={14} strokeWidth={2.5} />
                             </button>
                           </div>
 
-                          <button
-                            onClick={() => {
-                              setIsMenuOpen(true);
-                              setIsMobileNavOpen(false);
-                            }}
-                            className="flex items-center gap-2.5 px-2.5 py-1.5 text-[10px] font-black text-slate-600 hover:text-slate-900 hover:bg-slate-50 rounded-xl transition-all text-left w-full whitespace-nowrap"
-                          >
-                            <Info size={12} className="text-blue-500" />
-                            <span>Details</span>
-                          </button>
-                          
-                          <button
-                            onClick={() => {
-                              setSelectedSymbol(null);
-                              setIsMobileNavOpen(false);
-                            }}
-                            className="flex items-center gap-2.5 px-2.5 py-1.5 text-[10px] font-black text-slate-600 hover:text-slate-900 hover:bg-slate-50 rounded-xl transition-all text-left w-full whitespace-nowrap"
-                          >
-                            <List size={12} className="text-emerald-500" />
-                            <span>Watchlist</span>
-                          </button>
-                          
-                          <button
-                            onClick={() => {
-                              setIsSetupModalOpen(true);
-                              setIsMobileNavOpen(false);
-                            }}
-                            className="flex items-center gap-2.5 px-2.5 py-1.5 text-[10px] font-black text-slate-600 hover:text-slate-900 hover:bg-slate-50 rounded-xl transition-all text-left w-full whitespace-nowrap"
-                          >
-                            <LayoutGrid size={12} className="text-violet-500" />
-                            <span>Setup</span>
-                          </button>
+                          {/* Options Grid Layout matching high end native dashboard */}
+                          <div className="grid grid-cols-2 gap-3 p-4">
+                            {/* Option 1: Details */}
+                            <button
+                              onClick={() => {
+                                setIsMenuOpen(true);
+                                setIsMobileNavOpen(false);
+                              }}
+                              className="flex items-center gap-3 p-3 bg-slate-50 hover:bg-slate-100 border border-slate-100/80 rounded-2xl transition-all active:scale-95 text-left cursor-pointer"
+                            >
+                              <div className="w-8 h-8 rounded-xl bg-blue-500 text-white flex items-center justify-center flex-shrink-0">
+                                <Info size={14} />
+                              </div>
+                              <div className="flex flex-col">
+                                <span className="text-[10px] font-black text-slate-800 uppercase tracking-wide">Details</span>
+                                <span className="text-[8px] text-slate-400 mt-0.5">Session info</span>
+                              </div>
+                            </button>
 
-                          <div className="h-px bg-slate-100 my-1 mx-1" />
+                            {/* Option 2: Watchlist */}
+                            <button
+                              onClick={() => {
+                                setSelectedSymbol(null);
+                                setIsMobileNavOpen(false);
+                              }}
+                              className="flex items-center gap-3 p-3 bg-slate-50 hover:bg-slate-100 border border-slate-100/80 rounded-2xl transition-all active:scale-95 text-left cursor-pointer"
+                            >
+                              <div className="w-8 h-8 rounded-xl bg-emerald-500 text-white flex items-center justify-center flex-shrink-0">
+                                <List size={14} />
+                              </div>
+                              <div className="flex flex-col">
+                                <span className="text-[10px] font-black text-slate-800 uppercase tracking-wide">Watchlist</span>
+                                <span className="text-[8px] text-slate-400 mt-0.5">Asset list</span>
+                              </div>
+                            </button>
 
-                          <button
-                            onClick={() => {
-                              handleRefreshChart();
-                              setIsMobileNavOpen(false);
-                            }}
-                            className="flex items-center gap-2.5 px-2.5 py-1.5 text-[10px] font-black text-slate-600 hover:text-slate-900 hover:bg-slate-50 rounded-xl transition-all text-left w-full whitespace-nowrap"
-                          >
-                            <RefreshCcw size={12} className="text-indigo-500" />
-                            <span>Refresh Charts</span>
-                          </button>
+                            {/* Option 3: Refresh Charts */}
+                            <button
+                              onClick={() => {
+                                handleRefreshChart();
+                                setIsMobileNavOpen(false);
+                              }}
+                              className="flex items-center gap-3 p-3 bg-slate-50 hover:bg-slate-100 border border-slate-100/80 rounded-2xl transition-all active:scale-95 text-left cursor-pointer"
+                            >
+                              <div className="w-8 h-8 rounded-xl bg-indigo-500 text-white flex items-center justify-center flex-shrink-0">
+                                <RefreshCcw size={14} />
+                              </div>
+                              <div className="flex flex-col">
+                                <span className="text-[10px] font-black text-slate-800 uppercase tracking-wide">Refresh</span>
+                                <span className="text-[8px] text-slate-400 mt-0.5">Rebuild charts</span>
+                              </div>
+                            </button>
 
-                          <button
-                            onClick={() => {
-                              setIsMenuOpen(true);
-                              setSidebarTab('trades');
-                              setIsMobileNavOpen(false);
-                            }}
-                            className="flex items-center gap-2.5 px-2.5 py-1.5 text-[10px] font-black text-slate-600 hover:text-slate-900 hover:bg-slate-50 rounded-xl transition-all text-left w-full whitespace-nowrap"
-                          >
-                            <Repeat size={12} className="text-amber-500" />
-                            <span>Replay Trade</span>
-                          </button>
+                            {/* Option 4: Replay Trade */}
+                            <button
+                              onClick={() => {
+                                setIsMenuOpen(true);
+                                setSidebarTab('trades');
+                                setIsMobileNavOpen(false);
+                              }}
+                              className="flex items-center gap-3 p-3 bg-slate-50 hover:bg-slate-100 border border-slate-100/80 rounded-2xl transition-all active:scale-95 text-left cursor-pointer"
+                            >
+                              <div className="w-8 h-8 rounded-xl bg-amber-500 text-white flex items-center justify-center flex-shrink-0">
+                                <Repeat size={14} />
+                              </div>
+                              <div className="flex flex-col">
+                                <span className="text-[10px] font-black text-slate-800 uppercase tracking-wide">Replay</span>
+                                <span className="text-[8px] text-slate-400 mt-0.5">Journal replay</span>
+                              </div>
+                            </button>
 
-                          <button
-                            onClick={() => {
-                              setIsMenuOpen(false);
-                              setIsSyncedSelectorOpen(true);
-                              setIsMobileNavOpen(false);
-                            }}
-                            className="flex items-center gap-2.5 px-2.5 py-1.5 text-[10px] font-black text-slate-600 hover:text-indigo-600 hover:bg-slate-50 rounded-xl transition-all text-left w-full whitespace-nowrap cursor-pointer"
-                          >
-                            <Link2 size={12} className="text-indigo-500" />
-                            <span>Synced Charts</span>
-                          </button>
+                            {/* Option 5: Synced Charts */}
+                            <button
+                              onClick={() => {
+                                setIsMenuOpen(false);
+                                setIsSyncedSelectorOpen(true);
+                                setIsMobileNavOpen(false);
+                              }}
+                              className="flex items-center gap-3 p-3 bg-slate-50 hover:bg-slate-100 border border-slate-100/80 rounded-2xl transition-all active:scale-95 text-left cursor-pointer"
+                            >
+                              <div className="w-8 h-8 rounded-xl bg-teal-500 text-white flex items-center justify-center flex-shrink-0">
+                                <Link2 size={14} />
+                              </div>
+                              <div className="flex flex-col">
+                                <span className="text-[10px] font-black text-slate-800 uppercase tracking-wide">Synced</span>
+                                <span className="text-[8px] text-slate-400 mt-0.5">Multi-monitor</span>
+                              </div>
+                            </button>
 
-                          <button
-                            onClick={() => {
-                              setIsSettingsOpen(true);
-                              setIsMobileNavOpen(false);
-                            }}
-                            className="flex items-center gap-2.5 px-2.5 py-1.5 text-[10px] font-black text-slate-600 hover:text-indigo-600 hover:bg-slate-50 rounded-xl transition-all text-left w-full whitespace-nowrap cursor-pointer"
-                          >
-                            <Settings size={12} className="text-indigo-500" />
-                            <span>Settings</span>
-                          </button>
+                            {/* Option 6: Settings */}
+                            <button
+                              onClick={() => {
+                                setIsSettingsOpen(true);
+                                setIsMobileNavOpen(false);
+                              }}
+                              className="flex items-center gap-3 p-3 bg-slate-50 hover:bg-slate-100 border border-slate-100/80 rounded-2xl transition-all active:scale-95 text-left cursor-pointer"
+                            >
+                              <div className="w-8 h-8 rounded-xl bg-slate-800 text-white flex items-center justify-center flex-shrink-0">
+                                <Settings size={14} />
+                              </div>
+                              <div className="flex flex-col">
+                                <span className="text-[10px] font-black text-slate-800 uppercase tracking-wide">Settings</span>
+                                <span className="text-[8px] text-slate-400 mt-0.5">Configuration</span>
+                              </div>
+                            </button>
+                          </div>
                         </motion.div>
                       )}
                     </AnimatePresence>
@@ -7146,16 +7296,7 @@ export default function App() {
                     <span>Watchlist</span>
                   </button>
                   
-                  <button
-                    onClick={() => {
-                      setIsSetupModalOpen(true);
-                      setIsDesktopMenuOpen(false);
-                    }}
-                    className="flex items-center gap-2.5 px-2.5 py-2 text-[10px] font-black text-slate-600 hover:text-slate-900 hover:bg-slate-50 rounded-xl transition-all text-left w-full whitespace-nowrap cursor-pointer"
-                  >
-                    <LayoutGrid size={12} className="text-violet-500" />
-                    <span>Setup</span>
-                  </button>
+
 
                   <div className="h-px bg-slate-100 my-1 mx-1 shrink-0" />
 
@@ -7255,7 +7396,7 @@ export default function App() {
             )}
           </AnimatePresence>
 
-          <div className={`flex-grow flex flex-col transition-all duration-300 h-full ${isLoadingPast && historicalData.length > 0 ? 'blur-[1.5px] opacity-75 pointer-events-none' : 'blur-0 opacity-100'}`}>
+          <div className="flex-grow flex flex-col h-full opacity-100">
             {(() => {
                 // Resolved indicators for the synced comparison chart
                 const syncedIndicatorsToRender = syncedSymbol ? indicators.filter(ind => {
@@ -7820,20 +7961,10 @@ export default function App() {
                           setSelectedSymbol(null);
                           setIsMenuOpen(false);
                         }}
-                        className="flex-1 flex items-center justify-center gap-2 py-2 px-3 bg-white hover:bg-slate-100/70 text-slate-700 hover:text-slate-900 border border-slate-100 rounded-xl transition-all shadow-sm active:scale-95 text-[10px] font-black uppercase tracking-wider"
+                        className="w-full flex items-center justify-center gap-2 py-2 px-3 bg-white hover:bg-slate-100/70 text-slate-700 hover:text-slate-900 border border-slate-150 rounded-xl transition-all shadow-sm active:scale-95 text-[10px] font-black uppercase tracking-wider"
                       >
                         <List size={13} className="text-emerald-500" />
-                        <span>Watchlist</span>
-                      </button>
-                      <button
-                        onClick={() => {
-                          setIsSetupModalOpen(true);
-                          setIsMenuOpen(false);
-                        }}
-                        className="flex-1 flex items-center justify-center gap-2 py-2 px-3 bg-white hover:bg-slate-100/70 text-slate-700 hover:text-slate-900 border border-slate-100 rounded-xl transition-all shadow-sm active:scale-95 text-[10px] font-black uppercase tracking-wider"
-                      >
-                        <LayoutGrid size={13} className="text-violet-500" />
-                        <span>Setup</span>
+                        <span>Back to Watchlist</span>
                       </button>
                     </div>
 
@@ -7850,7 +7981,14 @@ export default function App() {
                       <div className="flex flex-col gap-2">
                         <div className="flex items-center justify-between px-1">
                           <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">Class Filters</label>
-                          <span className="text-[8px] font-bold text-slate-300 uppercase tracking-tighter">Journal Engine</span>
+                          <button
+                            onClick={() => setIsSetupModalOpen(true)}
+                            className="text-[9px] font-black text-indigo-600 hover:text-indigo-800 uppercase tracking-wider flex items-center gap-1 cursor-pointer selection:bg-transparent"
+                            title="Configure Setup Rules"
+                          >
+                            <LayoutGrid size={10} className="text-indigo-500" />
+                            <span>Manage Setups</span>
+                          </button>
                         </div>
                         <div className="flex items-center p-1 bg-slate-100/50 rounded-[1.25rem] gap-0.5">
                           {availableSetups.map(setup => {
@@ -7925,6 +8063,13 @@ export default function App() {
                                         {(!setupData.confluences || setupData.confluences.length === 0) && !setupData.image_url && (
                                           <div className="text-[9px] font-bold text-slate-400 italic">Rules documented in setup configuration.</div>
                                         )}
+                                        <button
+                                          onClick={() => setIsSetupModalOpen(true)}
+                                          className="mt-3 w-full py-2 bg-indigo-50/70 hover:bg-indigo-100/60 text-indigo-600 rounded-xl text-[9px] font-black uppercase tracking-wider transition-all active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer border border-indigo-100/40"
+                                        >
+                                          <LayoutGrid size={11} />
+                                          <span>Configure {historyCategory} Model</span>
+                                        </button>
                                       </div>
                                     );
                                   })()}
@@ -8556,6 +8701,18 @@ export default function App() {
       {/* PWA Install Prompt */}
       <InstallPrompt />
 
+      {/* Onboarding Tour Walkthrough */}
+      {isOnboardingTourOpen && (
+        <OnboardingTour
+          user={session?.user}
+          selectedSymbol={selectedSymbol}
+          simIsPlaying={simIsPlaying}
+          drawingsCount={drawings.length}
+          watchlistCount={watchlist.length}
+          onDismiss={() => setIsOnboardingTourOpen(false)}
+        />
+      )}
+
       {/* Settings Modal (Appearance) */}
       <AnimatePresence>
         {isSettingsOpen && (
@@ -8565,15 +8722,34 @@ export default function App() {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setIsSettingsOpen(false)}
-              className="fixed inset-0 bg-black/5 backdrop-blur-[2px] z-[70]"
+              className="fixed inset-0 bg-black/5 backdrop-blur-[2px] z-[140]"
             />
-            <motion.div 
-              initial={{ x: '100%' }}
-              animate={{ x: 0 }}
-              exit={{ x: '100%' }}
-              transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-              className="fixed inset-y-0 right-0 w-80 bg-white shadow-[-20px_0_50px_rgba(0,0,0,0.05)] z-[80] border-l border-slate-100 flex flex-col"
-            >
+            <SettingsPanel
+              theme={theme}
+              setTheme={setTheme}
+              session={session}
+              persistenceService={persistenceService}
+              isMobile={isMobile}
+              isNewsStreamEnabled={isNewsStreamEnabled}
+              setIsNewsStreamEnabled={setIsNewsStreamEnabled}
+              showDrawingToolbar={showDrawingToolbar}
+              setShowDrawingToolbar={setShowDrawingToolbar}
+              resetFloatPositions={resetFloatPositions}
+              subscriptionPlan={subscriptionPlan}
+              setIsUpgradeModalOpen={setIsUpgradeModalOpen}
+              setUpgradeModalFeature={setUpgradeModalFeature}
+              activeSettingsTab={activeSettingsTab}
+              setActiveSettingsTab={setActiveSettingsTab}
+              onClose={() => setIsSettingsOpen(false)}
+            />
+            <div className="hidden select-none pointer-events-none opacity-0 max-w-0 max-h-0 overflow-hidden">
+              <motion.div 
+                initial={{ x: '100%' }}
+                animate={{ x: 0 }}
+                exit={{ x: '100%' }}
+                transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+                className="fixed inset-y-0 right-0 w-80 bg-white shadow-[-20px_0_50px_rgba(0,0,0,0.05)] z-[80] border-l border-slate-100 flex flex-col"
+              >
               <div className="p-6 border-b border-slate-50 flex items-center justify-between bg-white/80 backdrop-blur-md sticky top-0 z-10">
                 <div className="flex items-center gap-3">
                   <div className="w-8 h-8 rounded-lg bg-slate-900 flex items-center justify-center text-white">
@@ -8969,6 +9145,7 @@ export default function App() {
                 </button>
               </div>
             </motion.div>
+            </div>
           </>
         )}
         {/* Viewing Trade Details Modal moved to root level overlay */}

@@ -151,6 +151,7 @@ export async function initializeDatabase() {
     await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS bio VARCHAR DEFAULT '';");
     await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS experience_level VARCHAR DEFAULT '';");
     await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url VARCHAR DEFAULT '';");
+    await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarding_dismissed BOOLEAN DEFAULT FALSE;");
 
     // 2. User Trades
     await client.query(`
@@ -528,6 +529,7 @@ export const db = {
       bio: bio || '',
       experience_level: experienceLevel || '',
       avatar_url: avatarUrl || '',
+      onboarding_dismissed: false,
       created_at: new Date().toISOString() 
     };
 
@@ -563,6 +565,7 @@ export const db = {
       bio?: string; 
       experience_level?: string; 
       avatar_url?: string; 
+      onboarding_dismissed?: boolean;
     }
   ) {
     if (!isDbActive) {
