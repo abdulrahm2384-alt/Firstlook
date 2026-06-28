@@ -1206,7 +1206,8 @@ export function WatchlistPage({
   const filteredSources = useMemo(() => {
     if (!selectedAssetForSource) return [];
     
-    const isCrypto = (selectedAssetForSource.category as string) === 'Crypto';
+    const catLower = (selectedAssetForSource.category || '').toLowerCase();
+    const isCrypto = catLower === 'crypto';
     const allPotentialSources = [
       { id: 'binance', name: 'Binance', description: 'World\'s Largest Exchange', recommended: isCrypto ? true : undefined },
       { id: 'okx', name: 'OKX', description: 'Global Crypto Ecosystem', disabled: isCrypto ? true : undefined },
@@ -1223,10 +1224,14 @@ export function WatchlistPage({
       if (isCrypto) {
         return ['binance', 'bybit', 'okx'].includes(s.id);
       }
-      if (['Forex', 'Metals', 'Indices'].includes(selectedAssetForSource.category as string)) {
+      if (['forex', 'metals', 'indices'].includes(catLower)) {
         return ['exness', 'dukascopy', 'fxcm', 'oando', 'axiory'].includes(s.id);
       }
-      return s.id === 'axiory'; 
+      if (catLower === 'stocks') {
+        return ['exness', 'axiory'].includes(s.id);
+      }
+      // Safe fallback for other/unrecognized categories (such as Stocks, Others, etc.): Exness and Axiory, with Axiory being grayed out/disabled.
+      return ['exness', 'axiory'].includes(s.id);
     });
   }, [selectedAssetForSource, availableSources]);
 

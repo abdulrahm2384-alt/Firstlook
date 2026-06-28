@@ -3352,17 +3352,12 @@ async function startServer() {
 
       const rawSym = symbol || pair;
       const targetSymbol = rawSym ? String(rawSym).toUpperCase() : "";
-      const isStock = ['NVDA', 'TSLA', 'AAPL', 'MSFT', 'AMZN', 'META', 'AMD', 'GOOGL', 'AVGO'].includes(targetSymbol);
 
       let forexApiUrl = baseUrl;
-      if (isStock) {
-        forexApiUrl = `${baseUrl}/api/candles`;
+      if (!baseUrl.endsWith("/api/warehouse-candles")) {
+        forexApiUrl = `${baseUrl}/api/warehouse-candles`;
       } else {
-        if (!baseUrl.endsWith("/api/warehouse-candles")) {
-          forexApiUrl = `${baseUrl}/api/warehouse-candles`;
-        } else {
-          forexApiUrl = baseUrl;
-        }
+        forexApiUrl = baseUrl;
       }
       const forexApiSecret = process.env.FOREX_API_SECRET;
       
@@ -3373,11 +3368,7 @@ async function startServer() {
 
       // Format parameters according to specification
       const params = new URLSearchParams();
-      if (isStock) {
-        params.append("pair", targetSymbol.toLowerCase());
-      } else {
-        if (targetSymbol) params.append("symbol", targetSymbol);
-      }
+      if (targetSymbol) params.append("symbol", targetSymbol);
       
       if (source) params.append("source", String(source).toLowerCase());
       if (timeframe) params.append("timeframe", String(timeframe));

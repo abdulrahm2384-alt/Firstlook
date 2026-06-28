@@ -38,7 +38,7 @@ export function SyncedSelectorModal({ isOpen, onClose, onSelect, currentSymbol }
   const [isLoadingSources, setIsLoadingSources] = useState<boolean>(false);
 
   const isSyncable = (category: string) => {
-    return ['Crypto', 'Forex', 'Metals', 'Indices'].includes(category);
+    return ['Crypto', 'Forex', 'Metals', 'Indices', 'Stocks'].includes(category);
   };
 
   // Filter symbols
@@ -83,20 +83,28 @@ export function SyncedSelectorModal({ isOpen, onClose, onSelect, currentSymbol }
           throw new Error(`Expected JSON but received: ${ct || 'none'}`);
         }
         const data = await response.json();
-        const sources = data.sources || [];
-        setAvailableSources(sources);
-        if (sources.length > 0) {
-          const preferred = sources.find(s => s.toLowerCase() === 'exness') || 
-                            sources.find(s => !['axiory', 'fxcm', 'oando', 'dukascopy'].includes(s.toLowerCase())) || 
-                            sources[0];
-          setBrokerSource(preferred);
-        } else {
-          setBrokerSource((symbol.category as string) === 'Crypto' ? 'binance' : 'exness');
+        let sources = data.sources || [];
+        if (sources.length === 0) {
+          const cat = (symbol.category || '').toLowerCase();
+          if (cat === 'crypto') {
+            sources = ['binance', 'bybit', 'okx'];
+          } else if (cat === 'stocks') {
+            sources = ['exness', 'axiory'];
+          } else {
+            sources = ['exness', 'dukascopy', 'fxcm', 'oando', 'axiory'];
+          }
         }
+        setAvailableSources(sources);
+        const preferred = sources.find(s => s.toLowerCase() === 'exness') || 
+                          sources.find(s => !['axiory', 'fxcm', 'oando', 'dukascopy'].includes(s.toLowerCase())) || 
+                          sources[0];
+        setBrokerSource(preferred);
       } else {
         const fallbacks = (symbol.category as string) === 'Crypto' 
           ? ['binance', 'okx', 'bybit', 'bitflyer'] 
-          : ['exness', 'dukascopy', 'fxcm', 'oando', 'axiory'];
+          : (symbol.category as string) === 'Stocks'
+            ? ['exness', 'axiory']
+            : ['exness', 'dukascopy', 'fxcm', 'oando', 'axiory'];
         setAvailableSources(fallbacks);
         setBrokerSource(fallbacks[0]);
       }
@@ -104,7 +112,9 @@ export function SyncedSelectorModal({ isOpen, onClose, onSelect, currentSymbol }
       console.error('Error fetching sources for sync:', err);
       const fallbacks = (symbol.category as string) === 'Crypto' 
         ? ['binance', 'okx', 'bybit', 'bitflyer'] 
-        : ['exness', 'dukascopy', 'fxcm', 'oando', 'axiory'];
+        : (symbol.category as string) === 'Stocks'
+          ? ['exness', 'axiory']
+          : ['exness', 'dukascopy', 'fxcm', 'oando', 'axiory'];
       setAvailableSources(fallbacks);
       setBrokerSource(fallbacks[0]);
     } finally {
@@ -284,13 +294,20 @@ export function SyncedSelectorModal({ isOpen, onClose, onSelect, currentSymbol }
                     <div className="space-y-2">
                       <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Broker Feed / Data Source</label>
                       <div className="grid grid-cols-2 gap-2">
-                        {availableSources.map(src => {
+                        {availableSources.filter(src => {
+                          if (selectedSymbolInfo.category === 'Stocks') {
+                            return ['exness', 'axiory'].includes(src.toLowerCase());
+                          }
+                          return true;
+                        }).map(src => {
                           const meta = getSourceMeta(src);
                           const isSelected = brokerSource.toLowerCase() === src.toLowerCase();
+                          const isStocks = selectedSymbolInfo.category === 'Stocks';
                           const isCustomCat = ['Forex', 'Metals', 'Indices'].includes(selectedSymbolInfo.category);
                           const isDisabled = (isCustomCat && ['fxcm', 'oando', 'axiory'].includes(src.toLowerCase())) ||
-                                             (selectedSymbolInfo.category === 'Crypto' && src.toLowerCase() === 'okx');
-                          const isRecommended = (isCustomCat && src.toLowerCase() === 'exness') ||
+                                             (selectedSymbolInfo.category === 'Crypto' && src.toLowerCase() === 'okx') ||
+                                             (isStocks && src.toLowerCase() === 'axiory');
+                          const isRecommended = ((isCustomCat || isStocks) && src.toLowerCase() === 'exness') ||
                                                 (selectedSymbolInfo.category === 'Crypto' && src.toLowerCase() === 'binance');
                           const isPoor = isCustomCat && src.toLowerCase() === 'dukascopy';
                           return (

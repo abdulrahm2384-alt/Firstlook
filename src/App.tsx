@@ -3637,8 +3637,8 @@ export default function App() {
     const asset = POPULAR_SYMBOLS.find(s => s.symbol === symbol);
     if (!asset) return;
 
-    // Use provided source or default to axiory for Forex/Metals, Binance for Crypto
-    const finalSource = source || (asset.category === 'Crypto' ? 'binance' : 'axiory');
+    // Use provided source or default to exness for Forex/Metals/Stocks, Binance for Crypto
+    const finalSource = source || (asset.category === 'Crypto' ? 'binance' : 'exness');
     const finalMarketType = asset.category === 'Crypto' ? (marketType || 'spot') : undefined;
 
     // Auto-generate prefix if not updating an existing one
@@ -6455,7 +6455,7 @@ export default function App() {
                       <span className="text-sm sm:text-base font-black text-slate-900 tracking-tight leading-none">{showBacktestSetup.symbol}</span>
                       <span className="text-[7.5px] font-black text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded-full border border-indigo-100/40 uppercase whitespace-nowrap">
                         DATA FROM {(() => {
-                           const currentUiSource = showBacktestSetup.source || (POPULAR_SYMBOLS.find(s => s.symbol === showBacktestSetup.symbol)?.category === 'Crypto' ? 'binance' : 'axiory');
+                           const currentUiSource = showBacktestSetup.source || (POPULAR_SYMBOLS.find(s => s.symbol === showBacktestSetup.symbol)?.category === 'Crypto' ? 'binance' : 'exness');
                            return getAssetDatedFromLabel(showBacktestSetup.symbol || '', currentUiSource);
                         })()}
                       </span>
@@ -6464,7 +6464,7 @@ export default function App() {
                   <div className="flex flex-col justify-center text-left pl-4">
                     <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 select-none">Provider</span>
                     <span className="text-xs sm:text-sm font-black text-indigo-600 uppercase tracking-wider mt-0.5">
-                      {showBacktestSetup.source || (POPULAR_SYMBOLS.find(s => s.symbol === showBacktestSetup.symbol)?.category === 'Crypto' ? 'Binance' : 'Axiory')}
+                      {showBacktestSetup.source || (POPULAR_SYMBOLS.find(s => s.symbol === showBacktestSetup.symbol)?.category === 'Crypto' ? 'Binance' : 'Exness')}
                     </span>
                   </div>
                 </div>
@@ -6521,7 +6521,7 @@ export default function App() {
                             <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Start Date</span>
                             <span className="text-[7px] font-bold text-slate-400 uppercase tracking-tight mt-1 whitespace-nowrap overflow-hidden text-ellipsis">
                               Earliest: {(() => {
-                                 const currentUiSource = showBacktestSetup.source || (POPULAR_SYMBOLS.find(s => s.symbol === showBacktestSetup.symbol)?.category === 'Crypto' ? 'binance' : 'axiory');
+                                 const currentUiSource = showBacktestSetup.source || (POPULAR_SYMBOLS.find(s => s.symbol === showBacktestSetup.symbol)?.category === 'Crypto' ? 'binance' : 'exness');
                                  return getMinSelectableStartDate(showBacktestSetup.symbol || '', currentUiSource).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
                               })()}
                             </span>
@@ -6533,7 +6533,7 @@ export default function App() {
                               id="backtest-start-date"
                               key={`start-${showBacktestSetup.symbol}`}
                               min={(() => {
-                                 const currentUiSource = showBacktestSetup.source || (POPULAR_SYMBOLS.find(s => s.symbol === showBacktestSetup.symbol)?.category === 'Crypto' ? 'binance' : 'axiory');
+                                 const currentUiSource = showBacktestSetup.source || (POPULAR_SYMBOLS.find(s => s.symbol === showBacktestSetup.symbol)?.category === 'Crypto' ? 'binance' : 'exness');
                                  return getMinSelectableStartDate(showBacktestSetup.symbol || '', currentUiSource).toISOString().split('T')[0];
                               })()}
                               max={maxEndVal}
@@ -6557,7 +6557,7 @@ export default function App() {
                               id="backtest-end-date"
                               key={`end-${showBacktestSetup.symbol}`}
                               min={(() => {
-                                 const currentUiSource = showBacktestSetup.source || (POPULAR_SYMBOLS.find(s => s.symbol === showBacktestSetup.symbol)?.category === 'Crypto' ? 'binance' : 'axiory');
+                                 const currentUiSource = showBacktestSetup.source || (POPULAR_SYMBOLS.find(s => s.symbol === showBacktestSetup.symbol)?.category === 'Crypto' ? 'binance' : 'exness');
                                  return getMinSelectableStartDate(showBacktestSetup.symbol || '', currentUiSource).toISOString().split('T')[0];
                               })()}
                               max={maxEndVal}
@@ -7061,7 +7061,7 @@ export default function App() {
         const category = POPULAR_SYMBOLS.find(s => s.symbol === selectedSymbol)?.category || 'Crypto';
         const isCrypto = category === 'Crypto';
         
-        const rawSource = item?.dataSource || (isCrypto ? 'bybit' : 'axiory');
+        const rawSource = item?.dataSource || (isCrypto ? 'bybit' : 'exness');
         let displaySource = rawSource;
         if (displaySource.toLowerCase() === 'axiory') {
           displaySource = 'Axiory';
@@ -7664,7 +7664,7 @@ export default function App() {
 
                 const mainItem = watchlist.find((i: any) => i.id === activeWatchlistItemId) || 
                                  watchlist.find((i: any) => i.symbol === selectedSymbol && (i.prefix || null) === (activePrefix || null));
-                const mainRawSource = mainItem?.dataSource || (mainCategory === 'Crypto' ? 'bybit' : 'axiory');
+                const mainRawSource = mainItem?.dataSource || (mainCategory === 'Crypto' ? 'bybit' : 'exness');
                 let mainDisplaySource = mainRawSource.toUpperCase() === 'AXIORY' ? 'AXIORY' : mainRawSource.toUpperCase() === 'BINANCE' ? 'BINANCE' : mainRawSource.toUpperCase() === 'BYBIT' ? 'BYBIT' : mainRawSource.toUpperCase() === 'OKX' ? 'OKX' : mainRawSource.toUpperCase();
 
                 // Synced Panel (only rendered/used when syncedSymbol is active)
