@@ -272,6 +272,12 @@ export const ChartComponent = forwardRef<ChartEngine | null, ChartProps>(({
   }, [timeframe]);
 
   useEffect(() => {
+    if (engineRef.current) {
+      engineRef.current.setHistoricalData(historicalData || []);
+    }
+  }, [historicalData]);
+
+  useEffect(() => {
     if (engineRef.current && source) {
       engineRef.current.setSource(source);
     }
@@ -422,12 +428,6 @@ export const ChartComponent = forwardRef<ChartEngine | null, ChartProps>(({
       });
     }
   }, [onNewsClick]);
-
-  useEffect(() => {
-    if (engineRef.current) {
-      engineRef.current.setHistoricalData(historicalData);
-    }
-  }, [historicalData]);
 
   useEffect(() => {
     if (engineRef.current) {

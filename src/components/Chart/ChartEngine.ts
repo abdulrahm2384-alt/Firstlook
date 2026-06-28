@@ -5639,6 +5639,51 @@ export class ChartEngine {
     if (stroke) ctx.stroke();
   }
 
+  private checkDataMatchesTimeframe(data: Candle[]): boolean {
+    if (!data || data.length < 2 || !this.timeframe) return true;
+    
+    const tf = this.timeframe.toLowerCase();
+    let expectedSeconds = 3600;
+    if (tf === '1m') expectedSeconds = 60;
+    else if (tf === '2m') expectedSeconds = 120;
+    else if (tf === '3m') expectedSeconds = 180;
+    else if (tf === '5m') expectedSeconds = 300;
+    else if (tf === '10m') expectedSeconds = 600;
+    else if (tf === '15m') expectedSeconds = 900;
+    else if (tf === '30m') expectedSeconds = 1800;
+    else if (tf === '45m') expectedSeconds = 2700;
+    else if (tf === '1h') expectedSeconds = 3600;
+    else if (tf === '2h') expectedSeconds = 7200;
+    else if (tf === '4h') expectedSeconds = 14400;
+    else if (tf === '8h') expectedSeconds = 28800;
+    else if (tf === '12h') expectedSeconds = 43200;
+    else if (tf === '1d' || tf === 'd') expectedSeconds = 86400;
+    else if (tf === '1w' || tf === 'w') expectedSeconds = 604800;
+    else return true;
+
+    const intervals: Record<number, number> = {};
+    const maxCheck = Math.min(15, data.length - 1);
+    for (let i = 0; i < maxCheck; i++) {
+      const diff = data[i + 1].time - data[i].time;
+      if (diff > 0) {
+        intervals[diff] = (intervals[diff] || 0) + 1;
+      }
+    }
+
+    let modeInterval = 0;
+    let maxCount = 0;
+    for (const key in intervals) {
+      const count = intervals[key];
+      if (count > maxCount) {
+        maxCount = count;
+        modeInterval = Number(key);
+      }
+    }
+
+    if (modeInterval === 0) return true;
+    return modeInterval === expectedSeconds;
+  }
+
   public draw() {
     if (!this.canvas) return;
     const width = this.lastWidth;
@@ -5702,6 +5747,20 @@ export class ChartEngine {
         ctx.fillText(subTextStr, centerX, centerY + symbolFontSize * 0.55);
       }
       ctx.restore();
+    }
+
+    // Timeframe matched validation early exit to prevent mismatched data flashes
+    const dataMatches = this.checkDataMatchesTimeframe(this.data);
+    if (!dataMatches) {
+      ctx.save();
+      ctx.fillStyle = contrastColor === '#0f172a' ? 'rgba(15, 23, 42, 0.4)' : 'rgba(248, 250, 252, 0.4)';
+      ctx.font = '500 13px "Inter", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      const symbolFontSize = Math.max(36, Math.min(100, (width - this.sidebarWidth) / 8));
+      ctx.fillText(`Loading ${this.timeframe || ''} data...`, (width - this.sidebarWidth) / 2, (height - 30) / 2 + symbolFontSize * 0.9);
+      ctx.restore();
+      return;
     }
 
     // Coordinate System constants
@@ -6029,7 +6088,7 @@ export class ChartEngine {
     }
 
     // Check for infinite scroll trigger
-    if (this.onLoadMore && !this.isLoadingMore && startIdx <= 5) {
+    if (this.data.length > 0 && this.onLoadMore && !this.isLoadingMore && startIdx <= 5) {
         const firstCandleX = getX(0);
         if (firstCandleX > -20) {
             this.isLoadingMore = true;

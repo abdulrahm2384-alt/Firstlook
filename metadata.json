@@ -1,9 +1,8 @@
 {
-  "name": "FirstLook",
-  "description": "A high-performance market charting, backtesting, and trading journaling platform featuring interactive indicators, watchlists, and secure subscription management.",
+  "name": "Remix: Are You There?",
+  "description": "A simple safety and availability tool to check in on friends and family with a single tap.",
   "requestFramePermissions": [],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
   ]
 }
-
