@@ -1436,8 +1436,10 @@ export default function App() {
   const [isReplayMode, setIsReplayMode] = useState(false);
   const [subscriptionPlan, setSubscriptionPlan] = useState<'basic' | 'plus' | 'premium'>('basic');
   const [dailyPlayConsumed, setDailyPlayConsumed] = useState<number>(0);
+  const [dailyJournalReplaysConsumed, setDailyJournalReplaysConsumed] = useState<number>(0);
+  const [dailySyncChartsConsumed, setDailySyncChartsConsumed] = useState<number>(0);
 
-  // Initialize and keep dailyPlayConsumed in sync with the current day and plan selection
+  // Initialize and keep limits in sync with the current day and plan selection
   useEffect(() => {
     const todayStr = new Date().toISOString().split('T')[0];
     try {
@@ -1446,18 +1448,56 @@ export default function App() {
         const parsed = JSON.parse(saved);
         if (parsed.date === todayStr) {
           setDailyPlayConsumed(parsed.consumed || 0);
-          return;
+        } else {
+          setDailyPlayConsumed(0);
         }
+      } else {
+        setDailyPlayConsumed(0);
       }
     } catch (e) {
       console.error("Error loading daily play limit", e);
+      setDailyPlayConsumed(0);
     }
-    setDailyPlayConsumed(0);
+
+    try {
+      const saved = localStorage.getItem('firstlook_daily_journal_replays_v1');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.date === todayStr) {
+          setDailyJournalReplaysConsumed(parsed.consumed || 0);
+        } else {
+          setDailyJournalReplaysConsumed(0);
+        }
+      } else {
+        setDailyJournalReplaysConsumed(0);
+      }
+    } catch (e) {
+      console.error("Error loading daily journal replays tracker", e);
+      setDailyJournalReplaysConsumed(0);
+    }
+
+    try {
+      const saved = localStorage.getItem('firstlook_daily_sync_charts_v1');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.date === todayStr) {
+          setDailySyncChartsConsumed(parsed.consumed || 0);
+        } else {
+          setDailySyncChartsConsumed(0);
+        }
+      } else {
+        setDailySyncChartsConsumed(0);
+      }
+    } catch (e) {
+      console.error("Error loading daily sync charts tracker", e);
+      setDailySyncChartsConsumed(0);
+    }
   }, [subscriptionPlan]);
   const activeTheme = useMemo(() => {
     return subscriptionPlan === 'basic' ? { ...theme, rawSpread: false } : theme;
   }, [theme, subscriptionPlan]);
   const [isCompetitionsPopupOpen, setIsCompetitionsPopupOpen] = useState(false);
+  const [isCompetitionInviteOpen, setIsCompetitionInviteOpen] = useState(false);
   const [hasAppliedForCompetition, setHasAppliedForCompetition] = useState(() => {
     return localStorage.getItem('has_applied_competitions') === 'true';
   });
@@ -2236,9 +2276,6 @@ export default function App() {
 
   // Daily Candle PLAY Limit Tracking (tracks play-by-play candle progression)
   const checkAndTrackPlayLimit = useCallback((countToAdd: number): boolean => {
-    if (subscriptionPlan === 'premium') return true;
-
-    const limit = subscriptionPlan === 'plus' ? 5000 : 500;
     const todayStr = new Date().toISOString().split('T')[0];
     
     let tracker = { date: todayStr, consumed: 0 };
@@ -2254,18 +2291,111 @@ export default function App() {
       console.error("Error reading daily play limit", e);
     }
 
-    if (tracker.consumed >= limit) {
-      setDailyPlayConsumed(tracker.consumed);
-      return false;
-    }
+    const previousConsumed = tracker.consumed;
 
     if (countToAdd > 0) {
       tracker.consumed += countToAdd;
       localStorage.setItem('firstlook_daily_play_limit_v1', JSON.stringify(tracker));
+
+      // PERSISTENT CROSS-DEVICE SYNC: sync the updated limit tracker with backend user preferences database
+      if (session?.user?.id) {
+        persistenceService.savePreferences(session.user.id, {
+          dailyPlayLimitTracker: tracker
+        }).catch(err => console.error('[Play Limit Sync] Failed to sync daily play limit tracker:', err));
+      }
     }
     setDailyPlayConsumed(tracker.consumed);
+
+    // Trigger competition invitation popup when candle play reaches/crosses 100
+    if (previousConsumed < 100 && tracker.consumed >= 100) {
+      setIsCompetitionInviteOpen(true);
+    }
+
+    if (subscriptionPlan === 'premium') return true;
+
+    const limit = subscriptionPlan === 'plus' ? 5000 : 300;
+    if (tracker.consumed >= limit) {
+      return false;
+    }
+
     return true;
-  }, [subscriptionPlan]);
+  }, [subscriptionPlan, session?.user?.id]);
+
+  // Daily Journal Replay Limit Tracking (max 5 a day under Basic plan)
+  const checkAndTrackJournalReplayLimit = useCallback((): boolean => {
+    if (subscriptionPlan === 'plus' || subscriptionPlan === 'premium') return true;
+
+    const limit = 5;
+    const todayStr = new Date().toISOString().split('T')[0];
+    
+    let tracker = { date: todayStr, consumed: 0 };
+    try {
+      const saved = localStorage.getItem('firstlook_daily_journal_replays_v1');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.date === todayStr) {
+          tracker = parsed;
+        }
+      }
+    } catch (e) {
+      console.error("Error reading daily journal replays limit", e);
+    }
+
+    if (tracker.consumed >= limit) {
+      setDailyJournalReplaysConsumed(tracker.consumed);
+      return false;
+    }
+
+    tracker.consumed += 1;
+    localStorage.setItem('firstlook_daily_journal_replays_v1', JSON.stringify(tracker));
+
+    // PERSISTENT CROSS-DEVICE SYNC: sync with backend database
+    if (session?.user?.id) {
+      persistenceService.savePreferences(session.user.id, {
+        dailyJournalReplaysTracker: tracker
+      }).catch(err => console.error('[Journal Replays Sync] Failed to sync daily journal replays tracker:', err));
+    }
+    setDailyJournalReplaysConsumed(tracker.consumed);
+    return true;
+  }, [subscriptionPlan, session?.user?.id]);
+
+  // Daily Synced Charts Limit Tracking (max 3 features a day under Basic plan)
+  const checkAndTrackSyncChartsLimit = useCallback((): boolean => {
+    if (subscriptionPlan === 'plus' || subscriptionPlan === 'premium') return true;
+
+    const limit = 3;
+    const todayStr = new Date().toISOString().split('T')[0];
+    
+    let tracker = { date: todayStr, consumed: 0 };
+    try {
+      const saved = localStorage.getItem('firstlook_daily_sync_charts_v1');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.date === todayStr) {
+          tracker = parsed;
+        }
+      }
+    } catch (e) {
+      console.error("Error reading daily sync charts limit", e);
+    }
+
+    if (tracker.consumed >= limit) {
+      setDailySyncChartsConsumed(tracker.consumed);
+      return false;
+    }
+
+    tracker.consumed += 1;
+    localStorage.setItem('firstlook_daily_sync_charts_v1', JSON.stringify(tracker));
+
+    // PERSISTENT CROSS-DEVICE SYNC: sync with backend database
+    if (session?.user?.id) {
+      persistenceService.savePreferences(session.user.id, {
+        dailySyncChartsTracker: tracker
+      }).catch(err => console.error('[Sync Charts Sync] Failed to sync daily sync charts tracker:', err));
+    }
+    setDailySyncChartsConsumed(tracker.consumed);
+    return true;
+  }, [subscriptionPlan, session?.user?.id]);
 
   // Keep legacy function signature as an unlimited pass-through so candle fetching has absolutely no limits
   const checkAndTrackCandleLimit = useCallback((_countToAdd: number): boolean => {
@@ -2284,7 +2414,7 @@ export default function App() {
       if (!checkAndTrackPlayLimit(0)) {
         setUpgradeModalFeature('candles');
         setIsUpgradeModalOpen(true);
-        addNotification(`Daily candle play limit reached (Max ${subscriptionPlan === 'plus' ? '5000' : '500'} candles). Upgrade your plan to play more candles!`, 'warning');
+        addNotification(`Daily candle play limit reached (Max ${subscriptionPlan === 'plus' ? '5000' : '300'} candles). Upgrade your plan to play more candles!`, 'warning');
         return;
       }
 
@@ -3850,6 +3980,102 @@ export default function App() {
       }
 
       if (savedPrefs) {
+        // Synchronize and load daily play limit tracker across devices
+        const todayStr = new Date().toISOString().split('T')[0];
+        let localTracker = { date: todayStr, consumed: 0 };
+        try {
+          const saved = localStorage.getItem('firstlook_daily_play_limit_v1');
+          if (saved) {
+            const parsed = JSON.parse(saved);
+            if (parsed.date === todayStr) {
+              localTracker = parsed;
+            }
+          }
+        } catch (e) {
+          console.error('Failed to load local tracker during userData loading:', e);
+        }
+
+        let serverTracker = savedPrefs.dailyPlayLimitTracker;
+        let mergedTracker = { date: todayStr, consumed: 0 };
+
+        if (serverTracker && serverTracker.date === todayStr) {
+          mergedTracker.consumed = Math.max(localTracker.consumed, serverTracker.consumed || 0);
+        } else {
+          mergedTracker.consumed = localTracker.consumed;
+        }
+
+        setDailyPlayConsumed(mergedTracker.consumed);
+        localStorage.setItem('firstlook_daily_play_limit_v1', JSON.stringify(mergedTracker));
+
+        // Synchronize and load daily journal replays limit tracker across devices
+        let localJournalTracker = { date: todayStr, consumed: 0 };
+        try {
+          const saved = localStorage.getItem('firstlook_daily_journal_replays_v1');
+          if (saved) {
+            const parsed = JSON.parse(saved);
+            if (parsed.date === todayStr) {
+              localJournalTracker = parsed;
+            }
+          }
+        } catch (e) {
+          console.error('Failed to load local journal replays tracker during userData loading:', e);
+        }
+
+        let serverJournalTracker = savedPrefs.dailyJournalReplaysTracker;
+        let mergedJournalTracker = { date: todayStr, consumed: 0 };
+
+        if (serverJournalTracker && serverJournalTracker.date === todayStr) {
+          mergedJournalTracker.consumed = Math.max(localJournalTracker.consumed, serverJournalTracker.consumed || 0);
+        } else {
+          mergedJournalTracker.consumed = localJournalTracker.consumed;
+        }
+
+        setDailyJournalReplaysConsumed(mergedJournalTracker.consumed);
+        localStorage.setItem('firstlook_daily_journal_replays_v1', JSON.stringify(mergedJournalTracker));
+
+        // Synchronize and load daily sync charts limit tracker across devices
+        let localSyncTracker = { date: todayStr, consumed: 0 };
+        try {
+          const saved = localStorage.getItem('firstlook_daily_sync_charts_v1');
+          if (saved) {
+            const parsed = JSON.parse(saved);
+            if (parsed.date === todayStr) {
+              localSyncTracker = parsed;
+            }
+          }
+        } catch (e) {
+          console.error('Failed to load local sync charts tracker during userData loading:', e);
+        }
+
+        let serverSyncTracker = savedPrefs.dailySyncChartsTracker;
+        let mergedSyncTracker = { date: todayStr, consumed: 0 };
+
+        if (serverSyncTracker && serverSyncTracker.date === todayStr) {
+          mergedSyncTracker.consumed = Math.max(localSyncTracker.consumed, serverSyncTracker.consumed || 0);
+        } else {
+          mergedSyncTracker.consumed = localSyncTracker.consumed;
+        }
+
+        setDailySyncChartsConsumed(mergedSyncTracker.consumed);
+        localStorage.setItem('firstlook_daily_sync_charts_v1', JSON.stringify(mergedSyncTracker));
+
+        // Sync back to database if there's any discrepancy
+        const prefsToSync: any = {};
+        if (!serverTracker || serverTracker.date !== todayStr || serverTracker.consumed !== mergedTracker.consumed) {
+          prefsToSync.dailyPlayLimitTracker = mergedTracker;
+        }
+        if (!serverJournalTracker || serverJournalTracker.date !== todayStr || serverJournalTracker.consumed !== mergedJournalTracker.consumed) {
+          prefsToSync.dailyJournalReplaysTracker = mergedJournalTracker;
+        }
+        if (!serverSyncTracker || serverSyncTracker.date !== todayStr || serverSyncTracker.consumed !== mergedSyncTracker.consumed) {
+          prefsToSync.dailySyncChartsTracker = mergedSyncTracker;
+        }
+
+        if (Object.keys(prefsToSync).length > 0) {
+          persistenceService.savePreferences(userId, prefsToSync)
+            .catch(err => console.error('Failed to sync daily limit trackers on login:', err));
+        }
+
         if (savedPrefs.drawingTemplates) {
           try {
             Object.entries(savedPrefs.drawingTemplates).forEach(([key, val]) => {
@@ -5433,7 +5659,7 @@ export default function App() {
               setReplayIsPlaying(false);
               setUpgradeModalFeature('candles');
               setIsUpgradeModalOpen(true);
-              addNotification(`Daily candle play limit reached (Max ${subscriptionPlan === 'plus' ? '5000' : '500'} candles). Upgrade your plan to play more candles!`, 'warning');
+              addNotification(`Daily candle play limit reached (Max ${subscriptionPlan === 'plus' ? '5000' : '300'} candles). Upgrade your plan to play more candles!`, 'warning');
               return;
             }
           }
@@ -5471,7 +5697,7 @@ export default function App() {
               setReplayIsPlaying(false);
               setUpgradeModalFeature('candles');
               setIsUpgradeModalOpen(true);
-              addNotification(`Daily candle play limit reached (Max ${subscriptionPlan === 'plus' ? '5000' : '500'} candles). Upgrade to play more candles!`, 'warning');
+              addNotification(`Daily candle play limit reached (Max ${subscriptionPlan === 'plus' ? '5000' : '300'} candles). Upgrade to play more candles!`, 'warning');
               return;
             }
           }
@@ -5582,7 +5808,7 @@ export default function App() {
               setSimIsPlaying(false);
               setUpgradeModalFeature('candles');
               setIsUpgradeModalOpen(true);
-              addNotification(`Daily candle play limit reached (Max ${subscriptionPlan === 'plus' ? '5000' : '500'} candles). Upgrade your plan to play more candles!`, 'warning');
+              addNotification(`Daily candle play limit reached (Max ${subscriptionPlan === 'plus' ? '5000' : '300'} candles). Upgrade your plan to play more candles!`, 'warning');
               return;
             }
           }
@@ -5627,7 +5853,7 @@ export default function App() {
               setSimIsPlaying(false);
               setUpgradeModalFeature('candles');
               setIsUpgradeModalOpen(true);
-              addNotification(`Daily candle play limit reached (Max ${subscriptionPlan === 'plus' ? '5000' : '500'} candles). Upgrade your plan to play more candles!`, 'warning');
+              addNotification(`Daily candle play limit reached (Max ${subscriptionPlan === 'plus' ? '5000' : '300'} candles). Upgrade your plan to play more candles!`, 'warning');
               return;
             }
           }
@@ -7587,7 +7813,7 @@ export default function App() {
                         return null;
                       }
 
-                      const limit = subscriptionPlan === 'plus' ? 5000 : 500;
+                      const limit = subscriptionPlan === 'plus' ? 5000 : 300;
                       const remaining = Math.max(0, limit - dailyPlayConsumed);
 
                       return (
@@ -8459,15 +8685,14 @@ export default function App() {
                                             <button 
                                               onClick={() => {
                                                 if (subscriptionPlan === 'basic') {
-                                                  const sortedTrades = [...journalTrades].sort((a, b) => new Date(b.realizedAt || b.createdAt || 0).getTime() - new Date(a.realizedAt || a.createdAt || 0).getTime());
-                                                  const tradeIndex = sortedTrades.findIndex(t => t.id === trade.id);
-                                                  if (tradeIndex > 9 || tradeIndex === -1) {
+                                                  if (!checkAndTrackJournalReplayLimit()) {
                                                     setUpgradeModalFeature('replay');
                                                     setIsUpgradeModalOpen(true);
                                                     setTradeMenuId(null);
-                                                    addNotification("Basic plan is limited to replaying the last 10 trades. Upgrade to unlock all historical custom replays!", "info");
+                                                    addNotification("Daily journal trade replay limit reached (Max 5 a day under Basic plan). Upgrade to unlock unlimited historical custom replays!", "warning");
                                                     return;
                                                   }
+                                                  // Daily limit is checked above, no need for trade index constraints anymore
                                                 }
                                                 setPreReplayDrawings([...drawings]);
                                                 setReplayTrade(trade);
@@ -8667,6 +8892,14 @@ export default function App() {
         onClose={() => setIsSyncedSelectorOpen(false)}
         currentSymbol={selectedSymbol || ''}
         onSelect={(symbol, source, marketType) => {
+          if (subscriptionPlan === 'basic') {
+            if (!checkAndTrackSyncChartsLimit()) {
+              setUpgradeModalFeature('sync');
+              setIsUpgradeModalOpen(true);
+              addNotification("Daily synced charts limit reached (Max 3 a day under Basic plan). Upgrade your plan to compare unlimited charts side-by-side!", "warning");
+              return;
+            }
+          }
           setSyncedSymbol(symbol);
           setSyncedDataSource(source);
           setSyncedMarketType(marketType);
@@ -9310,6 +9543,69 @@ export default function App() {
                   className="w-full bg-slate-50 rounded-xl py-1 text-[9px] font-bold text-slate-500 uppercase tracking-wider hover:bg-slate-100 cursor-pointer text-center"
                 >
                   Dismiss
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* 🏆 Practice Milestone: 100 Candles Played - Competition Invite Modal */}
+      <AnimatePresence>
+        {isCompetitionInviteOpen && (
+          <div className="fixed inset-0 z-[1002] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsCompetitionInviteOpen(false)}
+              className="absolute inset-0 bg-slate-950/60 backdrop-blur-sm"
+            />
+            
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="relative w-full max-w-sm bg-white rounded-3xl shadow-2xl border border-slate-100 overflow-hidden z-50 flex flex-col p-6 space-y-4"
+            >
+              {/* Header */}
+              <div className="flex items-center gap-3 border-b border-slate-100 pb-3.5 text-left">
+                <div className="w-10 h-10 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center border border-amber-100/50 shrink-0 font-mono">
+                  <Trophy size={20} className="text-amber-500 fill-amber-500/20" />
+                </div>
+                <div className="text-left font-mono">
+                  <span className="text-[7.5px] font-black text-indigo-650 uppercase tracking-widest block">Backtesting Milestone Achieved</span>
+                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 leading-none mt-0.5">100 Candles Played!</h3>
+                </div>
+              </div>
+
+              {/* Body Content */}
+              <div className="space-y-2.5 py-1 text-left">
+                <h4 className="text-[11px] font-black uppercase tracking-wide text-slate-900">Put Your Trading Edge to the Test</h4>
+                <p className="text-[11px] text-slate-500 font-semibold leading-relaxed">
+                  Incredible dedication! You have successfully simulated exactly <strong className="text-slate-900 font-extrabold">100 candles</strong>. You clearly have a strong passion for backtesting and refining your setup.
+                </p>
+                <p className="text-[11px] text-slate-500 font-semibold leading-relaxed">
+                  Why not prove your strategy under real market conditions in our weekly <strong className="text-indigo-600 font-extrabold">Simulated Trading Competition</strong>? Challenge other traders, build your record, and compete for a share of <strong className="text-emerald-600 font-extrabold">$500 in weekly cash prizes</strong>!
+                </p>
+              </div>
+
+              {/* Actions */}
+              <div className="grid grid-cols-2 gap-2 pt-2">
+                <button
+                  onClick={() => {
+                    setIsCompetitionInviteOpen(false);
+                    setIsCompetitionsPopupOpen(true);
+                  }}
+                  className="w-full bg-slate-950 text-white rounded-xl py-3 text-[9px] font-black uppercase tracking-widest hover:bg-slate-850 cursor-pointer shadow-md transition-all text-center active:scale-95 flex items-center justify-center gap-1 font-mono"
+                >
+                  🏆 Join Arena
+                </button>
+                <button
+                  onClick={() => setIsCompetitionInviteOpen(false)}
+                  className="w-full bg-slate-50 rounded-xl py-1 text-[9px] font-bold text-slate-500 uppercase tracking-wider hover:bg-slate-100 cursor-pointer text-center"
+                >
+                  Keep Practicing
                 </button>
               </div>
             </motion.div>

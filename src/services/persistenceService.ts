@@ -37,6 +37,9 @@ export interface UserPreferences {
   celebratedMilestones?: number[];
   drawingTemplates?: Record<string, any[]>;
   symbolViewStates?: Record<string, any>;
+  dailyPlayLimitTracker?: { date: string; consumed: number };
+  dailyJournalReplaysTracker?: { date: string; consumed: number };
+  dailySyncChartsTracker?: { date: string; consumed: number };
 }
 
 // Helper to handle fetch abort on timeout to prevent hanging when offline
