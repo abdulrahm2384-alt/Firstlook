@@ -269,6 +269,34 @@ export function ProfilePage({
   const [feedbackError, setFeedbackError] = useState<string | null>(null);
   const [feedbackSuccessMsg, setFeedbackSuccessMsg] = useState<string>('');
 
+  // --- Admin Platform Telemetry States ---
+  const [adminSecret, setAdminSecret] = useState<string>('');
+  const [adminStats, setAdminStats] = useState<any>(null);
+  const [adminLoading, setAdminLoading] = useState<boolean>(false);
+  const [adminError, setAdminError] = useState<string | null>(null);
+
+  const handleFetchAdminStats = async () => {
+    if (!adminSecret.trim()) {
+      setAdminError("Please enter the admin secret key.");
+      return;
+    }
+    setAdminLoading(true);
+    setAdminError(null);
+    try {
+      const resp = await fetch(`/api/admin/users/activity-stats?api_secret=${encodeURIComponent(adminSecret.trim())}`);
+      const result = await resp.json();
+      if (!resp.ok || !result.success) {
+        throw new Error(result.error || "Failed to fetch administrative metrics.");
+      }
+      setAdminStats(result.data);
+    } catch (err: any) {
+      console.error(err);
+      setAdminError(err.message || "Unauthorized or network failure.");
+    } finally {
+      setAdminLoading(false);
+    }
+  };
+
   const handleSubmitFeedback = async () => {
     if (rating === 0) return;
     setIsSubmittingFeedback(true);
@@ -1227,6 +1255,163 @@ export function ProfilePage({
               >
                 Terms & Security
               </span>
+            </div>
+          </div>
+        </section>
+
+        {/* PLATFORM HEALTH & METRICS (ADMIN TELEMETRY) */}
+        <section className="bg-white border border-neutral-200 p-6 space-y-5">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-4 border-b border-neutral-100 font-sans">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2 text-indigo-600">
+                <Shield size={16} />
+                <h3 className="text-xs font-black uppercase tracking-widest text-black">Administrative Telemetry Console</h3>
+              </div>
+              <p className="text-[10px] text-neutral-400 font-bold uppercase tracking-widest">
+                Monitor user activity rates across daily, weekly, monthly, and yearly intervals.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[9px] font-mono text-neutral-400 uppercase">[Role: Admin/Auditor]</span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 font-sans">
+            {/* Input & Key Section */}
+            <div className="lg:col-span-1 space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-[9px] font-black text-slate-400 uppercase tracking-wider block">Admin Security Secret Key</label>
+                <div className="flex items-center px-3 py-2 bg-slate-50 border border-slate-200 focus-within:border-black transition-all">
+                  <Lock size={14} className="text-slate-400 mr-2 shrink-0" />
+                  <input
+                    type="password"
+                    placeholder="ENTER SECRET KEY"
+                    value={adminSecret}
+                    onChange={(e) => setAdminSecret(e.target.value)}
+                    className="w-full bg-transparent text-xs text-black focus:outline-none uppercase font-bold font-mono"
+                  />
+                </div>
+              </div>
+
+              {adminError && (
+                <div className="p-3 bg-rose-50 border border-rose-100 text-rose-800 text-[10px] font-bold uppercase">
+                  ⚠️ [REJECTED] {adminError}
+                </div>
+              )}
+
+              <button
+                type="button"
+                disabled={adminLoading}
+                onClick={handleFetchAdminStats}
+                className="w-full bg-black hover:bg-neutral-800 text-white py-2.5 text-[9px] font-black uppercase tracking-widest cursor-pointer transition-all flex items-center justify-center gap-2"
+              >
+                {adminLoading ? (
+                  <>
+                    <Loader2 size={12} className="animate-spin text-white" />
+                    Querying API...
+                  </>
+                ) : (
+                  <>
+                    <Activity size={12} />
+                    Unlock Live Telemetry
+                  </>
+                )}
+              </button>
+            </div>
+
+            {/* Metrics & Results Section */}
+            <div className="lg:col-span-2 space-y-4">
+              {adminStats ? (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
+                    {/* DAU */}
+                    <div className="p-4 bg-slate-50 border border-neutral-150 relative overflow-hidden">
+                      <div className="absolute top-0 right-0 w-8 h-8 opacity-5 text-indigo-600">
+                        <Activity className="w-full h-full" />
+                      </div>
+                      <span className="text-[8px] font-black text-slate-450 uppercase tracking-wider block">Avg Daily (DAU)</span>
+                      <span className="text-xl font-black text-black tracking-tight font-mono">{adminStats.avgDailyUsers}</span>
+                      <span className="text-[7.5px] font-bold text-[#00b67a] block mt-1 uppercase tracking-wider">Active unique / Day</span>
+                    </div>
+
+                    {/* WAU */}
+                    <div className="p-4 bg-slate-50 border border-neutral-150 relative overflow-hidden">
+                      <div className="absolute top-0 right-0 w-8 h-8 opacity-5 text-indigo-600">
+                        <Activity className="w-full h-full" />
+                      </div>
+                      <span className="text-[8px] font-black text-slate-450 uppercase tracking-wider block">Avg Weekly (WAU)</span>
+                      <span className="text-xl font-black text-black tracking-tight font-mono">{adminStats.avgWeeklyUsers}</span>
+                      <span className="text-[7.5px] font-bold text-indigo-600 block mt-1 uppercase tracking-wider">Active unique / Wk</span>
+                    </div>
+
+                    {/* MAU */}
+                    <div className="p-4 bg-slate-50 border border-neutral-150 relative overflow-hidden">
+                      <div className="absolute top-0 right-0 w-8 h-8 opacity-5 text-indigo-600">
+                        <Activity className="w-full h-full" />
+                      </div>
+                      <span className="text-[8px] font-black text-slate-450 uppercase tracking-wider block">Avg Monthly (MAU)</span>
+                      <span className="text-xl font-black text-black tracking-tight font-mono">{adminStats.avgMonthlyUsers}</span>
+                      <span className="text-[7.5px] font-bold text-amber-600 block mt-1 uppercase tracking-wider">Active unique / Mo</span>
+                    </div>
+
+                    {/* YAU */}
+                    <div className="p-4 bg-slate-50 border border-neutral-150 relative overflow-hidden">
+                      <div className="absolute top-0 right-0 w-8 h-8 opacity-5 text-indigo-600">
+                        <Activity className="w-full h-full" />
+                      </div>
+                      <span className="text-[8px] font-black text-slate-450 uppercase tracking-wider block">Avg Yearly (YAU)</span>
+                      <span className="text-xl font-black text-black tracking-tight font-mono">{adminStats.avgYearlyUsers}</span>
+                      <span className="text-[7.5px] font-bold text-purple-600 block mt-1 uppercase tracking-wider">Active unique / Yr</span>
+                    </div>
+                  </div>
+
+                  <div className="p-3.5 bg-[#00b67a]/5 border border-[#00b67a]/20 text-[9.5px] text-neutral-500 font-semibold leading-relaxed">
+                    <span className="font-bold text-[#00b67a] block mb-0.5 uppercase tracking-wider">✔ Connection Secure</span>
+                    Currently parsing <span className="font-mono text-black font-black bg-slate-100 px-1 py-0.5">{adminStats.totalLogs}</span> registered user interaction events. Values represent high-fidelity dynamic averages grouped and normalized by epoch timezone bounds.
+                  </div>
+                </div>
+              ) : (
+                <div className="h-full min-h-[140px] flex flex-col items-center justify-center p-6 border border-dashed border-neutral-200 text-center text-neutral-400">
+                  <Shield size={24} className="opacity-40 mb-2 stroke-[1.5]" />
+                  <h4 className="text-[10px] font-black uppercase tracking-wider text-neutral-500">Telemetry Locked</h4>
+                  <p className="text-[9px] max-w-sm uppercase tracking-widest leading-relaxed mt-1 font-semibold">
+                    Provide the platform's administrative api_secret key on the left to authorize secure pipeline telemetry.
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Example API Usage Documentation */}
+          <div className="border-t border-neutral-100 pt-5 space-y-3 font-mono">
+            <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block">Example API Usage & Documentation</span>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <span className="text-[8px] font-bold text-neutral-450 block uppercase tracking-wider">CURL REQUEST EXAMPLES (THIRD-PARTY INTEGRATION)</span>
+                <div className="bg-slate-900 text-slate-200 p-3 rounded-none text-[8.5px] leading-relaxed overflow-x-auto select-all">
+                  <code>
+                    # Using secret token in Query String<br />
+                    curl -X GET "https://{window.location.host}/api/admin/users/activity-stats?api_secret={adminSecret || "YOUR_SECRET"}"<br /><br />
+                    # Using standard Bearer Token authorization header<br />
+                    curl -H "Authorization: Bearer {adminSecret || "YOUR_SECRET"}" \<br />
+                    &nbsp;&nbsp;https://{window.location.host}/api/admin/users/activity-stats
+                  </code>
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <span className="text-[8px] font-bold text-neutral-450 block uppercase tracking-wider">JAVASCRIPT / NODE FETCH EXAMPLES</span>
+                <div className="bg-slate-900 text-slate-200 p-3 rounded-none text-[8.5px] leading-relaxed overflow-x-auto select-all">
+                  <code>
+                    {`fetch('/api/admin/users/activity-stats', {
+  headers: {
+    'Authorization': 'Bearer ${adminSecret || "YOUR_SECRET"}'
+  }
+})
+.then(res => res.json())
+.then(data => console.log("User Activity Statistics:", data));`}
+                  </code>
+                </div>
+              </div>
             </div>
           </div>
         </section>

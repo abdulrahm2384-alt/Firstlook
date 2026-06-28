@@ -138,6 +138,15 @@ function getAssetDatedFromDate(symbol: string, source: string): Date {
   }
   
   if (normSource === 'exness') {
+    if (asset?.category === 'Stocks') {
+      if (normSymbol === 'META') {
+        return new Date('2022-01-01');
+      }
+      if (normSymbol === 'AVGO') {
+        return new Date('2021-01-01');
+      }
+      return new Date('2020-01-01');
+    }
     if (normSymbol === 'US30' || normSymbol === 'US30/USD') {
       return new Date('2019-01-01');
     }

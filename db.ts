@@ -43,6 +43,7 @@ export const memSupportMessages = new Map<string, any[]>();
 export const memJournalAccounts: any[] = [];
 export const memJournalTrades: any[] = [];
 export const memJournalWithdrawals: any[] = [];
+export const memUserActivityLogs: any[] = [];
 
 // Populate mock data into the fallback memory DB on startup so the app UI is extremely engaging if no DB_URL is connected!
 function seedInMemoryDb() {
@@ -104,6 +105,43 @@ function seedInMemoryDb() {
   memCompetitionPreregistrations.add("usr_uuid_1");
   memCompetitionPreregistrations.add("usr_uuid_3");
   memCompetitionPreregistrations.add("usr_uuid_7");
+
+  // Seed user activity logs over the last 30 days to generate robust analytics
+  const nowMs = Date.now();
+  const dayMs = 24 * 60 * 60 * 1000;
+  
+  const activityFrequencies: { [userId: string]: number } = {
+    "usr_uuid_1": 0.85,
+    "usr_uuid_2": 0.50,
+    "usr_uuid_3": 0.70,
+    "usr_uuid_4": 0.20,
+    "usr_uuid_5": 0.60,
+    "usr_uuid_6": 0.40,
+    "usr_uuid_7": 0.90,
+    "usr_uuid_8": 0.30,
+    "usr_uuid_9": 0.55,
+    "usr_uuid_10": 0.45,
+  };
+
+  const seedActivityLogs: any[] = [];
+  for (let d = 0; d < 30; d++) {
+    const activityDateStr = new Date(nowMs - d * dayMs).toISOString().split('T')[0];
+    const activityTimestamp = new Date(nowMs - d * dayMs);
+
+    Object.entries(activityFrequencies).forEach(([userId, freq]) => {
+      // Use simple modulo to generate deterministic realistic pattern
+      const hash = (userId.charCodeAt(9) + d * 7) % 100;
+      if (hash < freq * 100) {
+        seedActivityLogs.push({
+          id: `act_uuid_${userId.split('_')[2]}_${d}`,
+          user_id: userId,
+          activity_date: activityDateStr,
+          created_at: activityTimestamp
+        });
+      }
+    });
+  }
+  memUserActivityLogs.push(...seedActivityLogs);
 }
 
 seedInMemoryDb();
@@ -348,6 +386,17 @@ export async function initializeDatabase() {
       );
     `);
 
+    // 11.e User Activity Logs Table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS user_activity_logs (
+        id VARCHAR PRIMARY KEY,
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        activity_date DATE NOT NULL DEFAULT CURRENT_DATE,
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_id, activity_date)
+      );
+    `);
+
     // 12. Create Indexes for High-Performance Admin Analytics Queries
     await client.query("CREATE INDEX IF NOT EXISTS idx_users_created_at ON users(created_at);");
     await client.query("CREATE INDEX IF NOT EXISTS idx_users_country ON users(country);");
@@ -356,6 +405,8 @@ export async function initializeDatabase() {
     await client.query("CREATE INDEX IF NOT EXISTS idx_admin_payments_plan ON admin_payments(plan);");
     await client.query("CREATE INDEX IF NOT EXISTS idx_admin_payments_user_id ON admin_payments(user_id);");
     await client.query("CREATE INDEX IF NOT EXISTS idx_admin_audit_logs_created_at ON admin_audit_logs(created_at);");
+    await client.query("CREATE INDEX IF NOT EXISTS idx_user_activity_logs_date ON user_activity_logs(activity_date);");
+    await client.query("CREATE INDEX IF NOT EXISTS idx_user_activity_logs_user_id ON user_activity_logs(user_id);");
 
     // 13. Auto-Seeding: If the datastore is a connected, freshly initialised database with 0 users,
     // automatically seed actual, high-fidelity analytics and trade records to enable robust immediate administrative analysis.
@@ -438,6 +489,15 @@ export async function initializeDatabase() {
           `INSERT INTO admin_audit_logs (id, endpoint, method, query_params, ip_address, status_code, created_at)
            VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (id) DO NOTHING;`,
           [log.id, log.endpoint, log.method, JSON.stringify(log.query_params), log.ip_address, log.status_code, log.created_at]
+        );
+      }
+
+      // Seed user activity logs from the pre-populated memUserActivityLogs array
+      for (const log of memUserActivityLogs) {
+        await client.query(
+          `INSERT INTO user_activity_logs (id, user_id, activity_date, created_at)
+           VALUES ($1, $2, $3, $4) ON CONFLICT (user_id, activity_date) DO NOTHING;`,
+          [log.id, log.user_id, log.activity_date, log.created_at]
         );
       }
       console.log("[DB] Automated database seeding finished successfully.");
@@ -2520,5 +2580,156 @@ export const db = {
     }
     const res = await pool.query('SELECT email FROM users');
     return res.rows.map(row => row.email);
+  },
+
+  async recordUserActivity(userId: string): Promise<void> {
+    const todayStr = new Date().toISOString().split('T')[0];
+    if (!isDbActive) {
+      const exists = memUserActivityLogs.some(
+        log => log.user_id === userId && log.activity_date === todayStr
+      );
+      if (!exists) {
+        memUserActivityLogs.push({
+          id: crypto.randomUUID(),
+          user_id: userId,
+          activity_date: todayStr,
+          created_at: new Date()
+        });
+      }
+      return;
+    }
+
+    try {
+      await pool.query(
+        `INSERT INTO user_activity_logs (id, user_id, activity_date, created_at)
+         VALUES ($1, $2, CURRENT_DATE, NOW())
+         ON CONFLICT (user_id, activity_date) DO NOTHING`,
+        [crypto.randomUUID(), userId]
+      );
+    } catch (err) {
+      console.error('[DB] Failed to record user activity:', err);
+    }
+  },
+
+  async getUserActivityStats() {
+    let logs: { user_id: string; activity_date: string }[] = [];
+
+    if (!isDbActive) {
+      logs = memUserActivityLogs.map(l => ({
+        user_id: l.user_id,
+        activity_date: typeof l.activity_date === 'string' ? l.activity_date : new Date(l.activity_date).toISOString().split('T')[0]
+      }));
+    } else {
+      try {
+        const res = await pool.query('SELECT user_id, activity_date FROM user_activity_logs');
+        logs = res.rows.map(row => {
+          let dateStr = "";
+          if (row.activity_date instanceof Date) {
+            dateStr = row.activity_date.toISOString().split('T')[0];
+          } else {
+            dateStr = String(row.activity_date).split('T')[0];
+          }
+          return {
+            user_id: row.user_id,
+            activity_date: dateStr
+          };
+        });
+      } catch (err) {
+        console.error('[DB] Failed to fetch user activity logs from SQL:', err);
+        logs = memUserActivityLogs.map(l => ({
+          user_id: l.user_id,
+          activity_date: typeof l.activity_date === 'string' ? l.activity_date : new Date(l.activity_date).toISOString().split('T')[0]
+        }));
+      }
+    }
+
+    if (logs.length === 0) {
+      return {
+        avgDailyUsers: 0,
+        avgWeeklyUsers: 0,
+        avgMonthlyUsers: 0,
+        avgYearlyUsers: 0,
+        totalLogs: 0
+      };
+    }
+
+    // --- Average Daily Users (DAU) ---
+    const usersByDay: { [date: string]: Set<string> } = {};
+    logs.forEach(log => {
+      if (!usersByDay[log.activity_date]) {
+        usersByDay[log.activity_date] = new Set();
+      }
+      usersByDay[log.activity_date].add(log.user_id);
+    });
+
+    const dailyCounts = Object.values(usersByDay).map(set => set.size);
+    const sumDaily = dailyCounts.reduce((sum, val) => sum + val, 0);
+    const avgDailyUsers = dailyCounts.length > 0 ? (sumDaily / dailyCounts.length) : 0;
+
+    // --- Average Weekly Users (WAU) ---
+    const getWeekKey = (dateStr: string) => {
+      const date = new Date(dateStr);
+      const firstDayOfYear = new Date(date.getFullYear(), 0, 1);
+      const pastDaysOfYear = (date.getTime() - firstDayOfYear.getTime()) / 86400000;
+      const weekNum = Math.ceil((pastDaysOfYear + firstDayOfYear.getDay() + 1) / 7);
+      return `${date.getFullYear()}-W${weekNum}`;
+    };
+
+    const usersByWeek: { [week: string]: Set<string> } = {};
+    logs.forEach(log => {
+      const weekKey = getWeekKey(log.activity_date);
+      if (!usersByWeek[weekKey]) {
+        usersByWeek[weekKey] = new Set();
+      }
+      usersByWeek[weekKey].add(log.user_id);
+    });
+
+    const weeklyCounts = Object.values(usersByWeek).map(set => set.size);
+    const sumWeekly = weeklyCounts.reduce((sum, val) => sum + val, 0);
+    const avgWeeklyUsers = weeklyCounts.length > 0 ? (sumWeekly / weeklyCounts.length) : 0;
+
+    // --- Average Monthly Users (MAU) ---
+    const getMonthKey = (dateStr: string) => {
+      return dateStr.substring(0, 7);
+    };
+
+    const usersByMonth: { [month: string]: Set<string> } = {};
+    logs.forEach(log => {
+      const monthKey = getMonthKey(log.activity_date);
+      if (!usersByMonth[monthKey]) {
+        usersByMonth[monthKey] = new Set();
+      }
+      usersByMonth[monthKey].add(log.user_id);
+    });
+
+    const monthlyCounts = Object.values(usersByMonth).map(set => set.size);
+    const sumMonthly = monthlyCounts.reduce((sum, val) => sum + val, 0);
+    const avgMonthlyUsers = monthlyCounts.length > 0 ? (sumMonthly / monthlyCounts.length) : 0;
+
+    // --- Average Yearly Users (YAU) ---
+    const getYearKey = (dateStr: string) => {
+      return dateStr.substring(0, 4);
+    };
+
+    const usersByYear: { [year: string]: Set<string> } = {};
+    logs.forEach(log => {
+      const yearKey = getYearKey(log.activity_date);
+      if (!usersByYear[yearKey]) {
+        usersByYear[yearKey] = new Set();
+      }
+      usersByYear[yearKey].add(log.user_id);
+    });
+
+    const yearlyCounts = Object.values(usersByYear).map(set => set.size);
+    const sumYearly = yearlyCounts.reduce((sum, val) => sum + val, 0);
+    const avgYearlyUsers = yearlyCounts.length > 0 ? (sumYearly / yearlyCounts.length) : 0;
+
+    return {
+      avgDailyUsers: parseFloat(avgDailyUsers.toFixed(2)),
+      avgWeeklyUsers: parseFloat(avgWeeklyUsers.toFixed(2)),
+      avgMonthlyUsers: parseFloat(avgMonthlyUsers.toFixed(2)),
+      avgYearlyUsers: parseFloat(avgYearlyUsers.toFixed(2)),
+      totalLogs: logs.length
+    };
   }
 };

@@ -255,6 +255,7 @@ export const POPULAR_SYMBOLS: MarketSymbol[] = [
   { symbol: 'META', name: 'Meta Platforms, Inc.', category: 'Stocks', marketStart: '2012-05-18' },
   { symbol: 'PLTR', name: 'Palantir Technologies', category: 'Stocks', marketStart: '2020-09-30' },
   { symbol: 'AMD', name: 'Advanced Micro Devices', category: 'Stocks', marketStart: '1980-01-01' },
+  { symbol: 'AVGO', name: 'Broadcom Inc.', category: 'Stocks', marketStart: '2009-08-06' },
   { symbol: 'NFLX', name: 'Netflix, Inc.', category: 'Stocks', marketStart: '2002-05-23' },
   { symbol: 'BABA', name: 'Alibaba Group Holding', category: 'Stocks', marketStart: '2014-09-19' },
   { symbol: 'BRK.B', name: 'Berkshire Hathaway Inc.', category: 'Stocks', marketStart: '1996-05-09' },

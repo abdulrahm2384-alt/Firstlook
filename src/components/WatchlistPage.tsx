@@ -663,14 +663,18 @@ const MarketSymbolButton = memo(({
   onSelect: (asset: MarketSymbol) => void,
   onShowSources: (asset: MarketSymbol) => void
 }) => {
+  const ALLOWED_STOCKS = ['NVDA', 'TSLA', 'AAPL', 'MSFT', 'AMZN', 'META', 'AMD', 'GOOGL', 'AVGO'];
+  const isLockedStock = asset.category === 'Stocks' && !ALLOWED_STOCKS.includes(asset.symbol.toUpperCase());
+  const isDisabled = asset.comingSoon || isLockedStock;
+
   return (
     <button
       key={asset.symbol}
       type="button"
-      onClick={asset.comingSoon ? undefined : () => onShowSources(asset)}
-      disabled={asset.comingSoon}
+      onClick={isDisabled ? undefined : () => onShowSources(asset)}
+      disabled={isDisabled}
       className={`group flex items-center justify-between p-5 rounded-3xl transition-all text-left border border-transparent 
-        ${asset.comingSoon 
+        ${isDisabled 
           ? 'opacity-40 grayscale cursor-not-allowed bg-slate-50' 
           : 'bg-slate-50/50 hover:bg-slate-900 border border-transparent hover:scale-[1.01] active:scale-[0.99]'}`}
     >
@@ -688,13 +692,18 @@ const MarketSymbolButton = memo(({
               }}
             />
           </div>
-          <span className="font-black text-slate-900 group-hover:text-white uppercase tracking-tight text-base">{asset.symbol}</span>
-          {asset.comingSoon && (
+          <div className="flex flex-col">
+            <span className="font-black text-slate-900 group-hover:text-white uppercase tracking-tight text-base leading-tight">{asset.symbol}</span>
+            {asset.name && (
+              <span className="text-[10px] text-slate-400 group-hover:text-slate-300 font-bold uppercase tracking-wider mt-0.5">{asset.name}</span>
+            )}
+          </div>
+          {(asset.comingSoon || isLockedStock) && (
             <span className="px-1.5 py-0.5 rounded-full bg-slate-200 text-slate-500 text-[8px] font-black uppercase tracking-widest leading-none">Soon</span>
           )}
         </div>
       </div>
-      {!asset.comingSoon && <Plus size={20} className="text-slate-300 group-hover:text-white" />}
+      {!isDisabled && <Plus size={20} className="text-slate-300 group-hover:text-white" />}
     </button>
   );
 });
@@ -2192,7 +2201,6 @@ export function WatchlistPage({
                     icon={BarChart2}
                     label="Stock"
                     isMobile={isMobile}
-                    disabled={true}
                   />
                   <CategoryButton 
                     active={activeCategory === 'Indices'} 

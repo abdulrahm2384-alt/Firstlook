@@ -805,7 +805,13 @@ async function startServer() {
     }
     if (!token) return null;
     try {
-      return jwt.verify(token, JWT_SECRET) as any;
+      const decoded = jwt.verify(token, JWT_SECRET) as any;
+      if (decoded && decoded.id) {
+        db.recordUserActivity(decoded.id).catch(err => {
+          console.error("[Server] Failed to record user activity:", err);
+        });
+      }
+      return decoded;
     } catch {
       return null;
     }
@@ -1317,6 +1323,11 @@ async function startServer() {
 
       // Sign JWT
       const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
+
+      // Record activity
+      db.recordUserActivity(user.id).catch(err => {
+        console.error("[Server] Failed to record user activity during signin:", err);
+      });
 
       res.status(200).json({
         data: {
@@ -3328,8 +3339,8 @@ async function startServer() {
   }
 
   // Forex Datawarehouse candles proxy
-  app.get("/api/warehouse-candles", async (req, res) => {
-    const { symbol, source, timeframe, startTime, endTime, limit, tradeType, marketType } = req.query;
+  const candlesHandler = async (req: express.Request, res: express.Response) => {
+    const { symbol, pair, source, timeframe, startTime, endTime, limit, tradeType, marketType } = req.query;
     try {
       let baseUrl = (process.env.FOREX_API_URL || "https://datawarehouse-vi6d.onrender.com").trim();
       if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
@@ -3338,10 +3349,21 @@ async function startServer() {
       if (baseUrl.endsWith("/")) {
         baseUrl = baseUrl.slice(0, -1);
       }
-      if (!baseUrl.endsWith("/api/warehouse-candles")) {
-        baseUrl = `${baseUrl}/api/warehouse-candles`;
+
+      const rawSym = symbol || pair;
+      const targetSymbol = rawSym ? String(rawSym).toUpperCase() : "";
+      const isStock = ['NVDA', 'TSLA', 'AAPL', 'MSFT', 'AMZN', 'META', 'AMD', 'GOOGL', 'AVGO'].includes(targetSymbol);
+
+      let forexApiUrl = baseUrl;
+      if (isStock) {
+        forexApiUrl = `${baseUrl}/api/candles`;
+      } else {
+        if (!baseUrl.endsWith("/api/warehouse-candles")) {
+          forexApiUrl = `${baseUrl}/api/warehouse-candles`;
+        } else {
+          forexApiUrl = baseUrl;
+        }
       }
-      const forexApiUrl = baseUrl;
       const forexApiSecret = process.env.FOREX_API_SECRET;
       
       if (!forexApiSecret) {
@@ -3351,7 +3373,12 @@ async function startServer() {
 
       // Format parameters according to specification
       const params = new URLSearchParams();
-      if (symbol) params.append("symbol", String(symbol).toUpperCase());
+      if (isStock) {
+        params.append("pair", targetSymbol.toLowerCase());
+      } else {
+        if (targetSymbol) params.append("symbol", targetSymbol);
+      }
+      
       if (source) params.append("source", String(source).toLowerCase());
       if (timeframe) params.append("timeframe", String(timeframe));
       if (startTime) params.append("startTime", String(startTime));
@@ -3403,7 +3430,10 @@ async function startServer() {
       console.error("[Proxy] Forex Warehouse exception:", error);
       return res.status(504).json({ error: "Gateway Timeout: Forex API is unreachable or timed out.", details: error.message });
     }
-  });
+  };
+
+  app.get("/api/warehouse-candles", candlesHandler);
+  app.get("/api/candles", candlesHandler);
 
   app.get("/api/system/banner", async (req, res) => {
     try {
@@ -3459,7 +3489,8 @@ async function startServer() {
     
     const customFeedSymbols = [
       'XAUUSD', 'XAGUSD', 'PLATINUM', 'PALLADIUM', 'COPPER', 'USOIL', 'WTI', 'BRENT',
-      'US30', 'NAS100', 'SPX500', 'DXY', 'SPX', 'IXIC', 'DJI'
+      'US30', 'NAS100', 'SPX500', 'DXY', 'SPX', 'IXIC', 'DJI',
+      'NVDA', 'TSLA', 'AAPL', 'MSFT', 'AMZN', 'META', 'AMD', 'GOOGL', 'AVGO'
     ];
     const isCustomFeed = isForex || customFeedSymbols.includes(cleanSym);
 
@@ -3855,6 +3886,22 @@ async function startServer() {
       console.error("[Admin API] users/overview error:", err);
       await db.logAdminRequest(req.baseUrl + req.path, req.method, req.query, req.ip, 500);
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 5b. Get Users Activity Stats (Average Daily, Weekly, Monthly, Yearly)
+  adminRouter.get("/users/activity-stats", async (req, res) => {
+    try {
+      const stats = await db.getUserActivityStats();
+      await db.logAdminRequest(req.baseUrl + req.path, req.method, req.query, req.ip, 200);
+      res.json({
+        success: true,
+        data: stats
+      });
+    } catch (err: any) {
+      console.error("[Admin API] users/activity-stats error:", err);
+      await db.logAdminRequest(req.baseUrl + req.path, req.method, req.query, req.ip, 500);
+      res.status(500).json({ success: false, error: err.message });
     }
   });
 
