@@ -1435,6 +1435,25 @@ export default function App() {
   const [viewingTradeDetails, setViewingTradeDetails] = useState<JournalTrade | null>(null);
   const [isReplayMode, setIsReplayMode] = useState(false);
   const [subscriptionPlan, setSubscriptionPlan] = useState<'basic' | 'plus' | 'premium'>('basic');
+  const [dailyPlayConsumed, setDailyPlayConsumed] = useState<number>(0);
+
+  // Initialize and keep dailyPlayConsumed in sync with the current day and plan selection
+  useEffect(() => {
+    const todayStr = new Date().toISOString().split('T')[0];
+    try {
+      const saved = localStorage.getItem('firstlook_daily_play_limit_v1');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.date === todayStr) {
+          setDailyPlayConsumed(parsed.consumed || 0);
+          return;
+        }
+      }
+    } catch (e) {
+      console.error("Error loading daily play limit", e);
+    }
+    setDailyPlayConsumed(0);
+  }, [subscriptionPlan]);
   const activeTheme = useMemo(() => {
     return subscriptionPlan === 'basic' ? { ...theme, rawSpread: false } : theme;
   }, [theme, subscriptionPlan]);
@@ -2236,6 +2255,7 @@ export default function App() {
     }
 
     if (tracker.consumed >= limit) {
+      setDailyPlayConsumed(tracker.consumed);
       return false;
     }
 
@@ -2243,6 +2263,7 @@ export default function App() {
       tracker.consumed += countToAdd;
       localStorage.setItem('firstlook_daily_play_limit_v1', JSON.stringify(tracker));
     }
+    setDailyPlayConsumed(tracker.consumed);
     return true;
   }, [subscriptionPlan]);
 
@@ -7560,6 +7581,29 @@ export default function App() {
 
                 const mainPanel = (
                   <div className="flex-grow flex-1 relative min-h-0 min-w-0 bg-white flex flex-col w-full h-full">
+                    {/* Top Left Daily Play Limit Overlay */}
+                    {(() => {
+                      if (subscriptionPlan === 'premium') {
+                        return null;
+                      }
+
+                      const limit = subscriptionPlan === 'plus' ? 5000 : 500;
+                      const remaining = Math.max(0, limit - dailyPlayConsumed);
+
+                      return (
+                        <div 
+                          className={`absolute top-2.5 ${isMobile && isPortrait ? 'left-[46px]' : 'left-4'} z-10 select-none bg-white/75 backdrop-blur-xs px-2 py-0.5 rounded-md font-sans text-[10px] text-slate-500 font-medium hover:bg-white/90 transition-colors cursor-pointer`}
+                          onClick={() => {
+                            setUpgradeModalFeature('candles');
+                            setIsUpgradeModalOpen(true);
+                          }}
+                          title="Click to view upgrade options"
+                        >
+                          p: <span className="font-semibold text-slate-700">{remaining.toLocaleString()} left</span>
+                        </div>
+                      );
+                    })()}
+
                     {/* Top Right Main Info Overlay in Split Screen */}
                     {syncedSymbol && (
                       <div className="absolute top-2 right-4 z-10 select-none bg-white/80 backdrop-blur-sm px-2.5 py-1 rounded-xl border border-slate-100/50">
