@@ -1383,7 +1383,8 @@ async function startServer() {
               bio: user.bio || "",
               experience_level: user.experience_level || "",
               avatar_url: user.avatar_url || "",
-              onboarding_dismissed: !!user.onboarding_dismissed
+              onboarding_dismissed: !!user.onboarding_dismissed,
+              auto_reload: user.auto_reload !== false
             }
           }
         }
@@ -1403,7 +1404,7 @@ async function startServer() {
 
       const token = authHeader.split(" ")[1];
       const decoded = jwt.verify(token, JWT_SECRET) as any;
-      const { username, full_name, country, bio, experience_level, avatar_url, onboarding_dismissed } = req.body;
+      const { username, full_name, country, bio, experience_level, avatar_url, onboarding_dismissed, auto_reload, autoReload } = req.body;
 
       const updated = await db.updateUserProfile(decoded.id, {
         username,
@@ -1412,7 +1413,8 @@ async function startServer() {
         bio,
         experience_level,
         avatar_url,
-        onboarding_dismissed: onboarding_dismissed !== undefined ? onboarding_dismissed : undefined
+        onboarding_dismissed: onboarding_dismissed !== undefined ? onboarding_dismissed : undefined,
+        auto_reload: auto_reload !== undefined ? auto_reload : (autoReload !== undefined ? autoReload : undefined)
       });
 
       if (!updated) {
@@ -1430,7 +1432,8 @@ async function startServer() {
           bio: updated.bio || "",
           experience_level: updated.experience_level || "",
           avatar_url: updated.avatar_url || "",
-          onboarding_dismissed: !!updated.onboarding_dismissed
+          onboarding_dismissed: !!updated.onboarding_dismissed,
+          auto_reload: updated.auto_reload !== false
         }
       });
     } catch (err: any) {

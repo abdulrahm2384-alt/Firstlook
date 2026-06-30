@@ -178,6 +178,8 @@ export async function initializeDatabase() {
         bio VARCHAR DEFAULT '',
         experience_level VARCHAR DEFAULT '',
         avatar_url VARCHAR DEFAULT '',
+        onboarding_dismissed BOOLEAN DEFAULT FALSE,
+        auto_reload BOOLEAN DEFAULT TRUE,
         created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
       );
     `);
@@ -190,6 +192,7 @@ export async function initializeDatabase() {
     await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS experience_level VARCHAR DEFAULT '';");
     await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url VARCHAR DEFAULT '';");
     await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarding_dismissed BOOLEAN DEFAULT FALSE;");
+    await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS auto_reload BOOLEAN DEFAULT TRUE;");
 
     // 2. User Trades
     await client.query(`
@@ -561,10 +564,18 @@ export const db = {
   async getUserByEmail(email: string) {
     const cleanEmail = email.toLowerCase().trim();
     if (!isDbActive) {
-      return memUsers.find(u => (u.email || '').toLowerCase().trim() === cleanEmail) || null;
+      const user = memUsers.find(u => (u.email || '').toLowerCase().trim() === cleanEmail) || null;
+      if (user && (user.auto_reload === undefined || user.auto_reload === null)) {
+        user.auto_reload = true;
+      }
+      return user;
     }
     const res = await pool.query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [cleanEmail]);
-    return res.rows[0] || null;
+    const user = res.rows[0] || null;
+    if (user && (user.auto_reload === undefined || user.auto_reload === null)) {
+      user.auto_reload = true;
+    }
+    return user;
   },
 
   async createUser(
@@ -590,6 +601,7 @@ export const db = {
       experience_level: experienceLevel || '',
       avatar_url: avatarUrl || '',
       onboarding_dismissed: false,
+      auto_reload: true,
       created_at: new Date().toISOString() 
     };
 
@@ -599,8 +611,8 @@ export const db = {
     }
     
     await pool.query(
-      `INSERT INTO users (id, email, password_hash, username, full_name, country, bio, experience_level, avatar_url) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      `INSERT INTO users (id, email, password_hash, username, full_name, country, bio, experience_level, avatar_url, auto_reload) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
       [
         id, 
         cleanEmail, 
@@ -610,7 +622,8 @@ export const db = {
         country || '', 
         bio || '', 
         experienceLevel || '', 
-        avatarUrl || ''
+        avatarUrl || '',
+        true
       ]
     );
     return user;
@@ -626,6 +639,7 @@ export const db = {
       experience_level?: string; 
       avatar_url?: string; 
       onboarding_dismissed?: boolean;
+      auto_reload?: boolean;
     }
   ) {
     if (!isDbActive) {
@@ -659,10 +673,18 @@ export const db = {
 
   async getUserById(id: string) {
     if (!isDbActive) {
-      return memUsers.find(u => u.id === id) || null;
+      const user = memUsers.find(u => u.id === id) || null;
+      if (user && (user.auto_reload === undefined || user.auto_reload === null)) {
+        user.auto_reload = true;
+      }
+      return user;
     }
     const res = await pool.query('SELECT * FROM users WHERE id = $1', [id]);
-    return res.rows[0] || null;
+    const user = res.rows[0] || null;
+    if (user && (user.auto_reload === undefined || user.auto_reload === null)) {
+      user.auto_reload = true;
+    }
+    return user;
   },
 
   // --- TRADES SERVICES ---

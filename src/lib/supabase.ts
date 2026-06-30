@@ -92,7 +92,7 @@ export const supabase = {
       }
     },
 
-    async updateProfile(details: { username?: string; full_name?: string; country?: string; bio?: string; experience_level?: string; avatar_url?: string; onboarding_dismissed?: boolean }) {
+     async updateProfile(details: { username?: string; full_name?: string; country?: string; bio?: string; experience_level?: string; avatar_url?: string; onboarding_dismissed?: boolean; auto_reload?: boolean; autoReload?: boolean }) {
       try {
         const token = localStorage.getItem('firstlook_session_token') || getSessionCookie();
         if (!token) throw new Error('No active session token');

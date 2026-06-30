@@ -4502,12 +4502,33 @@ export default function App() {
 
   const loadMarketData = async (symbol: string, timeframeId: string, initialEndTime?: number, sourceOverride?: string, marketTypeOverride?: MarketType, forceTimeSnap?: boolean) => {
     if (!symbol) return;
+
+    const hasAutoReload = session?.user?.auto_reload === true;
+    if (hasAutoReload) {
+      console.log('[AutoReload] Self-healing triggered. Clearing all chart caches and forcing fresh fetch.');
+      setSession((prev: any) => {
+        if (!prev || !prev.user) return prev;
+        return {
+          ...prev,
+          user: {
+            ...prev.user,
+            auto_reload: false
+          }
+        };
+      });
+      await clearAllLocalChartCaches();
+      supabase.auth.updateProfile({ auto_reload: false }).catch(err => {
+        console.error('[AutoReload] Failed to update auto_reload to false in DB:', err);
+      });
+    }
+
     lastRequestedSymbolRef.current = symbol;
     lastRequestedTimeframeRef.current = timeframeId;
     hasNoMoreFutureDataRef.current = false;
 
     // Define whether the symbol or timeframe is changing BEFORE we update any refs!
     const isChangingTimeframeOrSymbol = loadedSymbolRef.current !== symbol || loadedTimeframeRef.current !== timeframeId;
+    const isSameSymbolTimeframeChange = loadedSymbolRef.current === symbol && loadedTimeframeRef.current !== timeframeId;
     const finalForceSnap = forceTimeSnap || isChangingTimeframeOrSymbol;
 
     // Use explicit source/marketType if provided, otherwise find in watchlist
@@ -4864,8 +4885,6 @@ export default function App() {
             setRenderedTimeframeId(timeframeId);
             loadedSymbolRef.current = symbol;
             loadedTimeframeRef.current = timeframeId;
-            
-            const isSameSymbolTimeframeChange = loadedSymbolRef.current === symbol && loadedTimeframeRef.current !== timeframeId;
             
             if (!isReplayMode) {
               const shouldSnap = simCurrentTimeRef.current === null || lastLoadedSessionKeyRef.current !== currentSessionKey || (finalForceSnap && !isSameSymbolTimeframeChange);
@@ -5839,39 +5858,10 @@ export default function App() {
           setSimCurrentTime(nextTime);
           setSimCurrentPrice(stepPrice);
         } else {
-          const isTimeSync = session && session.timeSyncEnabled;
-          const getCandleDurationForSpeed = (speed: number) => {
-            if (speed === 1) return 5;
-            if (speed === 2) return 4;
-            if (speed === 3) return 3;
-            if (speed === 4) return 2;
-            if (speed < 1) return 5 / (speed || 1);
-            return Math.max(0.5, 6 - speed);
-          };
-          const playDuration = getCandleDurationForSpeed(simSpeed);
-          const safeTimeSyncSpeed = Math.max(0.1, session?.timeSyncSpeed || 60);
-          const nextTime = isTimeSync
-            ? current + (deltaMs / 1000) * (60 / safeTimeSyncSpeed)
-            : current + (deltaMs / 1000) * (timeframeSeconds / playDuration);
-
-          const oldTimeIdx = Math.floor(current / timeframeSeconds);
-          const newTimeIdx = Math.floor(nextTime / timeframeSeconds);
-          const candlesPlayed = newTimeIdx - oldTimeIdx;
-          if (candlesPlayed > 0) {
-            if (!checkAndTrackPlayLimit(candlesPlayed)) {
-              setSimIsPlaying(false);
-              setUpgradeModalFeature('candles');
-              setIsUpgradeModalOpen(true);
-              addNotification(`Daily candle play limit reached (Max ${subscriptionPlan === 'plus' ? '5000' : '300'} candles). Upgrade your plan to play more candles!`, 'warning');
-              return;
-            }
-          }
-
-          simCurrentTimeRef.current = nextTime;
-          if (sessionCurrentTimesRef.current) {
-            sessionCurrentTimesRef.current[sessionKey] = nextTime;
-          }
-          setSimCurrentTime(nextTime);
+          // If we are currently loading or have 0 candles, do NOT advance the playhead clock.
+          // This completely eliminates any fast-forwarding/jumping bugs while transitioning
+          // or loading larger timeframes.
+          return;
         }
       }
     };
