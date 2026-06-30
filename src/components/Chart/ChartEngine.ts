@@ -3767,6 +3767,16 @@ export class ChartEngine {
     sortedDrawingsForRender.forEach(d => {
       if (d.points.length === 0 || !this.isDrawingVisible(d)) return;
 
+      // Skip closed trade positions/drawings if trade history is disabled, except during replay mode where we must see the replayed trade
+      if (this.theme?.showTradeHistory === false && !this.isReplay) {
+        if (d.type === DrawingType.LONG_POSITION || d.type === DrawingType.SHORT_POSITION) {
+          const metrics = this.getPositionMetrics(d);
+          if (metrics.isClosed) {
+            return;
+          }
+        }
+      }
+
       const isSelected = d.id === this.selectedDrawingId;
       const coords = d.points.map(p => ({
         x: getXFromTime(p.time, p.price),
@@ -5340,6 +5350,16 @@ export class ChartEngine {
 
     for (const d of testDrawings) {
         if (!this.isDrawingVisible(d)) continue;
+
+        // Skip hit testing for closed positions/drawings if trade history is disabled, except during replay mode where we must select/interact with the replayed trade
+        if (this.theme?.showTradeHistory === false && !this.isReplay) {
+          if (d.type === DrawingType.LONG_POSITION || d.type === DrawingType.SHORT_POSITION) {
+            const metrics = this.getPositionMetrics(d);
+            if (metrics.isClosed) {
+              continue;
+            }
+          }
+        }
         
         // NEW COMPACT & ULTRA PRECISION HIT-TEST FOR LONG/SHORT POSITIONS
         if (d.type === DrawingType.LONG_POSITION || d.type === DrawingType.SHORT_POSITION) {

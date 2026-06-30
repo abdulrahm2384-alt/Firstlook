@@ -40,6 +40,7 @@ export interface UserPreferences {
   dailyPlayLimitTracker?: { date: string; consumed: number };
   dailyJournalReplaysTracker?: { date: string; consumed: number };
   dailySyncChartsTracker?: { date: string; consumed: number };
+  dailyWhatIfTracker?: { date: string; consumed: number };
 }
 
 // Helper to handle fetch abort on timeout to prevent hanging when offline

@@ -145,4 +145,5 @@ export interface ChartTheme {
   commissionEnabled?: boolean;
   showVolume?: boolean;
   chartType?: 'candle' | 'line' | 'bar' | 'heikin-ashi';
+  showTradeHistory?: boolean;
 }

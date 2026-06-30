@@ -16,7 +16,8 @@ import {
   RefreshCcw, 
   RotateCcw, 
   Sliders, 
-  Flame 
+  Flame,
+  History
 } from 'lucide-react';
 import { ColorPicker } from './ColorPicker';
 import { ChartTheme } from '../types';
@@ -315,6 +316,27 @@ export function SettingsPanel({
                     <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all shadow-sm ${theme.tickingEnabled !== false ? 'left-5' : 'left-1'}`} />
                   </button>
                 </div>
+
+                {/* Trade History */}
+                <div className="p-4 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-7 h-7 bg-indigo-500 text-white rounded-lg flex items-center justify-center">
+                      <History size={13} />
+                    </div>
+                    <div className="flex flex-col">
+                      <span className="text-[10px] font-bold text-slate-800 uppercase">Trade History</span>
+                      <span className="text-[8px] text-slate-400">Show closed positions on chart</span>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => {
+                      handleSaveTheme({...theme, showTradeHistory: theme.showTradeHistory === false ? true : false});
+                    }}
+                    className={`w-9 h-5 rounded-full transition-all relative cursor-pointer ${theme.showTradeHistory !== false ? 'bg-slate-900' : 'bg-slate-200'}`}
+                  >
+                    <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all shadow-sm ${theme.showTradeHistory !== false ? 'left-5' : 'left-1'}`} />
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -468,7 +490,8 @@ export function SettingsPanel({
                     tickingEnabled: true,
                     showWatermark: true,
                     showVolume: true,
-                    chartType: 'candle'
+                    chartType: 'candle',
+                    showTradeHistory: true
                   };
                   handleSaveTheme(defaultTheme);
                 }}
@@ -889,6 +912,22 @@ export function SettingsPanel({
                         <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all shadow-sm ${showDrawingToolbar ? 'left-5' : 'left-1'}`} />
                       </button>
                     </div>
+
+                    {/* Trade History */}
+                    <div className="p-3.5 bg-slate-50/50 border border-slate-100 rounded-xl flex items-center justify-between">
+                      <div className="flex flex-col font-sans">
+                        <span className="text-[9.5px] font-black text-slate-700 uppercase">Trade History</span>
+                        <span className="text-[8px] text-slate-400">Show closed positions on chart</span>
+                      </div>
+                      <button 
+                        onClick={() => {
+                          handleSaveTheme({...theme, showTradeHistory: theme.showTradeHistory === false ? true : false});
+                        }}
+                        className={`w-9 h-5 rounded-full transition-all relative cursor-pointer ${theme.showTradeHistory !== false ? 'bg-slate-900' : 'bg-slate-200'}`}
+                      >
+                        <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all shadow-sm ${theme.showTradeHistory !== false ? 'left-5' : 'left-1'}`} />
+                      </button>
+                    </div>
                   </div>
                 </motion.div>
               )}
@@ -947,7 +986,8 @@ export function SettingsPanel({
                               tickingEnabled: true,
                               showWatermark: true,
                               showVolume: true,
-                              chartType: 'candle'
+                              chartType: 'candle',
+                              showTradeHistory: true
                             };
                             handleSaveTheme(defaultTheme);
                           }}

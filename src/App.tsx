@@ -231,7 +231,8 @@ const DEFAULT_THEME: ChartTheme = {
   showWatermark: true,
   commissionEnabled: true,
   showVolume: true,
-  chartType: 'candle'
+  chartType: 'candle',
+  showTradeHistory: true
 };
 
 const toTheme = (t: any): ChartTheme => ({
@@ -1439,6 +1440,354 @@ export default function App() {
     setHistoryCategory('All');
   }, [selectedSymbol, activePrefix]);
   const [sidebarTab, setSidebarTab] = useState<'stats' | 'trades'>('stats');
+  const [simSectionTab, setSimSectionTab] = useState<'simulated_date' | 'weekly_activities' | 'yearly_performance'>('simulated_date');
+  const [scenarioTargetRR, setScenarioTargetRR] = useState<number>(3.0);
+  const [scenarioSLAdjust, setScenarioSLAdjust] = useState<number>(0.0);
+  const [isAnalyzingScenario, setIsAnalyzingScenario] = useState<boolean>(false);
+  const [scenarioProgress, setScenarioProgress] = useState<number>(0);
+  const [scenarioResults, setScenarioResults] = useState<any>(null);
+  const scenarioCandleCacheRef = useRef<Record<string, any[]>>({});
+
+  const normalizeTimeframeId = (label: string): string => {
+    const l = (label || '').trim().toLowerCase();
+    if (l === 'daily' || l === '1d' || l === 'd') return '1D';
+    if (l.includes('240') || l === '4h') return '4h';
+    if (l.includes('60') || l === '1h') return '1h';
+    if (l.includes('15') || l === '15m') return '15m';
+    if (l.includes('5') || l === '5m') return '5m';
+    if (l.includes('1') || l === '1m') return '1m';
+    return '5m'; // default
+  };
+
+  const getTimeframeSeconds = (tf: string): number => {
+    const num = parseInt(tf) || 5;
+    if (tf.endsWith('m')) return num * 60;
+    if (tf.endsWith('h')) return num * 3600;
+    if (tf.endsWith('d') || tf === '1D') return num * 86400;
+    return 300; // default 5m
+  };
+
+  const runScenarioCalculation = (
+    tradesToSimulate: JournalTrade[],
+    targetRR: number,
+    slAdjust: number,
+    candleCache: Record<string, any[]>
+  ) => {
+    const simulatedTradesList: any[] = [];
+    
+    tradesToSimulate.forEach((t) => {
+      const key = `${t.symbol}_${t.timeframe || '5m'}_${t.entryTime}`;
+      const candles = candleCache[key];
+      
+      const entryPrice = t.entryPrice;
+      const exitPrice = t.exitPrice;
+      const originalStatus = t.status;
+      const originalRR = t.rr || 0;
+      
+      const direction = t.type === 'LONG' ? 1 : -1;
+      let initialRisk = 0;
+      if (originalStatus === 'SL') {
+        initialRisk = Math.abs(entryPrice - exitPrice);
+      } else {
+        const grossRr = (t as any).grossRr || t.rr || 1;
+        initialRisk = Math.abs(entryPrice - exitPrice) / (grossRr || 1);
+      }
+      if (!initialRisk || isNaN(initialRisk)) {
+        initialRisk = entryPrice * 0.01;
+      }
+      
+      const newStopDistance = initialRisk * (1 + slAdjust);
+      const isLongTrade = t.type === 'LONG';
+      const newSL = isLongTrade ? (entryPrice - newStopDistance) : (entryPrice + newStopDistance);
+      const newTP = isLongTrade ? (entryPrice + targetRR * newStopDistance) : (entryPrice - targetRR * newStopDistance);
+      
+      let simStatus: 'TP' | 'SL' | 'OPEN' = 'OPEN';
+      let simExitTime = t.exitTime;
+      let simExitPrice = t.exitPrice;
+      let simRR = 0;
+      
+      if (candles && candles.length > 0) {
+        const futureCandles = candles.filter(c => c.time >= t.entryTime).sort((a, b) => a.time - b.time);
+        
+        let hitSL = false;
+        let hitTP = false;
+        let hitTime = 0;
+        
+        for (const c of futureCandles) {
+          const high = c.high;
+          const low = c.low;
+          const open = c.open;
+          
+          const isSLHit = isLongTrade ? (low <= newSL) : (high >= newSL);
+          const isTPHit = isLongTrade ? (high >= newTP) : (low <= newTP);
+          
+          if (isSLHit && isTPHit) {
+            const distToSL = Math.abs(open - newSL);
+            const distToTP = Math.abs(open - newTP);
+            if (distToSL < distToTP) {
+              hitSL = true;
+            } else {
+              hitTP = true;
+            }
+            hitTime = c.time;
+            simExitPrice = hitSL ? newSL : newTP;
+            break;
+          } else if (isSLHit) {
+            hitSL = true;
+            hitTime = c.time;
+            simExitPrice = newSL;
+            break;
+          } else if (isTPHit) {
+            hitTP = true;
+            hitTime = c.time;
+            simExitPrice = newTP;
+            break;
+          }
+        }
+        
+        if (hitSL) {
+          simStatus = 'SL';
+          simExitTime = hitTime;
+          simRR = -1.0;
+        } else if (hitTP) {
+          simStatus = 'TP';
+          simExitTime = hitTime;
+          simRR = targetRR;
+        } else {
+          simStatus = 'OPEN';
+          if (futureCandles.length > 0) {
+            const lastC = futureCandles[futureCandles.length - 1];
+            simExitPrice = lastC.close;
+            simExitTime = lastC.time;
+            const rawDiff = isLongTrade ? (simExitPrice - entryPrice) : (entryPrice - simExitPrice);
+            simRR = parseFloat((rawDiff / newStopDistance).toFixed(2));
+          } else {
+            simRR = originalRR;
+          }
+        }
+      } else {
+        simStatus = originalStatus;
+        simRR = originalStatus === 'TP' ? targetRR : -1.0;
+      }
+      
+      simulatedTradesList.push({
+        ...t,
+        originalStatus,
+        originalRR,
+        simStatus,
+        simRR,
+        simExitPrice,
+        simExitTime
+      });
+    });
+    
+    // Calculate ACTUAL Stats on these trades
+    const actTotal = simulatedTradesList.length;
+    const actTps = simulatedTradesList.filter(t => t.originalStatus === 'TP');
+    const actSls = simulatedTradesList.filter(t => t.originalStatus === 'SL');
+    const actOpens = simulatedTradesList.filter(t => t.originalStatus === 'OPEN');
+    
+    const actWinRate = actTotal > 0 ? (actTps.length / actTotal) * 100 : 0;
+    const actTotalRR = simulatedTradesList.reduce((sum, t) => sum + (t.originalRR || 0), 0);
+    const actAvgWin = actTps.reduce((sum, t) => sum + (t.originalRR || 0), 0) / (actTps.length || 1);
+    const actAvgLoss = actSls.reduce((sum, t) => sum + (t.originalRR || 0), 0) / (actSls.length || 1);
+    const actTotalWinRR = actTps.reduce((sum, t) => sum + (t.originalRR || 0), 0);
+    const actTotalLossRR = Math.abs(actSls.reduce((sum, t) => sum + (t.originalRR || 0), 0));
+    const actProfitFactor = actTotalLossRR > 0 ? actTotalWinRR / actTotalLossRR : actTotalWinRR;
+    const actAccuracy = actAvgWin / Math.abs(actAvgLoss || 1);
+    const actTotalPips = simulatedTradesList.reduce((sum, t) => sum + (t.pips || 0), 0);
+    const actAvgPips = actTotalPips / (actTotal || 1);
+
+    let actMaxWinStreak = 0;
+    let actMaxLossStreak = 0;
+    let actCurWin = 0;
+    let actCurLoss = 0;
+    simulatedTradesList.forEach(t => {
+      if (t.originalStatus === 'TP') {
+        actCurWin++;
+        actCurLoss = 0;
+        if (actCurWin > actMaxWinStreak) actMaxWinStreak = actCurWin;
+      } else if (t.originalStatus === 'SL') {
+        actCurLoss++;
+        actCurWin = 0;
+        if (actCurLoss > actMaxLossStreak) actMaxLossStreak = actCurLoss;
+      }
+    });
+
+    let actPeak = 0;
+    let actMaxDrawdown = 0;
+    let actRunningRR = 0;
+    simulatedTradesList.forEach(t => {
+      actRunningRR += (t.originalRR || 0);
+      if (actRunningRR > actPeak) actPeak = actRunningRR;
+      const dd = actPeak - actRunningRR;
+      if (dd > actMaxDrawdown) actMaxDrawdown = dd;
+    });
+
+    const actDurations = simulatedTradesList.map(t => (t.exitTime - t.entryTime) / 60);
+    const actAvgDuration = actDurations.reduce((a, b) => a + b, 0) / (actDurations.length || 1);
+
+    // Calculate SIMULATED Stats on these trades
+    const simTotal = simulatedTradesList.length;
+    const simTps = simulatedTradesList.filter(t => t.simStatus === 'TP');
+    const simSls = simulatedTradesList.filter(t => t.simStatus === 'SL');
+    const simOpens = simulatedTradesList.filter(t => t.simStatus === 'OPEN');
+
+    const simWinRate = simTotal > 0 ? (simTps.length / simTotal) * 100 : 0;
+    const simTotalRR = simulatedTradesList.reduce((sum, t) => sum + t.simRR, 0);
+    const simAvgWin = simTps.reduce((sum, t) => sum + t.simRR, 0) / (simTps.length || 1);
+    const simAvgLoss = simSls.reduce((sum, t) => sum + t.simRR, 0) / (simSls.length || 1);
+    const simTotalWinRR = simTps.reduce((sum, t) => sum + t.simRR, 0);
+    const simTotalLossRR = Math.abs(simSls.reduce((sum, t) => sum + t.simRR, 0));
+    const simProfitFactor = simTotalLossRR > 0 ? simTotalWinRR / simTotalLossRR : simTotalWinRR;
+    const simAccuracy = simAvgWin / Math.abs(simAvgLoss || 1);
+    
+    const simPipsList = simulatedTradesList.map(t => calculatePips(t.symbol, t.entryPrice, t.simExitPrice));
+    const simTotalPips = simPipsList.reduce((sum, p) => sum + p, 0);
+    const simAvgPips = simTotalPips / (simTotal || 1);
+
+    let simMaxWinStreak = 0;
+    let simMaxLossStreak = 0;
+    let simCurWin = 0;
+    let simCurLoss = 0;
+    simulatedTradesList.forEach(t => {
+      if (t.simStatus === 'TP') {
+        simCurWin++;
+        simCurLoss = 0;
+        if (simCurWin > simMaxWinStreak) simMaxWinStreak = simCurWin;
+      } else if (t.simStatus === 'SL') {
+        simCurLoss++;
+        simCurWin = 0;
+        if (simCurLoss > simMaxLossStreak) simMaxLossStreak = simCurLoss;
+      }
+    });
+
+    let simPeak = 0;
+    let simMaxDrawdown = 0;
+    let simRunningRR = 0;
+    simulatedTradesList.forEach(t => {
+      simRunningRR += t.simRR;
+      if (simRunningRR > simPeak) simPeak = simRunningRR;
+      const dd = simPeak - simRunningRR;
+      if (dd > simMaxDrawdown) simMaxDrawdown = dd;
+    });
+
+    const simDurations = simulatedTradesList.map(t => (t.simExitTime - t.entryTime) / 60);
+    const simAvgDuration = simDurations.reduce((a, b) => a + b, 0) / (simDurations.length || 1);
+
+    return {
+      simulatedTrades: simulatedTradesList,
+      actual: {
+        total: actTotal,
+        tpsCount: actTps.length,
+        slsCount: actSls.length,
+        opensCount: actOpens.length,
+        winRate: actWinRate,
+        totalRR: actTotalRR,
+        avgWin: actAvgWin,
+        avgLoss: actAvgLoss,
+        profitFactor: actProfitFactor,
+        accuracy: actAccuracy,
+        totalPips: actTotalPips,
+        avgPips: actAvgPips,
+        maxWinStreak: actMaxWinStreak,
+        maxLossStreak: actMaxLossStreak,
+        maxDrawdown: actMaxDrawdown,
+        avgDuration: actAvgDuration
+      },
+      simulated: {
+        total: simTotal,
+        tpsCount: simTps.length,
+        slsCount: simSls.length,
+        opensCount: simOpens.length,
+        winRate: simWinRate,
+        totalRR: simTotalRR,
+        avgWin: simAvgWin,
+        avgLoss: simAvgLoss,
+        profitFactor: simProfitFactor,
+        accuracy: simAccuracy,
+        totalPips: simTotalPips,
+        avgPips: simAvgPips,
+        maxWinStreak: simMaxWinStreak,
+        maxLossStreak: simMaxLossStreak,
+        maxDrawdown: simMaxDrawdown,
+        avgDuration: simAvgDuration
+      }
+    };
+  };
+
+  const handleRunWhatIfSimulation = async (tradesToSimulate: JournalTrade[]) => {
+    if (!tradesToSimulate || tradesToSimulate.length === 0) return;
+
+    if (subscriptionPlan === 'basic' && !checkAndTrackWhatIfLimit(false)) {
+      addNotification("Daily What-If simulation limit reached (Max 1 run a day under Basic plan). Upgrade to run unlimited simulations!", "warning");
+      setUpgradeModalFeature('whatif');
+      setIsUpgradeModalOpen(true);
+      return;
+    }
+
+    setIsAnalyzingScenario(true);
+    setScenarioProgress(10);
+    
+    const updatedCache = { ...scenarioCandleCacheRef.current };
+    let completed = 0;
+    const totalTrades = tradesToSimulate.length;
+    
+    for (const t of tradesToSimulate) {
+      const key = `${t.symbol}_${t.timeframe || '5m'}_${t.entryTime}`;
+      if (!updatedCache[key]) {
+        try {
+          const tfId = normalizeTimeframeId(t.timeframe || '5m');
+          const tfSec = getTimeframeSeconds(tfId);
+          const qEndTime = t.entryTime + 450 * tfSec;
+          
+          const candles = await apiFetchCandleData(
+            t.symbol,
+            tfId,
+            500,
+            qEndTime,
+            undefined,
+            activeWatchlistItem?.dataSource,
+            activeWatchlistItem?.marketType
+          );
+          
+          if (candles && candles.length > 0) {
+            updatedCache[key] = candles;
+          }
+        } catch (err) {
+          console.error(`[WhatIf] Failed to load candles for trade ${t.symbol} @ ${t.entryTime}:`, err);
+        }
+      }
+      completed++;
+      setScenarioProgress(Math.min(95, Math.floor(10 + (completed / totalTrades) * 85)));
+    }
+    
+    scenarioCandleCacheRef.current = updatedCache;
+    
+    const results = runScenarioCalculation(tradesToSimulate, scenarioTargetRR, scenarioSLAdjust, updatedCache);
+    setScenarioResults(results);
+    setScenarioProgress(100);
+    setTimeout(() => setIsAnalyzingScenario(false), 500);
+
+    if (subscriptionPlan === 'basic') {
+      checkAndTrackWhatIfLimit(true);
+    }
+  };
+
+  useEffect(() => {
+    if (scenarioResults && Object.keys(scenarioCandleCacheRef.current).length > 0) {
+      const results = runScenarioCalculation(filteredMergedTrades, scenarioTargetRR, scenarioSLAdjust, scenarioCandleCacheRef.current);
+      setScenarioResults(results);
+    }
+  }, [scenarioTargetRR, scenarioSLAdjust, filteredMergedTrades]);
+
+  // Reset What-If simulation engine state when user leaves the section (e.g., changes symbol, activePrefix, or switches tab)
+  useEffect(() => {
+    setShowAdvancedStats(false);
+    setScenarioResults(null);
+    setScenarioTargetRR(3.0);
+    setScenarioSLAdjust(0.0);
+  }, [selectedSymbol, activePrefix, activeTab]);
   const [showSetupDetails, setShowSetupDetails] = useState(false);
   const [tradeMenuId, setTradeMenuId] = useState<string | null>(null);
   const [viewingTradeDetails, setViewingTradeDetails] = useState<JournalTrade | null>(null);
@@ -1447,6 +1796,7 @@ export default function App() {
   const [dailyPlayConsumed, setDailyPlayConsumed] = useState<number>(0);
   const [dailyJournalReplaysConsumed, setDailyJournalReplaysConsumed] = useState<number>(0);
   const [dailySyncChartsConsumed, setDailySyncChartsConsumed] = useState<number>(0);
+  const [dailyWhatIfConsumed, setDailyWhatIfConsumed] = useState<number>(0);
 
   // Initialize and keep limits in sync with the current day and plan selection
   useEffect(() => {
@@ -1501,6 +1851,23 @@ export default function App() {
       console.error("Error loading daily sync charts tracker", e);
       setDailySyncChartsConsumed(0);
     }
+
+    try {
+      const saved = localStorage.getItem('firstlook_daily_whatif_limit_v1');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.date === todayStr) {
+          setDailyWhatIfConsumed(parsed.consumed || 0);
+        } else {
+          setDailyWhatIfConsumed(0);
+        }
+      } else {
+        setDailyWhatIfConsumed(0);
+      }
+    } catch (e) {
+      console.error("Error loading daily whatif limit tracker", e);
+      setDailyWhatIfConsumed(0);
+    }
   }, [subscriptionPlan]);
   const activeTheme = useMemo(() => {
     return subscriptionPlan === 'basic' ? { ...theme, rawSpread: false } : theme;
@@ -1552,8 +1919,35 @@ export default function App() {
     };
     fetchCompetitionsStatus();
   }, [session, isCompetitionsPopupOpen]);
-  const [replayCurrentTime, setReplayCurrentTime] = useState<number | null>(null);
+  const [replayCurrentTimeState, setReplayCurrentTimeVal] = useState<number | null>(null);
   const [replayTrade, setReplayTrade] = useState<JournalTrade | null>(null);
+
+  const setReplayCurrentTime = useCallback((time: number | null | ((prev: number | null) => number | null)) => {
+    if (time === null) {
+      replayCurrentTimeRef.current = null;
+      setReplayCurrentTimeVal(null);
+      return;
+    }
+
+    let nextTime: number | null = null;
+    if (typeof time === 'function') {
+      nextTime = time(replayCurrentTimeRef.current);
+    } else {
+      nextTime = time;
+    }
+
+    if (nextTime !== null && replayTrade) {
+      const tfSeconds = TIMEFRAMES.find(t => t.id.toLowerCase() === replayTrade.timeframe.toLowerCase() || t.label.toLowerCase() === replayTrade.timeframe.toLowerCase())?.seconds || 60;
+      const replayStartTime = replayTrade.entryTime - (30 * tfSeconds);
+      const replayEndTime = replayTrade.exitTime + (10 * tfSeconds);
+      nextTime = Math.max(replayStartTime, Math.min(replayEndTime, nextTime));
+    }
+
+    replayCurrentTimeRef.current = nextTime;
+    setReplayCurrentTimeVal(nextTime);
+  }, [replayTrade]);
+
+  const replayCurrentTime = replayCurrentTimeState;
   const [replayIsPlaying, setReplayIsPlaying] = useState(false);
   
   const [preReplayDrawings, setPreReplayDrawings] = useState<any[] | null>(null);
@@ -1574,7 +1968,7 @@ export default function App() {
 
   // Feature locking & subscription upgrades modal states
   const [isUpgradeModalOpen, setIsUpgradeModalOpen] = useState(false);
-  const [upgradeModalFeature, setUpgradeModalFeature] = useState<'replay' | 'sync' | 'competition' | 'timesync' | 'script' | 'watchlist' | 'news' | 'spread' | 'candles'>('replay');
+  const [upgradeModalFeature, setUpgradeModalFeature] = useState<'replay' | 'sync' | 'competition' | 'timesync' | 'script' | 'watchlist' | 'news' | 'spread' | 'candles' | 'whatif'>('replay');
 
   const syncedTimeframe = syncedTimeframeState || selectedTimeframe;
   const [renderedTimeframeId, setRenderedTimeframeId] = useState<string>(selectedTimeframe.id);
@@ -2406,6 +2800,46 @@ export default function App() {
     return true;
   }, [subscriptionPlan, session?.user?.id]);
 
+  // Daily What-If Limit Tracking (max 1 simulation run a day under Basic plan)
+  const checkAndTrackWhatIfLimit = useCallback((simulateConsumption: boolean = false): boolean => {
+    if (subscriptionPlan === 'plus' || subscriptionPlan === 'premium') return true;
+
+    const limit = 1;
+    const todayStr = new Date().toISOString().split('T')[0];
+    
+    let tracker = { date: todayStr, consumed: 0 };
+    try {
+      const saved = localStorage.getItem('firstlook_daily_whatif_limit_v1');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.date === todayStr) {
+          tracker = parsed;
+        }
+      }
+    } catch (e) {
+      console.error("Error reading daily whatif limit", e);
+    }
+
+    if (tracker.consumed >= limit) {
+      setDailyWhatIfConsumed(tracker.consumed);
+      return false;
+    }
+
+    if (simulateConsumption) {
+      tracker.consumed += 1;
+      localStorage.setItem('firstlook_daily_whatif_limit_v1', JSON.stringify(tracker));
+
+      // PERSISTENT CROSS-DEVICE SYNC: sync with backend database
+      if (session?.user?.id) {
+        persistenceService.savePreferences(session.user.id, {
+          dailyWhatIfTracker: tracker
+        } as any).catch(err => console.error('[What-If Limit Sync] Failed to sync daily what-if tracker:', err));
+      }
+      setDailyWhatIfConsumed(tracker.consumed);
+    }
+    return true;
+  }, [subscriptionPlan, session?.user?.id]);
+
   // Keep legacy function signature as an unlimited pass-through so candle fetching has absolutely no limits
   const checkAndTrackCandleLimit = useCallback((_countToAdd: number): boolean => {
     return true;
@@ -2434,9 +2868,10 @@ export default function App() {
 
       if (isReplayMode && replayTrade) {
         const tfSecs = TIMEFRAMES.find(tf => tf.id.toLowerCase() === replayTrade.timeframe.toLowerCase() || tf.label.toLowerCase() === replayTrade.timeframe.toLowerCase())?.seconds || 60;
-        start_time = historicalDataRef.current[0]?.time || replayTrade.entryTime;
+        const replayStartTime = replayTrade.entryTime - (30 * tfSecs);
+        start_time = historicalDataRef.current[0]?.time || replayStartTime;
         trueEndTime = replayTrade.exitTime + (10 * tfSecs);
-        last_play_candle_time = replayCurrentTimeRef.current || replayTrade.entryTime;
+        last_play_candle_time = replayCurrentTimeRef.current || replayStartTime;
       } else {
         const activeItem = watchlistRef.current.find(i => i.id === activeWatchlistItemId) ||
                            watchlistRef.current.find(i => i.symbol === selectedSymbolRef.current && (i.prefix || null) === (activePrefixRef.current || null));
@@ -2450,9 +2885,11 @@ export default function App() {
 
       if (trueEndTime && last_play_candle_time && last_play_candle_time >= trueEndTime) {
         if (isReplayMode && replayTrade) {
-          replayCurrentTimeRef.current = replayTrade.entryTime;
-          setReplayCurrentTime(replayTrade.entryTime);
-          last_play_candle_time = replayTrade.entryTime;
+          const tfSecs = TIMEFRAMES.find(tf => tf.id.toLowerCase() === replayTrade.timeframe.toLowerCase() || tf.label.toLowerCase() === replayTrade.timeframe.toLowerCase())?.seconds || 60;
+          const replayStartTime = replayTrade.entryTime - (30 * tfSecs);
+          replayCurrentTimeRef.current = replayStartTime;
+          setReplayCurrentTime(replayStartTime);
+          last_play_candle_time = replayStartTime;
         } else {
           addNotification('Cannot move beyond end time', 'warning');
           return;
@@ -4068,6 +4505,32 @@ export default function App() {
         setDailySyncChartsConsumed(mergedSyncTracker.consumed);
         localStorage.setItem('firstlook_daily_sync_charts_v1', JSON.stringify(mergedSyncTracker));
 
+        // Synchronize and load daily what-if limit tracker across devices
+        let localWhatIfTracker = { date: todayStr, consumed: 0 };
+        try {
+          const saved = localStorage.getItem('firstlook_daily_whatif_limit_v1');
+          if (saved) {
+            const parsed = JSON.parse(saved);
+            if (parsed.date === todayStr) {
+              localWhatIfTracker = parsed;
+            }
+          }
+        } catch (e) {
+          console.error('Failed to load local what-if tracker during userData loading:', e);
+        }
+
+        let serverWhatIfTracker = (savedPrefs as any).dailyWhatIfTracker;
+        let mergedWhatIfTracker = { date: todayStr, consumed: 0 };
+
+        if (serverWhatIfTracker && serverWhatIfTracker.date === todayStr) {
+          mergedWhatIfTracker.consumed = Math.max(localWhatIfTracker.consumed, serverWhatIfTracker.consumed || 0);
+        } else {
+          mergedWhatIfTracker.consumed = localWhatIfTracker.consumed;
+        }
+
+        setDailyWhatIfConsumed(mergedWhatIfTracker.consumed);
+        localStorage.setItem('firstlook_daily_whatif_limit_v1', JSON.stringify(mergedWhatIfTracker));
+
         // Sync back to database if there's any discrepancy
         const prefsToSync: any = {};
         if (!serverTracker || serverTracker.date !== todayStr || serverTracker.consumed !== mergedTracker.consumed) {
@@ -4078,6 +4541,9 @@ export default function App() {
         }
         if (!serverSyncTracker || serverSyncTracker.date !== todayStr || serverSyncTracker.consumed !== mergedSyncTracker.consumed) {
           prefsToSync.dailySyncChartsTracker = mergedSyncTracker;
+        }
+        if (!serverWhatIfTracker || serverWhatIfTracker.date !== todayStr || serverWhatIfTracker.consumed !== mergedWhatIfTracker.consumed) {
+          prefsToSync.dailyWhatIfTracker = mergedWhatIfTracker;
         }
 
         if (Object.keys(prefsToSync).length > 0) {
@@ -4563,7 +5029,11 @@ export default function App() {
       let replayToSet: number | null = null;
       const viewStateKey = activeWatchlistItemId || (activePrefix ? `${symbol}_${activePrefix}` : symbol);
 
-      if (isReplayMode) {
+      if (isReplayMode && replayTrade) {
+        const tfSecs = TIMEFRAMES.find(t => t.id.toLowerCase() === replayTrade.timeframe.toLowerCase() || t.label.toLowerCase() === replayTrade.timeframe.toLowerCase())?.seconds || 60;
+        const replayStartTime = replayTrade.entryTime - (30 * tfSecs);
+        const replayEndTime = replayTrade.exitTime + (10 * tfSecs);
+
         // Replay Mode priority hierarchy (Sync Cache layer):
         // 1. Current active replay ref (if switching within same symbol/trade)
         if (replayCurrentTimeRef.current !== null && loadedSymbolRef.current === symbol && lastLoadedSessionKeyRef.current === currentSessionKey && (!replayTrade || lastLoadedReplayTradeIdRef.current === replayTrade.id)) {
@@ -4590,8 +5060,8 @@ export default function App() {
           replayToSet = initialEndTime || null;
         }
 
-        const finalPlayToSet = replayToSet !== null ? replayToSet : (initialEndTime || 0);
-        let snappedPlayToSet = finalPlayToSet;
+        const finalPlayToSet = replayToSet !== null ? replayToSet : replayStartTime;
+        let snappedPlayToSet = Math.max(replayStartTime, Math.min(replayEndTime, finalPlayToSet));
         if (syncCachedState.candles && syncCachedState.candles.length > 0) {
           const firstCandleTime = syncCachedState.candles[0].time;
           const lastCandleTime = syncCachedState.candles[syncCachedState.candles.length - 1].time;
@@ -4739,7 +5209,11 @@ export default function App() {
             let replayToSet: number | null = null;
             const viewStateKey = activeWatchlistItemId || (activePrefix ? `${symbol}_${activePrefix}` : symbol);
 
-            if (isReplayMode) {
+            if (isReplayMode && replayTrade) {
+              const tfSecs = TIMEFRAMES.find(t => t.id.toLowerCase() === replayTrade.timeframe.toLowerCase() || t.label.toLowerCase() === replayTrade.timeframe.toLowerCase())?.seconds || 60;
+              const replayStartTime = replayTrade.entryTime - (30 * tfSecs);
+              const replayEndTime = replayTrade.exitTime + (10 * tfSecs);
+
               // Replay Mode priority hierarchy (Async layer):
               // 1. Current active replay ref (if switching within same symbol/trade)
               if (replayCurrentTimeRef.current !== null && loadedSymbolRef.current === symbol && lastLoadedSessionKeyRef.current === currentSessionKey && (!replayTrade || lastLoadedReplayTradeIdRef.current === replayTrade.id)) {
@@ -4766,8 +5240,8 @@ export default function App() {
                 replayToSet = initialEndTime || null;
               }
 
-              const finalPlayToSet = replayToSet !== null ? replayToSet : (initialEndTime || 0);
-              let snappedPlayToSet = finalPlayToSet;
+              const finalPlayToSet = replayToSet !== null ? replayToSet : replayStartTime;
+              let snappedPlayToSet = Math.max(replayStartTime, Math.min(replayEndTime, finalPlayToSet));
               if (combinedCandles && combinedCandles.length > 0) {
                 const firstCandleTime = combinedCandles[0].time;
                 const lastCandleTime = combinedCandles[combinedCandles.length - 1].time;
@@ -5069,15 +5543,18 @@ export default function App() {
     } else {
       lastLoadedSessionKeyRef.current = null;
       if (isReplayMode && replayTrade) {
+        const tfSecs = TIMEFRAMES.find(t => t.id.toLowerCase() === replayTrade.timeframe.toLowerCase() || t.label.toLowerCase() === replayTrade.timeframe.toLowerCase())?.seconds || 60;
+        const replayStartTime = replayTrade.entryTime - (30 * tfSecs);
+
         let timeToLoad: number;
         const isNewTrade = lastLoadedReplayTradeIdRef.current !== replayTrade.id;
         if (isNewTrade) {
-          timeToLoad = replayTrade.entryTime;
+          timeToLoad = replayStartTime;
           lastLoadedReplayTradeIdRef.current = replayTrade.id;
           replayCurrentTimeRef.current = timeToLoad;
           setReplayCurrentTime(timeToLoad);
         } else {
-          timeToLoad = replayCurrentTimeRef.current || replayTrade.entryTime;
+          timeToLoad = replayCurrentTimeRef.current || replayStartTime;
         }
 
         const activeItem = watchlistRef.current.find(i => i.id === replayTrade.watchlistId) || 
@@ -8490,39 +8967,54 @@ export default function App() {
                                     <div className="text-xl font-black text-rose-600">{maxLossStreak}</div>
                                   </div>
 
-                                  <div className="col-span-2 mt-4">
-                                    <TradingCalendar 
-                                      trades={trades} 
-                                      simulatedTime={simCurrentTime || (currentSessionKey && backtestSessions[currentSessionKey]?.currentTime) || (selectedSymbol && (backtestSessions[`${selectedSymbol}_${activePrefix}`]?.currentTime || backtestSessions[selectedSymbol || '']?.currentTime)) || undefined}
-                                    />
-                                  </div>
-
-                                  <div className="col-span-2 mt-4">
-                                    <button
-                                      onClick={() => setShowAdvancedStats(!showAdvancedStats)}
-                                      className="w-full flex items-center justify-between p-4 bg-white rounded-2xl border border-slate-100 shadow-sm hover:bg-slate-50 transition-colors"
-                                    >
-                                      <div className="flex items-center gap-2">
-                                        <div className="w-8 h-8 rounded-xl bg-indigo-50 flex items-center justify-center">
-                                          <TrendingUp className="w-4 h-4 text-indigo-600" />
-                                        </div>
-                                        <span className="text-[10px] font-black text-slate-900 uppercase tracking-widest">Advanced Insights</span>
-                                      </div>
-                                      <div className={`transition-transform duration-300 ${showAdvancedStats ? 'rotate-180' : ''}`}>
-                                        <ChevronDown className="w-4 h-4 text-slate-400" />
-                                      </div>
-                                    </button>
-
-                                    {showAdvancedStats && (
-                                      <motion.div 
-                                        initial={{ opacity: 0, height: 0 }}
-                                        animate={{ opacity: 1, height: 'auto' }}
-                                        exit={{ opacity: 0, height: 0 }}
-                                        className="mt-4 space-y-4 overflow-hidden"
+                                  <div className="col-span-2 mt-4 space-y-3">
+                                    <div className="flex p-1 bg-slate-100/60 rounded-xl border border-slate-200/40">
+                                      <button
+                                        onClick={() => setSimSectionTab('simulated_date')}
+                                        className={`flex-1 py-1.5 rounded-lg text-[9px] font-black transition-all uppercase tracking-tight ${
+                                          simSectionTab === 'simulated_date'
+                                            ? 'bg-white text-slate-900 shadow-sm'
+                                            : 'text-slate-400 hover:text-slate-600'
+                                        }`}
                                       >
-                                        {/* Weekly Activity Module */}
-                                        <div className="bg-slate-50/50 rounded-3xl p-5 border border-slate-100/50">
-                                          <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4">Weekly Activity</h3>
+                                        Simulated Date
+                                      </button>
+                                      <button
+                                        onClick={() => setSimSectionTab('weekly_activities')}
+                                        className={`flex-1 py-1.5 rounded-lg text-[9px] font-black transition-all uppercase tracking-tight ${
+                                          simSectionTab === 'weekly_activities'
+                                            ? 'bg-white text-slate-900 shadow-sm'
+                                            : 'text-slate-400 hover:text-slate-600'
+                                        }`}
+                                      >
+                                        Weekly Activities
+                                      </button>
+                                      <button
+                                        onClick={() => setSimSectionTab('yearly_performance')}
+                                        className={`flex-1 py-1.5 rounded-lg text-[9px] font-black transition-all uppercase tracking-tight ${
+                                          simSectionTab === 'yearly_performance'
+                                            ? 'bg-white text-slate-900 shadow-sm'
+                                            : 'text-slate-400 hover:text-slate-600'
+                                        }`}
+                                      >
+                                        Yearly Performance
+                                      </button>
+                                    </div>
+
+                                    <div className="mt-2">
+                                      {simSectionTab === 'simulated_date' && (
+                                        <TradingCalendar 
+                                          trades={trades} 
+                                          simulatedTime={simCurrentTime || (currentSessionKey && backtestSessions[currentSessionKey]?.currentTime) || (selectedSymbol && (backtestSessions[`${selectedSymbol}_${activePrefix}`]?.currentTime || backtestSessions[selectedSymbol || '']?.currentTime)) || undefined}
+                                        />
+                                      )}
+
+                                      {simSectionTab === 'weekly_activities' && (
+                                        <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm space-y-4">
+                                          <div className="flex justify-between items-center pb-2 border-b border-slate-50">
+                                            <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Weekly Activity</h3>
+                                            <span className="text-[8px] font-bold text-slate-400">DISTRIBUTION</span>
+                                          </div>
                                           <div className="space-y-3">
                                             {weeklyActivity.filter(d => d.day !== 'Sun' && d.day !== 'Sat').map((day) => (
                                               <div key={day.day} className="space-y-1.5">
@@ -8534,7 +9026,7 @@ export default function App() {
                                                     <span className="text-slate-400">{day.percent.toFixed(0)}%</span>
                                                   </div>
                                                 </div>
-                                                <div className="h-1.5 w-full bg-slate-200/50 rounded-full overflow-hidden flex">
+                                                <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden flex">
                                                   <div 
                                                     className="h-full bg-indigo-500 rounded-full transition-all duration-500"
                                                     style={{ width: `${day.percent}%` }}
@@ -8544,12 +9036,13 @@ export default function App() {
                                             ))}
                                           </div>
                                         </div>
+                                      )}
 
-                                        {/* Yearly Performance Module */}
-                                        <div className="space-y-4">
-                                          <div className="flex items-center justify-between px-1">
-                                            <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Yearly performance</h3>
-                                            <div className="text-[8px] font-black text-slate-400 uppercase">Monthly RR</div>
+                                      {simSectionTab === 'yearly_performance' && (
+                                        <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm space-y-4">
+                                          <div className="flex items-center justify-between pb-2 border-b border-slate-50">
+                                            <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Yearly Performance</h3>
+                                            <span className="text-[8px] font-black text-slate-400 uppercase">Monthly RR</span>
                                           </div>
                                           
                                           <div className="flex gap-4 overflow-x-auto pb-2 scrollbar-hide snap-x">
@@ -8596,6 +9089,359 @@ export default function App() {
                                             )}
                                           </div>
                                         </div>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  <div className="col-span-2 mt-4">
+                                    <button
+                                      onClick={() => setShowAdvancedStats(!showAdvancedStats)}
+                                      className="w-full flex items-center justify-between p-4 bg-white rounded-2xl border border-slate-100 shadow-sm hover:bg-slate-50 transition-colors"
+                                    >
+                                      <div className="flex items-center gap-2">
+                                        <div className="w-8 h-8 rounded-xl bg-indigo-50 flex items-center justify-center">
+                                          <TrendingUp className="w-4 h-4 text-indigo-600" />
+                                        </div>
+                                        <span className="text-[10px] font-black text-slate-900 uppercase tracking-widest">Advanced Insights</span>
+                                      </div>
+                                      <div className={`transition-transform duration-300 ${showAdvancedStats ? 'rotate-180' : ''}`}>
+                                        <ChevronDown className="w-4 h-4 text-slate-400" />
+                                      </div>
+                                    </button>
+
+                                    {showAdvancedStats && (
+                                      <motion.div 
+                                        initial={{ opacity: 0, height: 0 }}
+                                        animate={{ opacity: 1, height: 'auto' }}
+                                        exit={{ opacity: 0, height: 0 }}
+                                        className="mt-4 space-y-4 overflow-hidden"
+                                      >
+                                        {subscriptionPlan === 'basic' && dailyWhatIfConsumed >= 1 ? (
+                                          <div className="bg-slate-50/70 border border-slate-100 rounded-3xl p-6 text-center space-y-4 max-w-md mx-auto my-4 shadow-sm text-left">
+                                            <div className="w-12 h-12 bg-indigo-50 rounded-2xl flex items-center justify-center mx-auto shadow-sm">
+                                              <Lock className="w-6 h-6 text-indigo-600" />
+                                            </div>
+                                            <div className="space-y-1 text-center">
+                                              <h3 className="text-xs font-black text-slate-900 uppercase tracking-widest">Daily What-If Limit Reached</h3>
+                                              <p className="text-[9.5px] text-slate-500 font-semibold uppercase tracking-wider">1 / 1 Daily Simulation Used</p>
+                                            </div>
+                                            <p className="text-[10px] text-slate-500 font-medium leading-relaxed max-w-xs mx-auto text-center">
+                                              You have already consumed your free What-If simulation run for today. To run unlimited interactive simulations with custom risk adjustments and SL cushions, upgrade to a Plus or Premium account.
+                                            </p>
+                                            <button
+                                              onClick={() => {
+                                                setUpgradeModalFeature('whatif');
+                                                setIsUpgradeModalOpen(true);
+                                              }}
+                                              className="w-full max-w-xs mx-auto py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-[10px] uppercase tracking-widest rounded-xl flex items-center justify-center gap-1.5 shadow-sm transition-all"
+                                            >
+                                              <Sparkles className="w-3.5 h-3.5" />
+                                              Upgrade Now for Unlimited Runs
+                                            </button>
+                                          </div>
+                                        ) : (
+                                          <>
+                                            <div className="bg-white rounded-3xl p-5 border border-slate-100 shadow-sm space-y-4 text-left">
+                                          <div className="flex items-center gap-2">
+                                            <Sparkles className="w-4 h-4 text-indigo-500 animate-pulse" />
+                                            <h3 className="text-[11px] font-black text-slate-900 uppercase tracking-widest">What-If Simulation Engine</h3>
+                                          </div>
+                                          <p className="text-[9px] text-slate-400 font-bold uppercase tracking-tight leading-relaxed">
+                                            Test alternative risk management rules across your active trades. Simulates outcomes on historical candle wicks.
+                                          </p>
+
+                                          <div className="space-y-4 pt-1">
+                                            {/* Target RR Slider */}
+                                            <div className="space-y-1.5">
+                                              <div className="flex justify-between items-center">
+                                                <span className="text-[9px] font-black text-slate-500 uppercase tracking-wider">Alternative Target RR</span>
+                                                <span className="text-[10px] font-black text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md">{scenarioTargetRR.toFixed(1)}x</span>
+                                              </div>
+                                              <input 
+                                                type="range"
+                                                min="1.0"
+                                                max="10.0"
+                                                step="0.5"
+                                                value={scenarioTargetRR}
+                                                onChange={(e) => setScenarioTargetRR(parseFloat(e.target.value))}
+                                                className="w-full accent-indigo-600 h-1 bg-slate-100 rounded-lg cursor-pointer"
+                                              />
+                                              <div className="flex justify-between text-[8px] font-bold text-slate-400">
+                                                <span>1.0x</span>
+                                                <span>3.0x</span>
+                                                <span>5.0x</span>
+                                                <span>7.0x</span>
+                                                <span>10.0x</span>
+                                              </div>
+                                            </div>
+
+                                            {/* Stop Loss Cushion Slider */}
+                                            <div className="space-y-1.5">
+                                              <div className="flex justify-between items-center">
+                                                <span className="text-[9px] font-black text-slate-500 uppercase tracking-wider">Stop Loss Adjustment (RR)</span>
+                                                <span className={`text-[10px] font-black px-2 py-0.5 rounded-md ${
+                                                  scenarioSLAdjust === 0 
+                                                    ? 'text-slate-600 bg-slate-50' 
+                                                    : scenarioSLAdjust > 0 
+                                                      ? 'text-emerald-600 bg-emerald-50' 
+                                                      : 'text-amber-600 bg-amber-50'
+                                                }`}>
+                                                  {scenarioSLAdjust === 0 
+                                                    ? 'Original SL' 
+                                                    : `${scenarioSLAdjust > 0 ? '+' : ''}${scenarioSLAdjust.toFixed(2)} RR (Wider)`}
+                                                </span>
+                                              </div>
+                                              <input 
+                                                type="range"
+                                                min="-0.5"
+                                                max="1.5"
+                                                step="0.05"
+                                                value={scenarioSLAdjust}
+                                                onChange={(e) => setScenarioSLAdjust(parseFloat(e.target.value))}
+                                                className="w-full accent-indigo-600 h-1 bg-slate-100 rounded-lg cursor-pointer"
+                                              />
+                                              <div className="flex justify-between text-[8px] font-bold text-slate-400">
+                                                <span>-0.50x (Tighter)</span>
+                                                <span>Original</span>
+                                                <span>+0.50x</span>
+                                                <span>+1.00x (Wider)</span>
+                                                <span>+1.50x</span>
+                                              </div>
+                                            </div>
+                                          </div>
+
+                                          {/* Run Buttons or Loading State */}
+                                          {isAnalyzingScenario ? (
+                                            <div className="space-y-2 py-2">
+                                              <div className="flex justify-between text-[9px] font-black text-indigo-600 uppercase">
+                                                <span>Fetching & simulating...</span>
+                                                <span>{scenarioProgress}%</span>
+                                              </div>
+                                              <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
+                                                <div 
+                                                  className="bg-indigo-600 h-full rounded-full transition-all duration-300"
+                                                  style={{ width: `${scenarioProgress}%` }}
+                                                />
+                                              </div>
+                                            </div>
+                                          ) : (
+                                            <div className="flex gap-2">
+                                              <button
+                                                onClick={() => handleRunWhatIfSimulation(trades)}
+                                                className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-[10px] uppercase tracking-wider rounded-2xl flex items-center justify-center gap-1.5 shadow-sm hover:shadow transition-all"
+                                              >
+                                                <Activity className="w-3.5 h-3.5" />
+                                                {scenarioResults ? 'Recalculate Scenario' : 'Run What-If Analysis'}
+                                              </button>
+                                              
+                                              {scenarioResults && (
+                                                <button
+                                                  onClick={() => {
+                                                    setScenarioResults(null);
+                                                    setScenarioTargetRR(3.0);
+                                                    setScenarioSLAdjust(0.0);
+                                                  }}
+                                                  className="px-3 bg-slate-50 hover:bg-slate-100 text-slate-600 font-bold text-[10px] uppercase rounded-2xl border border-slate-100 transition-all"
+                                                  title="Clear Scenario"
+                                                >
+                                                  <RotateCcw className="w-3.5 h-3.5" />
+                                                </button>
+                                              )}
+                                            </div>
+                                          )}
+                                        </div>
+
+                                        {/* Comparison Results Card */}
+                                        {scenarioResults && (
+                                          <motion.div 
+                                            initial={{ opacity: 0, y: 10 }}
+                                            animate={{ opacity: 1, y: 0 }}
+                                            className="space-y-4 text-left w-full"
+                                          >
+                                            {/* Summary Performance Metric Rows */}
+                                            <div className="bg-white rounded-3xl p-4 border border-slate-100 shadow-sm space-y-3">
+                                              <span className="text-[10px] font-black text-slate-850 uppercase tracking-widest block border-b border-slate-50 pb-1.5">
+                                                Comparative Performance Profiles
+                                              </span>
+                                              
+                                              <div className="space-y-4">
+                                                {[
+                                                  {
+                                                    title: 'Core Performance',
+                                                    items: [
+                                                      { label: 'Net Return', act: scenarioResults.actual.totalRR, sim: scenarioResults.simulated.totalRR, format: (v: number) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}R`, higherIsBetter: true },
+                                                      { label: 'Win Rate', act: scenarioResults.actual.winRate, sim: scenarioResults.simulated.winRate, format: (v: number) => `${v.toFixed(1)}%`, higherIsBetter: true },
+                                                      { label: 'Profit Factor', act: scenarioResults.actual.profitFactor, sim: scenarioResults.simulated.profitFactor, format: (v: number) => v.toFixed(2), higherIsBetter: true },
+                                                      { label: 'Reward-to-Risk', act: scenarioResults.actual.accuracy, sim: scenarioResults.simulated.accuracy, format: (v: number) => `${v.toFixed(2)}x`, higherIsBetter: true }
+                                                    ]
+                                                  },
+                                                  {
+                                                    title: 'Trade Averages',
+                                                    items: [
+                                                      { label: 'Avg TP (Win R)', act: scenarioResults.actual.avgWin, sim: scenarioResults.simulated.avgWin, format: (v: number) => `+${v.toFixed(1)}R`, higherIsBetter: true },
+                                                      { label: 'Avg SL (Loss R)', act: scenarioResults.actual.avgLoss, sim: scenarioResults.simulated.avgLoss, format: (v: number) => `${v.toFixed(1)}R`, higherIsBetter: true },
+                                                      { label: 'Avg Pips', act: scenarioResults.actual.avgPips, sim: scenarioResults.simulated.avgPips, format: (v: number) => v.toFixed(1), higherIsBetter: true },
+                                                      { label: 'Total Pips', act: scenarioResults.actual.totalPips, sim: scenarioResults.simulated.totalPips, format: (v: number) => v.toFixed(0), higherIsBetter: true },
+                                                      { label: 'Avg Duration', act: scenarioResults.actual.avgDuration, sim: scenarioResults.simulated.avgDuration, format: (v: number) => v > 60 ? `${(v / 60).toFixed(1)}h` : `${v.toFixed(0)}m`, higherIsBetter: false }
+                                                    ]
+                                                  },
+                                                  {
+                                                    title: 'Risk Profile',
+                                                    items: [
+                                                      { label: 'Max Drawdown', act: scenarioResults.actual.maxDrawdown, sim: scenarioResults.simulated.maxDrawdown, format: (v: number) => `-${v.toFixed(1)}R`, higherIsBetter: false },
+                                                      { label: 'Max Win Streak', act: scenarioResults.actual.maxWinStreak, sim: scenarioResults.simulated.maxWinStreak, format: (v: number) => `${v} wins`, higherIsBetter: true },
+                                                      { label: 'Max Loss Streak', act: scenarioResults.actual.maxLossStreak, sim: scenarioResults.simulated.maxLossStreak, format: (v: number) => `${v} losses`, higherIsBetter: false }
+                                                    ]
+                                                  }
+                                                ].map((grp, idx) => (
+                                                  <div key={idx} className="space-y-1.5">
+                                                    <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block">{grp.title}</span>
+                                                    <div className="border border-slate-100/70 rounded-2xl overflow-hidden divide-y divide-slate-50">
+                                                      {/* Table Header */}
+                                                      <div className="grid grid-cols-12 bg-slate-50/50 p-2 text-[8px] font-black text-slate-400 uppercase tracking-wider">
+                                                        <div className="col-span-5">Metric</div>
+                                                        <div className="col-span-2 text-right">Actual</div>
+                                                        <div className="col-span-2 text-right">Simulated</div>
+                                                        <div className="col-span-3 text-right">Delta</div>
+                                                      </div>
+                                                      {grp.items.map((item, iIdx) => {
+                                                        const diff = item.sim - item.act;
+                                                        const isBetter = item.higherIsBetter ? diff > 0 : diff < 0;
+                                                        const isSame = Math.abs(diff) < 0.0001;
+                                                        
+                                                        // Custom delta format
+                                                        let deltaStr = '---';
+                                                        if (!isSame) {
+                                                          const sign = diff > 0 ? '+' : '';
+                                                          if (item.label.includes('Rate')) {
+                                                            deltaStr = `${sign}${diff.toFixed(1)}%`;
+                                                          } else if (item.label.includes('Duration')) {
+                                                            deltaStr = diff > 0 ? `+${diff.toFixed(0)}m` : `${diff.toFixed(0)}m`;
+                                                          } else if (item.label.includes('Streak')) {
+                                                            deltaStr = `${sign}${diff.toFixed(0)}`;
+                                                          } else if (item.label.includes('Drawdown')) {
+                                                            deltaStr = `${diff > 0 ? '+' : ''}${diff.toFixed(1)}R`;
+                                                          } else if (item.label.includes('Pips')) {
+                                                            deltaStr = `${sign}${diff.toFixed(0)}`;
+                                                          } else {
+                                                            deltaStr = `${sign}${diff.toFixed(2)}`;
+                                                          }
+                                                        }
+
+                                                        return (
+                                                          <div key={iIdx} className="grid grid-cols-12 p-2 text-[10px] items-center hover:bg-slate-50/30 transition-colors">
+                                                            <div className="col-span-5 font-bold text-slate-500 uppercase font-sans tracking-tight">{item.label}</div>
+                                                            <div className="col-span-2 text-right font-semibold text-slate-600 font-mono">{item.format(item.act)}</div>
+                                                            <div className="col-span-2 text-right font-black text-slate-800 font-mono">{item.format(item.sim)}</div>
+                                                            <div className={`col-span-3 text-right font-mono font-black text-[9px] ${
+                                                              isSame 
+                                                                ? 'text-slate-400' 
+                                                                : isBetter 
+                                                                  ? 'text-emerald-600 bg-emerald-50/70 px-1 py-0.5 rounded-md inline-block max-w-[50px] ml-auto' 
+                                                                  : 'text-rose-600 bg-rose-50/70 px-1 py-0.5 rounded-md inline-block max-w-[50px] ml-auto'
+                                                            }`}>
+                                                              {isSame ? '0.00' : deltaStr}
+                                                            </div>
+                                                          </div>
+                                                        );
+                                                      })}
+                                                    </div>
+                                                  </div>
+                                                ))}
+                                              </div>
+                                            </div>
+ 
+                                            {/* Net Performance Badge */}
+                                            {(() => {
+                                              const diffRR = scenarioResults.simulated.totalRR - scenarioResults.actual.totalRR;
+                                              const isBetter = diffRR > 0;
+                                              return (
+                                                <div className={`p-3.5 rounded-2xl flex items-center gap-2 border w-full ${
+                                                  isBetter 
+                                                    ? 'bg-emerald-50/50 border-emerald-100/50 text-emerald-800' 
+                                                    : diffRR === 0 
+                                                      ? 'bg-slate-50 border-slate-100 text-slate-700'
+                                                      : 'bg-rose-50/50 border-rose-100/50 text-rose-800'
+                                                }`}>
+                                                  {isBetter ? (
+                                                    <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                                                  ) : diffRR === 0 ? (
+                                                    <Info className="w-4 h-4 text-slate-500 flex-shrink-0" />
+                                                  ) : (
+                                                    <CircleAlert className="w-4 h-4 text-rose-600 flex-shrink-0" />
+                                                  )}
+                                                  <div className="text-[9px] font-black uppercase tracking-tight text-left">
+                                                    {isBetter ? (
+                                                      <span>This scenario would increase overall return by <strong className="text-emerald-600">+{diffRR.toFixed(2)}R</strong>!</span>
+                                                    ) : diffRR === 0 ? (
+                                                      <span>This scenario yields the exact same performance outcome.</span>
+                                                    ) : (
+                                                      <span>This scenario would decrease overall return by <strong className="text-rose-600">{diffRR.toFixed(2)}R</strong>.</span>
+                                                    )}
+                                                  </div>
+                                                </div>
+                                              );
+                                            })()}
+
+                                            {/* Individual Trade Breakdown */}
+                                            <div className="space-y-2 text-left w-full">
+                                              <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block px-1">Trade-by-Trade Outcome</span>
+                                              <div className="max-h-[160px] overflow-y-auto space-y-1.5 pr-1 scrollbar-thin">
+                                                {scenarioResults.simulatedTrades.map((st: any, idx: number) => {
+                                                  const isWinnerOriginal = st.originalStatus === 'TP';
+                                                  
+                                                  return (
+                                                    <div 
+                                                      key={idx}
+                                                      className="bg-slate-50/30 border border-slate-100 rounded-xl p-2.5 flex items-center justify-between text-[10px] hover:bg-slate-50 transition-colors w-full"
+                                                    >
+                                                      <div className="space-y-0.5 text-left">
+                                                        <div className="flex items-center gap-1.5">
+                                                          <span className="font-extrabold text-slate-800">{st.symbol}</span>
+                                                          <span className={`text-[7px] font-extrabold px-1 rounded-sm ${
+                                                            st.type === 'LONG' ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'
+                                                          }`}>{st.type}</span>
+                                                        </div>
+                                                        <span className="text-[8px] font-bold text-slate-400">
+                                                          Entry: {st.entryPrice.toFixed(4)}
+                                                        </span>
+                                                      </div>
+
+                                                      <div className="flex items-center gap-3">
+                                                        {/* Actual */}
+                                                        <div className="text-right">
+                                                          <span className="text-[7px] font-extrabold text-slate-400 uppercase block leading-none">Actual</span>
+                                                          <span className={`font-black text-[9px] ${isWinnerOriginal ? 'text-emerald-600' : 'text-rose-600'}`}>
+                                                            {st.originalStatus} ({isWinnerOriginal ? '+' : '-'}{Math.abs(st.originalRR).toFixed(1)}R)
+                                                          </span>
+                                                        </div>
+                                                        
+                                                        {/* Arrow */}
+                                                        <span className="text-slate-300 font-extrabold text-[12px]">➔</span>
+
+                                                        {/* Simulated */}
+                                                        <div className="text-right">
+                                                          <span className="text-[7px] font-extrabold text-indigo-400 uppercase block leading-none">Simulated</span>
+                                                          <span className={`font-black text-[9px] ${
+                                                            st.simStatus === 'TP' 
+                                                              ? 'text-emerald-600' 
+                                                              : st.simStatus === 'SL' 
+                                                                ? 'text-rose-600'
+                                                                : 'text-slate-500'
+                                                          }`}>
+                                                            {st.simStatus} ({st.simRR >= 0 ? '+' : ''}{st.simRR.toFixed(1)}R)
+                                                          </span>
+                                                        </div>
+                                                      </div>
+                                                    </div>
+                                                  );
+                                                })}
+                                              </div>
+                                            </div>
+                                          </motion.div>
+                                        )}
+                                          </>
+                                        )}
                                       </motion.div>
                                     )}
                                   </div>
@@ -8695,7 +9541,9 @@ export default function App() {
                                                 }
                                                 setPreReplayDrawings([...drawings]);
                                                 setReplayTrade(trade);
-                                                setReplayCurrentTime(trade.entryTime);
+                                                const tfSecs = TIMEFRAMES.find(t => t.id.toLowerCase() === trade.timeframe.toLowerCase() || t.label.toLowerCase() === trade.timeframe.toLowerCase())?.seconds || 60;
+                                                const replayStartTime = trade.entryTime - (30 * tfSecs);
+                                                setReplayCurrentTime(replayStartTime);
                                                 setIsReplayMode(true);
                                                 setReplayIsPlaying(false);
                                                 setSelectedSymbol(trade.symbol);
@@ -9373,7 +10221,8 @@ export default function App() {
                       tickingEnabled: true,
                       showWatermark: true,
                       showVolume: true,
-                      chartType: 'candle'
+                      chartType: 'candle',
+                      showTradeHistory: true
                     };
                     setTheme(defaultTheme);
                     if (session.user) persistenceService.savePreferences(session.user.id, { theme: defaultTheme });
@@ -9517,6 +10366,14 @@ export default function App() {
                     <h4 className="text-[11px] font-black uppercase tracking-wide text-slate-905">Daily Candle Playback Limit Reached</h4>
                     <p className="text-[11px] text-slate-500 font-semibold leading-relaxed">
                       You have reached your daily candle-by-candle play limit. Under the Basic free tier, visual playback is capped at 500 candles/day. Plus accounts get 5,000 candles/day, and Premium accounts enjoy completely unlimited candle play!
+                    </p>
+                  </>
+                )}
+                {upgradeModalFeature === 'whatif' && (
+                  <>
+                    <h4 className="text-[11px] font-black uppercase tracking-wide text-slate-905">Daily What-If Limit Reached</h4>
+                    <p className="text-[11px] text-slate-500 font-semibold leading-relaxed">
+                      You have reached your daily What-If simulation engine limit. Under the Basic free tier, users are capped at 1 comparative simulation run per day. Upgrade to Plus or Premium to unlock unlimited runs with real-time slider risk testing and full historical candle wick matching!
                     </p>
                   </>
                 )}
