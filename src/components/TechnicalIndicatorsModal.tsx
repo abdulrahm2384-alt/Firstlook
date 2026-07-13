@@ -138,7 +138,7 @@ export function TechnicalIndicatorsModal({
                             </div>
                           </div>
                         </div>
-                        <div className="flex items-center gap-1 opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity">
+                        <div className="flex items-center gap-1 opacity-100 transition-opacity">
                           <button 
                             onClick={() => onSettings(ind)}
                             className="w-10 h-10 flex items-center justify-center rounded-xl bg-slate-50 hover:bg-black hover:text-white transition-all shadow-sm"

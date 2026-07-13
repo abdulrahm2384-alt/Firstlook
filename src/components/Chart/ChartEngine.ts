@@ -172,6 +172,7 @@ export class ChartEngine {
     [DrawingType.VERTICAL_LINE]: { color: '#2962ff73', lineWidth: 1 },
     [DrawingType.HORIZONTAL_RAY]: { color: '#2962ff73', lineWidth: 1 },
     [DrawingType.RECTANGLE]: { strokeColor: '#2962ff73', fillColor: '#2962ff73', lineWidth: 1 },
+    [DrawingType.CIRCLE]: { strokeColor: '#2962ff73', fillColor: '#2962ff22', lineWidth: 1.5 },
     [DrawingType.BRUSH]: { color: '#2962ff73', lineWidth: 2 },
     [DrawingType.PATH]: { color: '#2962ff73', lineWidth: 2 },
     [DrawingType.LONG_POSITION]: { profitColor: '#00695c', lossColor: '#c62828', opacity: 0.45 },
@@ -270,7 +271,7 @@ export class ChartEngine {
         }
       });
     }
-    this.draw();
+    this.needsDraw = true;
   }
 
   public setIsSimulating(isSimulating: boolean) {
@@ -282,7 +283,7 @@ export class ChartEngine {
         }
       });
     }
-    this.draw();
+    this.needsDraw = true;
   }
 
   public setOnDrawingSettingsChange(callback: (settings: any) => void) {
@@ -326,7 +327,7 @@ export class ChartEngine {
     if (offsetY !== undefined) this.offsetY = offsetY;
     if (yScale !== undefined) this.yScale = yScale;
     this.needsRangeUpdate = true;
-    this.draw();
+    this.needsDraw = true;
   }
 
   public resetView() {
@@ -336,7 +337,7 @@ export class ChartEngine {
     this.yScale = 1.0;
     this.forcePriceRangeUpdate = true;
     this.needsRangeUpdate = true;
-    this.draw();
+    this.needsDraw = true;
     if (this.onViewportChange) {
       this.onViewportChange({
         zoom: this.zoom,
@@ -1780,7 +1781,7 @@ export class ChartEngine {
     }
     
     this.needsRangeUpdate = true;
-    this.draw();
+    this.needsDraw = true;
 
     this.evaluateDrawings(oldLength);
     
@@ -1824,12 +1825,12 @@ export class ChartEngine {
 
   public setTheme(theme: ChartTheme) {
     this.theme = { ...this.theme, ...theme };
-    this.draw();
+    this.needsDraw = true;
   }
 
   public setSelectedDrawingId(id: string | null) {
     this.selectedDrawingId = id;
-    this.draw(); // Force redraw to show selection
+    this.needsDraw = true; // Force redraw to show selection
   }
 
   public getSelectedDrawingId(): string | null {
@@ -1861,7 +1862,7 @@ export class ChartEngine {
       this.aimerPos = null;
       this.aimerPx = null;
     }
-    this.draw();
+    this.needsDraw = true;
   }
 
   public getDrawings(): Drawing[] {
@@ -1881,7 +1882,7 @@ export class ChartEngine {
       }
     }
     this.drawings = this.drawings.map(d => d.id === updatedDrawing.id ? updatedDrawing : d);
-    this.draw();
+    this.needsDraw = true;
     if (changed) {
       this.saveSettings();
     }
@@ -1965,6 +1966,7 @@ export class ChartEngine {
 
     // Re-evaluate drawings triggers and closings immediately based on mapped state
     this.evaluateDrawings(1);
+    this.needsDraw = true;
   }
 
   private evaluateDrawings(oldLength: number) {
@@ -2421,12 +2423,12 @@ export class ChartEngine {
     this.indicators = indicators;
     this.levelsIndicatorCache.clear();
     this.indicatorCache.clear();
-    this.draw();
+    this.needsDraw = true;
   }
 
   public setPinnedText(text: string | null) {
     this.pinnedText = text;
-    this.draw();
+    this.needsDraw = true;
   }
 
   private calculateSMA(period: number): number[] {
@@ -3924,6 +3926,27 @@ export class ChartEngine {
           }
           break;
 
+        case DrawingType.CIRCLE:
+          if (coords.length >= 2) {
+            const x0 = coords[0].x;
+            const y0 = coords[0].y;
+            const x1 = coords[1].x;
+            const y1 = coords[1].y;
+            const r = Math.sqrt((x1 - x0) ** 2 + (y1 - y0) ** 2);
+            
+            ctx.beginPath();
+            ctx.arc(x0, y0, r, 0, 2 * Math.PI);
+            
+            // Fill
+            ctx.fillStyle = d.settings.fillColor || adjustColorAlpha(d.settings.color, '#2962ff', '22');
+            ctx.fill();
+            
+            // Border
+            ctx.strokeStyle = d.settings.strokeColor || d.settings.color || '#2962ff';
+            ctx.stroke();
+          }
+          break;
+
         case DrawingType.BRUSH:
         case DrawingType.PATH:
           if (coords.length >= 2) {
@@ -4003,6 +4026,7 @@ export class ChartEngine {
             
             // Draw backgrounds first
             if (d.settings.showBackground !== false) {
+              const bgOpacity = d.settings.backgroundOpacity !== undefined ? d.settings.backgroundOpacity : 0.1;
               const visibleLevels = fibLevels.filter((l: any) => l.visible).sort((a: any, b: any) => a.value - b.value);
               for (let i = 0; i < visibleLevels.length - 1; i++) {
                 const l1 = visibleLevels[i];
@@ -4010,7 +4034,20 @@ export class ChartEngine {
                 const y1 = getY(p1.price + diff * l1.value);
                 const y2 = getY(p1.price + diff * l2.value);
                 
-                ctx.fillStyle = adjustColorAlpha(l2.color, '#787b86', '22'); // 13% opacity approx
+                // Parse hex to rgba
+                const cleanHex = (l2.color || '#787b86').replace('#', '');
+                let r = 120, g = 123, b = 134;
+                if (cleanHex.length === 6 || cleanHex.length === 8) {
+                  r = parseInt(cleanHex.substring(0, 2), 16);
+                  g = parseInt(cleanHex.substring(2, 4), 16);
+                  b = parseInt(cleanHex.substring(4, 6), 16);
+                } else if (cleanHex.length === 3) {
+                  r = parseInt(cleanHex[0] + cleanHex[0], 16);
+                  g = parseInt(cleanHex[1] + cleanHex[1], 16);
+                  b = parseInt(cleanHex[2] + cleanHex[2], 16);
+                }
+                
+                ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${bgOpacity})`;
                 ctx.fillRect(left, Math.min(y1, y2), w, Math.abs(y2 - y1));
               }
             }
@@ -4887,12 +4924,12 @@ export class ChartEngine {
 
   public setHistoricalData(data: Candle[]) {
     this.historicalData = data;
-    this.draw();
+    this.needsDraw = true;
   }
 
   public setNewsStreamEnabled(enabled: boolean) {
     this.newsStreamEnabled = enabled;
-    this.draw();
+    this.needsDraw = true;
   }
 
   private getNewsIconAtCoords(x: number, y: number) {
@@ -5539,10 +5576,28 @@ export class ChartEngine {
               continue;
             }
           }
+        } else if (d.type === DrawingType.CIRCLE) {
+          if (coords.length >= 2) {
+            const x0 = coords[0].x;
+            const y0 = coords[0].y;
+            const x1 = coords[1].x;
+            const y1 = coords[1].y;
+            const r = Math.sqrt((x1 - x0) ** 2 + (y1 - y0) ** 2);
+            const distToCenter = Math.sqrt((x - x0) ** 2 + (y - y0) ** 2);
+            
+            const innerMargin = d.id === this.selectedDrawingId ? 0 : 5;
+            const isInside = distToCenter <= r - innerMargin;
+            const onEdge = Math.abs(distToCenter - r) < 5;
+            
+            if (isInside || onEdge) {
+              hits.push({ id: d.id, pointIdx: -1 });
+              continue;
+            }
+          }
         }
 
         // Skip segment hit test for types that shouldn't have diagonal hits
-        if (d.type === DrawingType.RECTANGLE || d.type === DrawingType.FIB_RETRACEMENT || d.type === DrawingType.PRICE_RANGE || d.type === DrawingType.DATE_RANGE) {
+        if (d.type === DrawingType.RECTANGLE || d.type === DrawingType.CIRCLE || d.type === DrawingType.FIB_RETRACEMENT || d.type === DrawingType.PRICE_RANGE || d.type === DrawingType.DATE_RANGE) {
           continue;
         }
 
@@ -5642,7 +5697,7 @@ export class ChartEngine {
     
     // Explicitly update range for the new dimensions
     this.calculateVisibleRange(width, height);
-    this.draw();
+    this.needsDraw = true;
   }
 
   private roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number, fill: boolean, stroke: boolean) {

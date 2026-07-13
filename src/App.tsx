@@ -1939,7 +1939,8 @@ export default function App() {
     if (nextTime !== null && replayTrade) {
       const tfSeconds = TIMEFRAMES.find(t => t.id.toLowerCase() === replayTrade.timeframe.toLowerCase() || t.label.toLowerCase() === replayTrade.timeframe.toLowerCase())?.seconds || 60;
       const replayStartTime = replayTrade.entryTime - (30 * tfSeconds);
-      const replayEndTime = replayTrade.exitTime + (10 * tfSeconds);
+      const tradeExitTime = replayTrade.exitTime || (replayTrade.entryTime + 10 * tfSeconds);
+      const replayEndTime = tradeExitTime + (10 * tfSeconds);
       nextTime = Math.max(replayStartTime, Math.min(replayEndTime, nextTime));
     }
 
@@ -2870,7 +2871,8 @@ export default function App() {
         const tfSecs = TIMEFRAMES.find(tf => tf.id.toLowerCase() === replayTrade.timeframe.toLowerCase() || tf.label.toLowerCase() === replayTrade.timeframe.toLowerCase())?.seconds || 60;
         const replayStartTime = replayTrade.entryTime - (30 * tfSecs);
         start_time = historicalDataRef.current[0]?.time || replayStartTime;
-        trueEndTime = replayTrade.exitTime + (10 * tfSecs);
+        const tradeExitTime = replayTrade.exitTime || (replayTrade.entryTime + 10 * tfSecs);
+        trueEndTime = tradeExitTime + (10 * tfSecs);
         last_play_candle_time = replayCurrentTimeRef.current || replayStartTime;
       } else {
         const activeItem = watchlistRef.current.find(i => i.id === activeWatchlistItemId) ||
@@ -3769,11 +3771,25 @@ export default function App() {
 
     if (!isReplayMode || !replayTrade) return currentSymbolDrawings;
     
-    // Use drawingId from trade if available for better accuracy
-    const replayTradeDrawingId = replayTrade.drawingId || currentSymbolDrawings.find(d => 
-      (d.type === DrawingType.LONG_POSITION || d.type === DrawingType.SHORT_POSITION) && 
-      Math.abs((d.points[0]?.time || 0) - replayTrade.entryTime) < 120
-    )?.id;
+    // Robustly identify the drawing chosen for replay across multiple timeframes
+    let replayTradeDrawingId = replayTrade.drawingId;
+    if (!replayTradeDrawingId) {
+      const positions = currentSymbolDrawings.filter(d => d.type === DrawingType.LONG_POSITION || d.type === DrawingType.SHORT_POSITION);
+      if (positions.length > 0) {
+        // Sort by closest entry time
+        positions.sort((a, b) => {
+          const diffA = Math.abs((a.points[0]?.time || 0) - replayTrade.entryTime);
+          const diffB = Math.abs((b.points[0]?.time || 0) - replayTrade.entryTime);
+          return diffA - diffB;
+        });
+        const closest = positions[0];
+        const tfSecs = TIMEFRAMES.find(t => t.id.toLowerCase() === replayTrade.timeframe.toLowerCase() || t.label.toLowerCase() === replayTrade.timeframe.toLowerCase())?.seconds || 60;
+        const maxAllowedDiff = Math.max(86400 * 2, tfSecs * 5); // Very generous multi-day bound to guarantee match
+        if (Math.abs((closest.points[0]?.time || 0) - replayTrade.entryTime) <= maxAllowedDiff) {
+          replayTradeDrawingId = closest.id;
+        }
+      }
+    }
 
     return currentSymbolDrawings.filter(d => {
       // If it's the exact drawing for the trade we are replaying, show it
@@ -5034,30 +5050,11 @@ export default function App() {
         const replayStartTime = replayTrade.entryTime - (30 * tfSecs);
         const replayEndTime = replayTrade.exitTime + (10 * tfSecs);
 
-        // Replay Mode priority hierarchy (Sync Cache layer):
-        // 1. Current active replay ref (if switching within same symbol/trade)
-        if (replayCurrentTimeRef.current !== null && loadedSymbolRef.current === symbol && lastLoadedSessionKeyRef.current === currentSessionKey && (!replayTrade || lastLoadedReplayTradeIdRef.current === replayTrade.id)) {
+        // Replay Mode priority:
+        if (replayCurrentTimeRef.current !== null && lastLoadedReplayTradeIdRef.current === replayTrade.id) {
           replayToSet = replayCurrentTimeRef.current;
-        }
-        // 2. Strict last_play_candle_time limit to prevent future jumps
-        else if (activeItem?.last_play_candle_time) {
-          replayToSet = activeItem.last_play_candle_time;
-        }
-        // 3. Database symbol-level playhead (shared across all devices & timeframes)
-        else if (viewStateKey && symbolViewStates[viewStateKey]?.replayCurrentTime) {
-          replayToSet = symbolViewStates[viewStateKey].replayCurrentTime;
-        }
-        // 4. Database timeframe-specific playhead
-        else if (viewStateKey && symbolViewStates[viewStateKey]?.timeframeStates?.[timeframeId]?.replayCurrentTime) {
-          replayToSet = symbolViewStates[viewStateKey].timeframeStates[timeframeId].replayCurrentTime;
-        }
-        // 5. Cached state timeframe playhead
-        else if (syncCachedState && syncCachedState.replayCurrentTime !== null) {
-          replayToSet = syncCachedState.replayCurrentTime;
-        }
-        // 6. Explicit initialEndTime passed
-        else {
-          replayToSet = initialEndTime || null;
+        } else {
+          replayToSet = replayStartTime;
         }
 
         const finalPlayToSet = replayToSet !== null ? replayToSet : replayStartTime;
@@ -5126,7 +5123,7 @@ export default function App() {
         setSimCurrentTime(snappedSimToSet);
       }
 
-      if (syncCachedState.indicators && syncCachedState.indicators.length > 0) {
+      if (syncCachedState.indicators) {
         setIndicators(syncCachedState.indicators);
       }
 
@@ -5214,30 +5211,11 @@ export default function App() {
               const replayStartTime = replayTrade.entryTime - (30 * tfSecs);
               const replayEndTime = replayTrade.exitTime + (10 * tfSecs);
 
-              // Replay Mode priority hierarchy (Async layer):
-              // 1. Current active replay ref (if switching within same symbol/trade)
-              if (replayCurrentTimeRef.current !== null && loadedSymbolRef.current === symbol && lastLoadedSessionKeyRef.current === currentSessionKey && (!replayTrade || lastLoadedReplayTradeIdRef.current === replayTrade.id)) {
+              // Replay Mode priority:
+              if (replayCurrentTimeRef.current !== null && lastLoadedReplayTradeIdRef.current === replayTrade.id) {
                 replayToSet = replayCurrentTimeRef.current;
-              }
-              // 2. Strict last_play_candle_time limit to prevent future jumps
-              else if (activeItem?.last_play_candle_time) {
-                replayToSet = activeItem.last_play_candle_time;
-              }
-              // 3. Database symbol-level playhead (shared across all devices & timeframes)
-              else if (viewStateKey && symbolViewStates[viewStateKey]?.replayCurrentTime) {
-                replayToSet = symbolViewStates[viewStateKey].replayCurrentTime;
-              }
-              // 4. Database timeframe-specific playhead
-              else if (viewStateKey && symbolViewStates[viewStateKey]?.timeframeStates?.[timeframeId]?.replayCurrentTime) {
-                replayToSet = symbolViewStates[viewStateKey].timeframeStates[timeframeId].replayCurrentTime;
-              }
-              // 5. Cached state timeframe playhead
-              else if (cachedState && cachedState.replayCurrentTime !== null) {
-                replayToSet = cachedState.replayCurrentTime;
-              }
-              // 6. Explicit initialEndTime passed
-              else {
-                replayToSet = initialEndTime || null;
+              } else {
+                replayToSet = replayStartTime;
               }
 
               const finalPlayToSet = replayToSet !== null ? replayToSet : replayStartTime;
@@ -5307,7 +5285,7 @@ export default function App() {
             }
 
             // Restore cached indicators
-            if (cachedState.indicators && cachedState.indicators.length > 0) {
+            if (cachedState.indicators) {
               setIndicators(cachedState.indicators);
             }
           }
@@ -6098,7 +6076,8 @@ export default function App() {
 
       if (isReplayMode && replayTrade) {
         const timeframeSeconds = TIMEFRAMES.find(tf => tf.id.toLowerCase() === replayTrade.timeframe.toLowerCase() || tf.label.toLowerCase() === replayTrade.timeframe.toLowerCase())?.seconds || 60;
-        const maxReplayTime = replayTrade.exitTime + (10 * timeframeSeconds);
+        const tradeExitTime = replayTrade.exitTime || (replayTrade.entryTime + 10 * timeframeSeconds);
+        const maxReplayTime = tradeExitTime + (10 * timeframeSeconds);
         const current = replayCurrentTimeRef.current || 0;
 
         if (historicalDataRef.current.length > 0) {

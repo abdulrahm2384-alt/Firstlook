@@ -25,7 +25,8 @@ import {
   Play,
   Pause,
   ChevronUp,
-  Info
+  Info,
+  Circle
 } from 'lucide-react';
 import { DrawingType, Drawing } from '../types/drawing';
 import { useState, useRef, useEffect, memo, RefObject } from 'react';
@@ -44,6 +45,7 @@ const TOOL_ICONS: Record<DrawingType, any> = {
   [DrawingType.DATE_RANGE]: CalendarDays,
   [DrawingType.ARROW_MARKER]: Navigation,
   [DrawingType.RECTANGLE]: Square,
+  [DrawingType.CIRCLE]: Circle,
   [DrawingType.PATH]: Route,
   [DrawingType.BRUSH]: Pencil,
 };
@@ -215,7 +217,7 @@ export const FavoriteDrawingsToolbar = memo(function FavoriteDrawingsToolbar({
 
   // Check state categories for the active selected drawing
   const isForecasting = selectedDrawing && (selectedDrawing.type === DrawingType.LONG_POSITION || selectedDrawing.type === DrawingType.SHORT_POSITION);
-  const isRectangle = selectedDrawing && selectedDrawing.type === DrawingType.RECTANGLE;
+  const isRectangle = selectedDrawing && (selectedDrawing.type === DrawingType.RECTANGLE || selectedDrawing.type === DrawingType.CIRCLE);
   const isClosedTrade = selectedDrawing && (selectedDrawing.status === 'won' || selectedDrawing.status === 'lost');
 
   // Let's decide if we are in morph mode (settings)

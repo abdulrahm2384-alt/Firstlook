@@ -15,6 +15,7 @@ export enum DrawingType {
   // Shapes
   ARROW_MARKER = 'ARROW_MARKER',
   RECTANGLE = 'RECTANGLE',
+  CIRCLE = 'CIRCLE',
   PATH = 'PATH',
   BRUSH = 'BRUSH'
 }

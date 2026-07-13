@@ -15,6 +15,7 @@ import {
   MoveHorizontal,
   ArrowRight,
   Square,
+  Circle,
   Route,
   Pencil,
   ArrowUpCircle,
@@ -42,6 +43,7 @@ const TOOL_ICONS: Record<DrawingType, any> = {
   [DrawingType.DATE_RANGE]: CalendarDays,
   [DrawingType.ARROW_MARKER]: Navigation,
   [DrawingType.RECTANGLE]: Square,
+  [DrawingType.CIRCLE]: Circle,
   [DrawingType.PATH]: Route,
   [DrawingType.BRUSH]: Pencil,
 };
@@ -148,6 +150,21 @@ export function DrawingSettingsBox({ drawing, onUpdate, onDelete, onClose, pos, 
     onUpdate({ levels: newLevels });
   };
 
+  const handleAddFibLevel = () => {
+    const nextVal = currentFibLevels.length > 0 ? Math.max(...currentFibLevels.map((l: any) => typeof l.value === 'number' ? l.value : parseFloat(l.value) || 0)) + 0.236 : 1.618;
+    const newLevels = [...currentFibLevels, { value: parseFloat(nextVal.toFixed(3)), color: '#787b86', visible: true }];
+    onUpdate({ levels: newLevels });
+  };
+
+  const handleDeleteFibLevel = (index: number) => {
+    const newLevels = currentFibLevels.filter((_: any, i: number) => i !== index);
+    onUpdate({ levels: newLevels });
+  };
+
+  const handleResetFibLevels = () => {
+    onUpdate({ levels: defaultFibLevels });
+  };
+
   return (
     <motion.div
       drag={true}
@@ -180,7 +197,7 @@ export function DrawingSettingsBox({ drawing, onUpdate, onDelete, onClose, pos, 
       <div className="w-px h-5 bg-slate-100 self-center" />
 
       {/* Main Color Toggle */}
-      {!isForecasting && drawing.type !== DrawingType.RECTANGLE && (
+      {!isForecasting && drawing.type !== DrawingType.RECTANGLE && drawing.type !== DrawingType.CIRCLE && (
         <div className="flex items-center shrink-0">
           <ColorPicker 
             color={drawing.settings.color || '#000000'}
@@ -190,12 +207,12 @@ export function DrawingSettingsBox({ drawing, onUpdate, onDelete, onClose, pos, 
         </div>
       )}
 
-      {/* Specialized Colors for Rectangle (No Labels) */}
-      {drawing.type === DrawingType.RECTANGLE && (
+      {/* Specialized Colors for Rectangle & Circle (No Labels) */}
+      {(drawing.type === DrawingType.RECTANGLE || drawing.type === DrawingType.CIRCLE) && (
         <div className="flex items-center gap-1 shrink-0">
           <ColorPicker 
             color={drawing.settings.strokeColor || drawing.settings.color || '#2962ff'}
-            onChange={(strokeColor) => onUpdate({ strokeColor })}
+            onChange={(strokeColor) => onUpdate({ strokeColor, color: strokeColor })}
             compact={true}
           />
           <ColorPicker 
@@ -508,23 +525,54 @@ export function DrawingSettingsBox({ drawing, onUpdate, onDelete, onClose, pos, 
                     <Settings2 size={12} /> Fibonacci Levels
                   </h3>
 
-                  <div className="space-y-2 max-h-[250px] md:max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
+                  <div className="space-y-1.5 max-h-[180px] md:max-h-[220px] overflow-y-auto pr-2 custom-scrollbar">
                     {currentFibLevels.map((lvl: any, idx: number) => (
-                      <div key={idx} className="flex items-center gap-3 py-1">
+                      <div key={idx} className="flex items-center gap-2 py-1">
                         <input 
                           type="checkbox" 
-                          checked={lvl.visible}
+                          checked={lvl.visible !== false}
                           onChange={(e) => updateFibLevel(idx, { visible: e.target.checked })}
-                          className="w-3.5 h-3.5 rounded border-slate-300 transition-colors cursor-pointer"
+                          className="w-3.5 h-3.5 rounded border-slate-300 transition-colors cursor-pointer accent-indigo-600"
                         />
-                        <span className="text-[10px] font-mono font-bold w-12 text-slate-500">{lvl.value.toFixed(3)}</span>
+                        <input
+                          type="number"
+                          step="0.001"
+                          value={lvl.value}
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value);
+                            updateFibLevel(idx, { value: isNaN(val) ? 0 : val });
+                          }}
+                          className="text-[10px] font-mono font-bold w-14 text-slate-700 bg-slate-50 px-1 py-0.5 rounded border border-slate-200 outline-none focus:border-indigo-500 text-center"
+                        />
                         <div className="flex-1 h-px bg-slate-100" />
                         <ColorPicker 
-                          color={lvl.color}
+                          color={lvl.color || '#787b86'}
                           onChange={(color) => updateFibLevel(idx, { color })}
                         />
+                        <button
+                          onClick={() => handleDeleteFibLevel(idx)}
+                          className="p-1 text-slate-300 hover:text-red-500 transition-colors"
+                          title="Delete Level"
+                        >
+                          <Trash2 size={11} />
+                        </button>
                       </div>
                     ))}
+                  </div>
+
+                  <div className="mt-2.5 flex items-center justify-between gap-2 border-t border-slate-100 pt-2.5">
+                    <button
+                      onClick={handleAddFibLevel}
+                      className="flex-1 flex items-center justify-center gap-1 py-1 px-2 border border-dashed border-indigo-200 hover:border-indigo-500 text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50/30 rounded-lg text-[10px] font-bold transition-all"
+                    >
+                      <Plus size={10} /> Add Level
+                    </button>
+                    <button
+                      onClick={handleResetFibLevels}
+                      className="py-1 px-2 bg-slate-50 hover:bg-slate-100 text-slate-500 hover:text-slate-700 rounded-lg text-[10px] font-bold transition-all border border-slate-200/60"
+                    >
+                      Reset Defaults
+                    </button>
                   </div>
 
                   <div className="mt-4 pt-4 border-t border-slate-100 space-y-4">
@@ -570,6 +618,26 @@ export function DrawingSettingsBox({ drawing, onUpdate, onDelete, onClose, pos, 
                         />
                       </button>
                     </div>
+
+                    {drawing.settings.showBackground !== false && (
+                      <div className="space-y-1.5 pt-1">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[9px] md:text-[10px] font-bold text-slate-500">Background Opacity</span>
+                          <span className="text-[10px] font-mono font-bold text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded">
+                            {Math.round((drawing.settings.backgroundOpacity !== undefined ? drawing.settings.backgroundOpacity : 0.1) * 100)}%
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0"
+                          max="1"
+                          step="0.05"
+                          value={drawing.settings.backgroundOpacity !== undefined ? drawing.settings.backgroundOpacity : 0.1}
+                          onChange={(e) => onUpdate({ backgroundOpacity: parseFloat(e.target.value) })}
+                          className="w-full h-1 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                        />
+                      </div>
+                    )}
                   </div>
                 </motion.div>
               )}

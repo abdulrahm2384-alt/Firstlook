@@ -6,6 +6,7 @@ import {
   CalendarDays,
   ArrowRight, 
   Square,
+  Circle,
   Star,
   LineChart,
   ArrowUpCircle,
@@ -62,6 +63,7 @@ const DRAWING_GROUPS = [
     tools: [
       { id: DrawingType.ARROW_MARKER, label: 'Arrow Marker', icon: Navigation },
       { id: DrawingType.RECTANGLE, label: 'Rectangle', icon: Square },
+      { id: DrawingType.CIRCLE, label: 'Circle', icon: Circle },
       { id: DrawingType.PATH, label: 'Path', icon: Route },
       { id: DrawingType.BRUSH, label: 'Brush', icon: Pencil },
     ]
