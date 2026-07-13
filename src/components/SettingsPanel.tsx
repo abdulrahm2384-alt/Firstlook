@@ -43,6 +43,7 @@ interface SettingsPanelProps {
 
 const TIMEZONES = [
   { id: 'UTC', label: 'UTC (London)' },
+  { id: 'Africa/Lagos', label: 'UTC+1 (Nigeria/Lagos)' },
   { id: 'America/New_York', label: 'EST/EDT (New York)' },
   { id: 'Europe/Berlin', label: 'CET/CEST (Frankfurt)' },
   { id: 'Asia/Tokyo', label: 'JST (Tokyo)' },
