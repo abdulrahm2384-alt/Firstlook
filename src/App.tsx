@@ -8142,6 +8142,7 @@ export default function App() {
                       prefix={undefined}
                       isReplay={isReplayMode}
                       isSimulating={isSimulating}
+                      isPlaying={isReplayMode ? replayIsPlaying : simIsPlaying}
                       theme={activeTheme} 
                       indicators={syncedIndicatorsToRender}
                       onLoadMore={loadMoreSyncedPast}
@@ -8312,6 +8313,7 @@ export default function App() {
                       prefix={activePrefix || undefined}
                       isReplay={isReplayMode}
                       isSimulating={isSimulating}
+                      isPlaying={isReplayMode ? replayIsPlaying : simIsPlaying}
                       theme={activeTheme} 
                       indicators={indicators}
                       onLoadMore={loadMorePast}
@@ -8887,6 +8889,25 @@ export default function App() {
                               });
                               const years = Object.keys(yearlyPerformance).map(Number).sort((a, b) => b - a);
 
+                              // Calculate average trades per day, week, and month
+                              const tradeTimes = trades.map(t => t.exitTime || t.entryTime).filter(Boolean);
+                              const activeSessionKey = activePrefix ? `${selectedSymbol}_${activePrefix}` : (selectedSymbol || '');
+                              const currentSession = backtestSessions[activeSessionKey];
+                              const calculatedStartTime = currentSession ? currentSession.startTime / 1000 : (tradeTimes.length > 0 ? Math.min(...tradeTimes) : (simCurrentTime || Date.now()/1000) - 86400);
+                              const calculatedCurrentTime = simCurrentTime || currentSession?.currentTime || Date.now()/1000;
+                              
+                              const minTime = Math.min(tradeTimes.length > 0 ? Math.min(...tradeTimes) : calculatedStartTime, calculatedStartTime);
+                              const maxTime = Math.max(tradeTimes.length > 0 ? Math.max(...tradeTimes) : calculatedCurrentTime, calculatedCurrentTime);
+                              
+                              const totalDurationSec = Math.max(1, maxTime - minTime);
+                              const totalDays = Math.max(1, totalDurationSec / 86400);
+                              const totalWeeks = Math.max(1, totalDurationSec / (86400 * 7));
+                              const totalMonths = Math.max(1, totalDurationSec / (86400 * 30.44));
+
+                              const avgTradesPerDay = trades.length / totalDays;
+                              const avgTradesPerWeek = trades.length / totalWeeks;
+                              const avgTradesPerMonth = trades.length / totalMonths;
+
                               return (
                                 <>
                                   <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
@@ -8896,6 +8917,24 @@ export default function App() {
                                   <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
                                     <div className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Win Rate</div>
                                     <div className="text-xl font-black text-indigo-600">{winRate.toFixed(0)}%</div>
+                                  </div>
+                                  <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
+                                    <div className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Trades / Day</div>
+                                    <div className="text-xl font-black text-slate-900">
+                                      {avgTradesPerDay >= 10 ? avgTradesPerDay.toFixed(1) : avgTradesPerDay.toFixed(2)}
+                                    </div>
+                                  </div>
+                                  <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
+                                    <div className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Trades / Week</div>
+                                    <div className="text-xl font-black text-slate-900">
+                                      {avgTradesPerWeek >= 10 ? avgTradesPerWeek.toFixed(1) : avgTradesPerWeek.toFixed(2)}
+                                    </div>
+                                  </div>
+                                  <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm col-span-2">
+                                    <div className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Trades / Month</div>
+                                    <div className="text-xl font-black text-slate-900">
+                                      {avgTradesPerMonth >= 10 ? avgTradesPerMonth.toFixed(1) : avgTradesPerMonth.toFixed(2)}
+                                    </div>
                                   </div>
                                   <div className="bg-emerald-50/30 p-4 rounded-2xl border border-emerald-100/50">
                                     <div className="text-[9px] font-black text-emerald-600/70 uppercase tracking-widest mb-1.5 flex justify-between items-center">

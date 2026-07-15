@@ -102,6 +102,7 @@ export class ChartEngine {
   private dragDistance: number = 0;
   private isReplay: boolean = false;
   private isSimulating: boolean = false;
+  private isPlaying: boolean = false;
   
   private onSelectDrawing: ((drawing: Drawing | null) => void) | null = null;
   private onDrawingsChange: ((drawings: Drawing[]) => void) | null = null;
@@ -172,7 +173,7 @@ export class ChartEngine {
     [DrawingType.VERTICAL_LINE]: { color: '#2962ff73', lineWidth: 1 },
     [DrawingType.HORIZONTAL_RAY]: { color: '#2962ff73', lineWidth: 1 },
     [DrawingType.RECTANGLE]: { strokeColor: '#2962ff73', fillColor: '#2962ff73', lineWidth: 1 },
-    [DrawingType.CIRCLE]: { strokeColor: '#2962ff73', fillColor: '#2962ff22', lineWidth: 1.5 },
+    [DrawingType.CIRCLE]: { color: '#2962ff', circleSize: 6 },
     [DrawingType.BRUSH]: { color: '#2962ff73', lineWidth: 2 },
     [DrawingType.PATH]: { color: '#2962ff73', lineWidth: 2 },
     [DrawingType.LONG_POSITION]: { profitColor: '#00695c', lossColor: '#c62828', opacity: 0.45 },
@@ -283,6 +284,11 @@ export class ChartEngine {
         }
       });
     }
+    this.needsDraw = true;
+  }
+
+  public setIsPlaying(isPlaying: boolean) {
+    this.isPlaying = isPlaying;
     this.needsDraw = true;
   }
 
@@ -859,7 +865,8 @@ export class ChartEngine {
             
             const isOnePointDrawing = this.currentDrawingType === DrawingType.HORIZONTAL_LINE ||
                                       this.currentDrawingType === DrawingType.VERTICAL_LINE ||
-                                      this.currentDrawingType === DrawingType.HORIZONTAL_RAY;
+                                      this.currentDrawingType === DrawingType.HORIZONTAL_RAY ||
+                                      this.currentDrawingType === DrawingType.CIRCLE;
 
             if (this.currentDrawingType === DrawingType.PATH) {
               points = [coords, coords];
@@ -1205,6 +1212,7 @@ export class ChartEngine {
                     newPrice = Math.min(actualSL, Math.max(newPrice, lastPrice));
                   }
                   drawing.managedStopPrice = newPrice;
+                  drawing.managedStopPriceAt = this.data[this.data.length - 1]?.time || p0.time;
                 }
               } else if (this.draggingPointIdx === 3) {
                 // Start Time
@@ -1979,6 +1987,7 @@ export class ChartEngine {
       let justTriggered = false;
       // 1. TRIGGER DETECTION: (Check when approved and not yet triggered)
       if (d.isPipelineApproved && !d.isTriggered && (d.type === DrawingType.LONG_POSITION || d.type === DrawingType.SHORT_POSITION)) {
+        if (!this.isPlaying) return;
         const p0 = d.points[0];
         const p1 = d.points[1];
         if (!p0 || !p1) return;
@@ -2046,6 +2055,7 @@ export class ChartEngine {
               d.status = 'active';
               const stopVal = d.points[2]?.price ?? (isLong ? entryPrice * 0.99 : entryPrice * 1.01);
               d.managedStopPrice = stopVal;
+              d.managedStopPriceAt = candle.time;
               d.initialStopPrice = stopVal;
               drawingsChanged = true;
               
@@ -2073,7 +2083,6 @@ export class ChartEngine {
         const target = p1.price;
         const originalStopValue = p2.price;
         const isLong = d.type === DrawingType.LONG_POSITION;
-        const managedStop = d.managedStopPrice !== undefined ? d.managedStopPrice : originalStopValue;
 
         let closedStatus: 'won' | 'lost' | null = null;
         let exitPrice = 0;
@@ -2097,15 +2106,20 @@ export class ChartEngine {
 
           const spr = isSpreadApplied ? getCandleSpread(d.symbol || this.symbol, candle, false) : 0;
 
+          // Determine the stop price active at this candle's time
+          const currentStop = (d.managedStopPrice !== undefined && d.managedStopPriceAt !== undefined && candle.time >= d.managedStopPriceAt)
+            ? d.managedStopPrice
+            : originalStopValue;
+
           if (isLong) {
             if (candle.high >= target) {
               closedStatus = 'won';
               exitPrice = target;
               statusAt = candle.time;
               break;
-            } else if (candle.low <= managedStop) {
+            } else if (candle.low <= currentStop) {
               closedStatus = 'lost';
-              exitPrice = managedStop;
+              exitPrice = currentStop;
               statusAt = candle.time;
               break;
             }
@@ -2115,9 +2129,9 @@ export class ChartEngine {
               exitPrice = target;
               statusAt = candle.time;
               break;
-            } else if (candle.high >= managedStop - spr) {
+            } else if (candle.high >= currentStop - spr) {
               closedStatus = 'lost';
-              exitPrice = managedStop;
+              exitPrice = currentStop;
               statusAt = candle.time;
               break;
             }
@@ -3701,7 +3715,6 @@ export class ChartEngine {
 
     const isDraggingThis = this.selectedDrawingId === d.id && this.draggingPointIdx !== null;
     if (hasTriggered && !isDraggingThis && (!d.status || d.status === 'active')) {
-        const managedStop = d.managedStopPrice !== undefined ? d.managedStopPrice : stop;
         const isSpreadApplied = isSpreadApplicableForSymbol(d.symbol || this.symbol) && !this.theme.rawSpread;
 
         for (const candle of this.data) {
@@ -3712,11 +3725,15 @@ export class ChartEngine {
 
             const spr = isSpreadApplied ? getCandleSpread(d.symbol || this.symbol, candle, false) : 0;
 
+            const currentStop = (d.managedStopPrice !== undefined && d.managedStopPriceAt !== undefined && candle.time >= d.managedStopPriceAt)
+                ? d.managedStopPrice
+                : stop;
+
             if (isLong) {
-                if (candle.low <= managedStop) { status = 'lost'; statusTime = candle.time; break; }
+                if (candle.low <= currentStop) { status = 'lost'; statusTime = candle.time; break; }
                 if (candle.high >= target) { status = 'won'; statusTime = candle.time; break; }
             } else {
-                if (candle.high >= managedStop - spr) { status = 'lost'; statusTime = candle.time; break; }
+                if (candle.high >= currentStop - spr) { status = 'lost'; statusTime = candle.time; break; }
                 if (candle.low <= target - spr) { status = 'won'; statusTime = candle.time; break; }
             }
         }
@@ -3926,24 +3943,20 @@ export class ChartEngine {
           }
           break;
 
-        case DrawingType.CIRCLE:
-          if (coords.length >= 2) {
+         case DrawingType.CIRCLE:
+          if (coords.length >= 1) {
             const x0 = coords[0].x;
             const y0 = coords[0].y;
-            const x1 = coords[1].x;
-            const y1 = coords[1].y;
-            const r = Math.sqrt((x1 - x0) ** 2 + (y1 - y0) ** 2);
+            
+            const diameter = d.settings.circleSize ?? 6;
+            const r = diameter / 2;
             
             ctx.beginPath();
             ctx.arc(x0, y0, r, 0, 2 * Math.PI);
             
             // Fill
-            ctx.fillStyle = d.settings.fillColor || adjustColorAlpha(d.settings.color, '#2962ff', '22');
+            ctx.fillStyle = d.settings.color || d.settings.fillColor || '#2962ff';
             ctx.fill();
-            
-            // Border
-            ctx.strokeStyle = d.settings.strokeColor || d.settings.color || '#2962ff';
-            ctx.stroke();
           }
           break;
 
@@ -4022,7 +4035,16 @@ export class ChartEngine {
 
             const left = Math.min(coords[0].x, coords[1].x);
             const right = Math.max(coords[0].x, coords[1].x);
-            const w = right - left;
+            
+            let drawLeft = left;
+            let drawRight = right;
+            if (d.settings.extendLinesLeft) {
+              drawLeft = 0;
+            }
+            if (d.settings.extendLinesRight) {
+              drawRight = width - this.sidebarWidth;
+            }
+            const drawW = drawRight - drawLeft;
             
             // Draw backgrounds first
             if (d.settings.showBackground !== false) {
@@ -4048,18 +4070,23 @@ export class ChartEngine {
                 }
                 
                 ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${bgOpacity})`;
-                ctx.fillRect(left, Math.min(y1, y2), w, Math.abs(y2 - y1));
+                ctx.fillRect(drawLeft, Math.min(y1, y2), drawW, Math.abs(y2 - y1));
               }
             }
 
             // Draw Trendline (Grayish dotted slanted line)
-            ctx.beginPath();
-            ctx.setLineDash([2, 4]);
-            ctx.strokeStyle = '#787b8688';
-            ctx.lineWidth = baseWidth;
-            ctx.moveTo(coords[0].x, coords[0].y);
-            ctx.lineTo(coords[1].x, coords[1].y);
-            ctx.stroke();
+            if (d.settings.showTrendline !== false) {
+              ctx.beginPath();
+              const tlStyle = d.settings.trendlineStyle || 'dotted';
+              if (tlStyle === 'dashed') ctx.setLineDash([5, 5]);
+              else if (tlStyle === 'dotted') ctx.setLineDash([2, 4]);
+              else ctx.setLineDash([]);
+              ctx.strokeStyle = d.settings.trendlineColor || '#787b8688';
+              ctx.lineWidth = d.settings.trendlineWidth || baseWidth;
+              ctx.moveTo(coords[0].x, coords[0].y);
+              ctx.lineTo(coords[1].x, coords[1].y);
+              ctx.stroke();
+            }
 
             fibLevels.forEach((lvl: any) => {
               if (!lvl.visible) return;
@@ -4068,45 +4095,59 @@ export class ChartEngine {
               const y = getY(price);
               
               ctx.beginPath();
-              ctx.strokeStyle = lvl.color || d.settings.color || '#787b86';
-              ctx.lineWidth = baseWidth;
+              ctx.strokeStyle = d.settings.useSingleColor ? (d.settings.color || '#787b86') : (lvl.color || d.settings.color || '#787b86');
+              ctx.lineWidth = d.settings.lineWidth || baseWidth;
               
               const style = d.settings.lineStyle || 'solid';
               if (style === 'dashed') ctx.setLineDash([5, 5]);
               else if (style === 'dotted') ctx.setLineDash([2, 3]);
               else ctx.setLineDash([]);
               
-              ctx.moveTo(left, y);
-              ctx.lineTo(right, y);
+              ctx.moveTo(drawLeft, y);
+              ctx.lineTo(drawRight, y);
               ctx.stroke();
               
               // Labels
-              ctx.setLineDash([]);
-              ctx.font = '9px sans-serif'; // Slightly smaller font
-              ctx.fillStyle = ctx.strokeStyle;
-              
-              const label = `${lvl.value.toFixed(3)} (${price.toFixed(2)})`;
-              const margin = 2; // Reduced margin to hug the "last edge"
-              
-              // Vertical Label Position
-              const vPos = d.settings.labelPos || 'top';
-              if (vPos === 'top') ctx.textBaseline = 'bottom';
-              else if (vPos === 'bottom') ctx.textBaseline = 'top';
-              else ctx.textBaseline = 'middle';
-
-              const yOffset = vPos === 'top' ? -2 : (vPos === 'bottom' ? 2 : 0);
-              
-              // Label Alignment
-              const align = d.settings.labelAlign || 'right'; // left, center, right
-              if (align === 'right') {
-                ctx.textAlign = 'right';
-                ctx.fillText(label, right - margin, y + yOffset);
-              } else if (align === 'left') {
-                ctx.textAlign = 'left';
-                ctx.fillText(label, left + margin, y + yOffset);
-              } else {
-                ctx.textAlign = 'center';
-                ctx.fillText(label, left + w/2, y + yOffset);
+              if (d.settings.showLabels !== false) {
+                ctx.setLineDash([]);
+                ctx.font = '9px sans-serif'; // Slightly smaller font
+                ctx.fillStyle = ctx.strokeStyle;
+                
+                let label = '';
+                const showValues = d.settings.showValues !== false;
+                const showPrices = d.settings.showPrices !== false;
+                if (showValues && showPrices) {
+                  label = `${lvl.value.toFixed(3)} (${price.toFixed(2)})`;
+                } else if (showValues) {
+                  label = `${lvl.value.toFixed(3)}`;
+                } else if (showPrices) {
+                  label = `(${price.toFixed(2)})`;
+                }
+                
+                if (label) {
+                  const margin = 4; // Margin from edge
+                  
+                  // Vertical Label Position
+                  const vPos = d.settings.labelPos || 'top';
+                  if (vPos === 'top') ctx.textBaseline = 'bottom';
+                  else if (vPos === 'bottom') ctx.textBaseline = 'top';
+                  else ctx.textBaseline = 'middle';
+    
+                  const yOffset = vPos === 'top' ? -2 : (vPos === 'bottom' ? 2 : 0);
+                  
+                  // Label Alignment
+                  const align = d.settings.labelAlign || 'right'; // left, center, right
+                  if (align === 'right') {
+                    ctx.textAlign = 'right';
+                    ctx.fillText(label, drawRight - margin, y + yOffset);
+                  } else if (align === 'left') {
+                    ctx.textAlign = 'left';
+                    ctx.fillText(label, drawLeft + margin, y + yOffset);
+                  } else {
+                    ctx.textAlign = 'center';
+                    ctx.fillText(label, drawLeft + drawW/2, y + yOffset);
+                  }
+                }
               }
             });
           }
@@ -5254,11 +5295,16 @@ export class ChartEngine {
             const left = Math.min(coords[0].x, coords[1].x);
             const right = Math.max(coords[0].x, coords[1].x);
 
+            let drawLeft = left;
+            let drawRight = right;
+            if (d.settings.extendLinesLeft) drawLeft = 0;
+            if (d.settings.extendLinesRight) drawRight = this.lastWidth - this.sidebarWidth;
+
             // Check each visible level line
             for (const lvl of fibLevels) {
               if (lvl.visible === false) continue;
               const yLine = getY(p1.price + diff * lvl.value);
-              if (x >= left - 5 && x <= right + 5 && Math.abs(y - yLine) < 10) {
+              if (x >= drawLeft - 5 && x <= drawRight + 5 && Math.abs(y - yLine) < 10) {
                 return { id: d.id, pointIdx: -1 };
               }
             }
@@ -5312,10 +5358,22 @@ export class ChartEngine {
               return { id: d.id, pointIdx: -1 };
             }
           }
+        } else if (d.type === DrawingType.CIRCLE) {
+          if (coords.length >= 1) {
+            const x0 = coords[0].x;
+            const y0 = coords[0].y;
+            const diameter = d.settings.circleSize ?? 6;
+            const r = diameter / 2;
+            const distToCenter = Math.sqrt((x - x0) ** 2 + (y - y0) ** 2);
+            
+            if (distToCenter <= Math.max(10, r + 8)) {
+              return { id: d.id, pointIdx: -1 };
+            }
+          }
         }
 
         // Skip segment hit test for types that shouldn't have diagonal hits
-        if (d.type === DrawingType.RECTANGLE || d.type === DrawingType.FIB_RETRACEMENT || d.type === DrawingType.PRICE_RANGE || d.type === DrawingType.DATE_RANGE) {
+        if (d.type === DrawingType.RECTANGLE || d.type === DrawingType.CIRCLE || d.type === DrawingType.FIB_RETRACEMENT || d.type === DrawingType.PRICE_RANGE || d.type === DrawingType.DATE_RANGE) {
           continue;
         }
 
@@ -5514,12 +5572,17 @@ export class ChartEngine {
             const left = Math.min(coords[0].x, coords[1].x);
             const right = Math.max(coords[0].x, coords[1].x);
 
+            let drawLeft = left;
+            let drawRight = right;
+            if (d.settings.extendLinesLeft) drawLeft = 0;
+            if (d.settings.extendLinesRight) drawRight = this.lastWidth - this.sidebarWidth;
+
             // Check each visible level line
             let levelHit = false;
             for (const lvl of fibLevels) {
               if (lvl.visible === false) continue;
               const yLine = getY(p1.price + diff * lvl.value);
-              if (x >= left - 5 && x <= right + 5 && Math.abs(y - yLine) < 10) {
+              if (x >= drawLeft - 5 && x <= drawRight + 5 && Math.abs(y - yLine) < 10) {
                 hits.push({ id: d.id, pointIdx: -1 });
                 levelHit = true;
                 break;
@@ -5577,19 +5640,14 @@ export class ChartEngine {
             }
           }
         } else if (d.type === DrawingType.CIRCLE) {
-          if (coords.length >= 2) {
+          if (coords.length >= 1) {
             const x0 = coords[0].x;
             const y0 = coords[0].y;
-            const x1 = coords[1].x;
-            const y1 = coords[1].y;
-            const r = Math.sqrt((x1 - x0) ** 2 + (y1 - y0) ** 2);
+            const diameter = d.settings.circleSize ?? 6;
+            const r = diameter / 2;
             const distToCenter = Math.sqrt((x - x0) ** 2 + (y - y0) ** 2);
             
-            const innerMargin = d.id === this.selectedDrawingId ? 0 : 5;
-            const isInside = distToCenter <= r - innerMargin;
-            const onEdge = Math.abs(distToCenter - r) < 5;
-            
-            if (isInside || onEdge) {
+            if (distToCenter <= Math.max(10, r + 8)) {
               hits.push({ id: d.id, pointIdx: -1 });
               continue;
             }

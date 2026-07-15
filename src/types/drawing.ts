@@ -41,6 +41,7 @@ export interface Drawing {
   triggeredAt?: number; // timestamp
   placedAt?: number; // timestamp for simulation validation
   managedStopPrice?: number; // For SL Ray management
+  managedStopPriceAt?: number; // timestamp when managedStopPrice was last updated or set
   initialStopPrice?: number; // Initial Stop Loss on trigger
   status?: 'active' | 'won' | 'lost';
   statusAt?: number; // timestamp

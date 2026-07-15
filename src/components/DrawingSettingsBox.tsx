@@ -13,6 +13,7 @@ import {
   TrendingUp,
   MoveVertical,
   MoveHorizontal,
+  Disc,
   ArrowRight,
   Square,
   Circle,
@@ -30,6 +31,7 @@ import { Drawing, DrawingType } from '../types/drawing';
 import { useState, useEffect, useRef } from 'react';
 import { ColorPicker } from './ColorPicker';
 import { GeneralDrawingSettingsPopover } from './GeneralDrawingSettingsPopover';
+import { FibonacciSettingsPopover } from './FibonacciSettingsPopover';
 
 const TOOL_ICONS: Record<DrawingType, any> = {
   [DrawingType.TREND_LINE]: TrendingUp,
@@ -66,6 +68,7 @@ const LINE_STYLES = [
 export function DrawingSettingsBox({ drawing, onUpdate, onDelete, onClose, pos, onPosChange }: DrawingSettingsBoxProps) {
   const [showStylePicker, setShowStylePicker] = useState(false);
   const [showWidthPicker, setShowWidthPicker] = useState(false);
+  const [showSizePicker, setShowSizePicker] = useState(false);
   const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
   const [showLabelSettings, setShowLabelSettings] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 1024);
@@ -132,39 +135,6 @@ export function DrawingSettingsBox({ drawing, onUpdate, onDelete, onClose, pos, 
     return () => window.removeEventListener('keydown', handleEsc);
   }, [onClose]);
 
-  const defaultFibLevels = [
-    { value: 0, color: '#787b86', visible: true },
-    { value: 0.236, color: '#f23645', visible: true },
-    { value: 0.382, color: '#ff9800', visible: true },
-    { value: 0.5, color: '#4caf50', visible: true },
-    { value: 0.618, color: '#089981', visible: true },
-    { value: 0.786, color: '#2196f3', visible: true },
-    { value: 1, color: '#787b86', visible: true }
-  ];
-
-  const [currentFibLevels = defaultFibLevels] = [drawing.settings.levels];
-
-  const updateFibLevel = (index: number, updates: any) => {
-    const newLevels = [...currentFibLevels];
-    newLevels[index] = { ...newLevels[index], ...updates };
-    onUpdate({ levels: newLevels });
-  };
-
-  const handleAddFibLevel = () => {
-    const nextVal = currentFibLevels.length > 0 ? Math.max(...currentFibLevels.map((l: any) => typeof l.value === 'number' ? l.value : parseFloat(l.value) || 0)) + 0.236 : 1.618;
-    const newLevels = [...currentFibLevels, { value: parseFloat(nextVal.toFixed(3)), color: '#787b86', visible: true }];
-    onUpdate({ levels: newLevels });
-  };
-
-  const handleDeleteFibLevel = (index: number) => {
-    const newLevels = currentFibLevels.filter((_: any, i: number) => i !== index);
-    onUpdate({ levels: newLevels });
-  };
-
-  const handleResetFibLevels = () => {
-    onUpdate({ levels: defaultFibLevels });
-  };
-
   return (
     <motion.div
       drag={true}
@@ -197,18 +167,18 @@ export function DrawingSettingsBox({ drawing, onUpdate, onDelete, onClose, pos, 
       <div className="w-px h-5 bg-slate-100 self-center" />
 
       {/* Main Color Toggle */}
-      {!isForecasting && drawing.type !== DrawingType.RECTANGLE && drawing.type !== DrawingType.CIRCLE && (
+      {!isForecasting && drawing.type !== DrawingType.RECTANGLE && (
         <div className="flex items-center shrink-0">
           <ColorPicker 
-            color={drawing.settings.color || '#000000'}
+            color={drawing.settings.color || '#2962ff'}
             onChange={(color) => onUpdate({ color })}
             compact={true}
           />
         </div>
       )}
 
-      {/* Specialized Colors for Rectangle & Circle (No Labels) */}
-      {(drawing.type === DrawingType.RECTANGLE || drawing.type === DrawingType.CIRCLE) && (
+      {/* Specialized Colors for Rectangle (No Labels) */}
+      {drawing.type === DrawingType.RECTANGLE && (
         <div className="flex items-center gap-1 shrink-0">
           <ColorPicker 
             color={drawing.settings.strokeColor || drawing.settings.color || '#2962ff'}
@@ -242,98 +212,155 @@ export function DrawingSettingsBox({ drawing, onUpdate, onDelete, onClose, pos, 
       <div className="w-px h-5 bg-slate-100 self-center" />
 
       <div className="flex items-center md:gap-0.5 gap-0.25">
+        {/* Circle Size - Scrollable Drop-up Menu */}
+        {drawing.type === DrawingType.CIRCLE && (
+          <div className="relative">
+            <button 
+              onClick={() => {
+                setShowSizePicker(!showSizePicker);
+                setShowWidthPicker(false);
+                setShowStylePicker(false);
+              }}
+              className={`h-7 px-1.5 md:px-2 rounded-lg transition-all flex items-center gap-1 outline-none ${showSizePicker ? 'bg-indigo-50 text-indigo-600' : 'text-slate-600 hover:bg-slate-50'}`}
+              title="Circle Size (px)"
+            >
+              <Disc size={isMobile ? 13 : 15} />
+              <span className="text-[10px] md:text-[11px] font-black tracking-tight min-w-[14px] leading-none">{drawing.settings.circleSize ?? 6}px</span>
+            </button>
+            
+            <AnimatePresence>
+              {showSizePicker && (
+                <motion.div
+                  initial={{ opacity: 0, y: isMobile ? -6 : 6, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: isMobile ? -6 : 6, scale: 0.95 }}
+                  className={`absolute ${isMobile ? 'bottom-full' : 'top-full'} left-1/2 -translate-x-1/2 ${isMobile ? 'mb-2.5' : 'mt-2.5'} p-1.5 bg-white/95 backdrop-blur-md rounded-xl border border-slate-200/80 shadow-2xl flex flex-col gap-0.5 z-[210] min-w-[100px]`}
+                >
+                  <div className="max-h-[160px] overflow-y-auto pr-1 flex flex-col gap-0.5 custom-scrollbar">
+                    {[0.5, 1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10, 12, 14, 16].map(size => {
+                      const currentVal = drawing.settings.circleSize ?? 6;
+                      const isSelected = currentVal === size;
+                      return (
+                        <button
+                          key={size}
+                          onClick={() => {
+                            onUpdate({ circleSize: size });
+                            setShowSizePicker(false);
+                          }}
+                          className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold text-left transition-all flex items-center justify-between gap-3 ${isSelected ? 'bg-indigo-50 text-indigo-600' : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900'}`}
+                        >
+                          <span className="font-mono">{size}px</span>
+                          <div className="w-5 flex items-center justify-center h-5">
+                            <div className="bg-current rounded-full animate-pulse" style={{ width: `${Math.max(2, Math.min(12, size))}px`, height: `${Math.max(2, Math.min(12, size))}px` }} />
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        )}
+
         {/* Line Width - Scrollable Drop-up Menu */}
-        <div className="relative">
-          <button 
-            onClick={() => {
-              setShowWidthPicker(!showWidthPicker);
-              setShowStylePicker(false);
-            }}
-            className={`h-7 px-1.5 md:px-2 rounded-lg transition-all flex items-center gap-1 outline-none ${showWidthPicker ? 'bg-indigo-50 text-indigo-600' : 'text-slate-600 hover:bg-slate-50'}`}
-            title="Line Weight (px)"
-          >
-            <Layers size={isMobile ? 13 : 15} />
-            <span className="text-[10px] md:text-[11px] font-black tracking-tight min-w-[14px] leading-none">{drawing.settings.lineWidth ?? drawing.settings.width ?? 1}</span>
-          </button>
-          
-          <AnimatePresence>
-            {showWidthPicker && (
-              <motion.div
-                initial={{ opacity: 0, y: isMobile ? -6 : 6, scale: 0.95 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: isMobile ? -6 : 6, scale: 0.95 }}
-                className={`absolute ${isMobile ? 'bottom-full' : 'top-full'} left-1/2 -translate-x-1/2 ${isMobile ? 'mb-2.5' : 'mt-2.5'} p-1.5 bg-white/95 backdrop-blur-md rounded-xl border border-slate-200/80 shadow-2xl flex flex-col gap-0.5 z-[210] min-w-[100px]`}
-              >
-                <div className="max-h-[160px] overflow-y-auto pr-1 flex flex-col gap-0.5 custom-scrollbar">
-                  {[0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4].map(w => {
-                    const currentVal = drawing.settings.lineWidth ?? drawing.settings.width ?? 1;
-                    const isSelected = currentVal === w;
+        {drawing.type !== DrawingType.CIRCLE && (
+          <div className="relative">
+            <button 
+              onClick={() => {
+                setShowWidthPicker(!showWidthPicker);
+                setShowStylePicker(false);
+                setShowSizePicker(false);
+              }}
+              className={`h-7 px-1.5 md:px-2 rounded-lg transition-all flex items-center gap-1 outline-none ${showWidthPicker ? 'bg-indigo-50 text-indigo-600' : 'text-slate-600 hover:bg-slate-50'}`}
+              title="Line Weight (px)"
+            >
+              <Layers size={isMobile ? 13 : 15} />
+              <span className="text-[10px] md:text-[11px] font-black tracking-tight min-w-[14px] leading-none">{drawing.settings.lineWidth ?? drawing.settings.width ?? 1}</span>
+            </button>
+            
+            <AnimatePresence>
+              {showWidthPicker && (
+                <motion.div
+                  initial={{ opacity: 0, y: isMobile ? -6 : 6, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: isMobile ? -6 : 6, scale: 0.95 }}
+                  className={`absolute ${isMobile ? 'bottom-full' : 'top-full'} left-1/2 -translate-x-1/2 ${isMobile ? 'mb-2.5' : 'mt-2.5'} p-1.5 bg-white/95 backdrop-blur-md rounded-xl border border-slate-200/80 shadow-2xl flex flex-col gap-0.5 z-[210] min-w-[100px]`}
+                >
+                  <div className="max-h-[160px] overflow-y-auto pr-1 flex flex-col gap-0.5 custom-scrollbar">
+                    {[0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4].map(w => {
+                      const currentVal = drawing.settings.lineWidth ?? drawing.settings.width ?? 1;
+                      const isSelected = currentVal === w;
+                      return (
+                        <button
+                          key={w}
+                          onClick={() => {
+                            onUpdate({ lineWidth: w, width: w });
+                            setShowWidthPicker(false);
+                          }}
+                          className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold text-left transition-all flex items-center justify-between gap-3 ${isSelected ? 'bg-indigo-50 text-indigo-600' : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900'}`}
+                        >
+                          <span className="font-mono">{w}px</span>
+                          <div className="w-8 flex items-center h-4">
+                            <div className="w-full bg-current rounded-full" style={{ height: `${Math.max(1, w * 1.5)}px` }} />
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        )}
+
+        {/* Line Style - Drop-up Menu */}
+        {drawing.type !== DrawingType.CIRCLE && (
+          <div className="relative">
+            <button 
+              onClick={() => {
+                setShowStylePicker(!showStylePicker);
+                setShowWidthPicker(false);
+                setShowSizePicker(false);
+              }}
+              className={`h-7 md:px-2 px-1.5 rounded-lg transition-all flex items-center outline-none ${showStylePicker ? 'bg-indigo-50 text-indigo-600' : 'text-slate-600 hover:bg-slate-50'}`}
+              title="Line Style"
+            >
+              <div className="scale-75">
+                {LINE_STYLES.find(s => s.id === (drawing.settings.lineStyle ?? drawing.settings.style ?? 'solid'))?.icon}
+              </div>
+            </button>
+            
+            <AnimatePresence>
+              {showStylePicker && (
+                <motion.div
+                  initial={{ opacity: 0, y: isMobile ? -6 : 6, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: isMobile ? -6 : 6, scale: 0.95 }}
+                  className={`absolute ${isMobile ? 'bottom-full' : 'top-full'} left-1/2 -translate-x-1/2 ${isMobile ? 'mb-2.5' : 'mt-2.5'} p-1.5 bg-white/95 backdrop-blur-md rounded-xl border border-slate-200/80 shadow-2xl flex flex-col gap-0.5 z-[210] min-w-[110px]`}
+                >
+                  {LINE_STYLES.map(style => {
+                    const currentVal = drawing.settings.lineStyle ?? drawing.settings.style ?? 'solid';
+                    const isSelected = currentVal === style.id;
                     return (
                       <button
-                        key={w}
+                        key={style.id}
                         onClick={() => {
-                          onUpdate({ lineWidth: w, width: w });
-                          setShowWidthPicker(false);
+                          onUpdate({ lineStyle: style.id as any, style: style.id as any });
+                          setShowStylePicker(false);
                         }}
-                        className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold text-left transition-all flex items-center justify-between gap-3 ${isSelected ? 'bg-indigo-50 text-indigo-600' : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900'}`}
+                        className={`px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-all flex items-center justify-between gap-3 ${isSelected ? 'bg-indigo-50 text-indigo-600' : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900'}`}
                       >
-                        <span className="font-mono">{w}px</span>
-                        <div className="w-8 flex items-center h-4">
-                          <div className="w-full bg-current rounded-full" style={{ height: `${Math.max(1, w * 1.5)}px` }} />
-                        </div>
+                        <span className="capitalize">{style.id}</span>
+                        <div className="text-current scale-75 opacity-80">{style.icon}</div>
                       </button>
                     );
                   })}
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
-
-        {/* Line Style - Drop-up Menu */}
-        <div className="relative">
-          <button 
-            onClick={() => {
-              setShowStylePicker(!showStylePicker);
-              setShowWidthPicker(false);
-            }}
-            className={`h-7 md:px-2 px-1.5 rounded-lg transition-all flex items-center outline-none ${showStylePicker ? 'bg-indigo-50 text-indigo-600' : 'text-slate-600 hover:bg-slate-50'}`}
-            title="Line Style"
-          >
-            <div className="scale-75">
-              {LINE_STYLES.find(s => s.id === (drawing.settings.lineStyle ?? drawing.settings.style ?? 'solid'))?.icon}
-            </div>
-          </button>
-          
-          <AnimatePresence>
-            {showStylePicker && (
-              <motion.div
-                initial={{ opacity: 0, y: isMobile ? -6 : 6, scale: 0.95 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: isMobile ? -6 : 6, scale: 0.95 }}
-                className={`absolute ${isMobile ? 'bottom-full' : 'top-full'} left-1/2 -translate-x-1/2 ${isMobile ? 'mb-2.5' : 'mt-2.5'} p-1.5 bg-white/95 backdrop-blur-md rounded-xl border border-slate-200/80 shadow-2xl flex flex-col gap-0.5 z-[210] min-w-[110px]`}
-              >
-                {LINE_STYLES.map(style => {
-                  const currentVal = drawing.settings.lineStyle ?? drawing.settings.style ?? 'solid';
-                  const isSelected = currentVal === style.id;
-                  return (
-                    <button
-                      key={style.id}
-                      onClick={() => {
-                        onUpdate({ lineStyle: style.id as any, style: style.id as any });
-                        setShowStylePicker(false);
-                      }}
-                      className={`px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-all flex items-center justify-between gap-3 ${isSelected ? 'bg-indigo-50 text-indigo-600' : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900'}`}
-                    >
-                      <span className="capitalize">{style.id}</span>
-                      <div className="text-current scale-75 opacity-80">{style.icon}</div>
-                    </button>
-                  );
-                })}
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        )}
 
         <div className="w-px h-5 bg-slate-100 self-center" />
 
@@ -503,146 +530,11 @@ export function DrawingSettingsBox({ drawing, onUpdate, onDelete, onClose, pos, 
         </div>
 
         {isFib && (
-          <div className="relative">
-            <button 
-              onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
-              className={`h-7 w-7 flex items-center justify-center transition-colors rounded-lg outline-none ${showAdvancedSettings ? 'bg-indigo-50 text-indigo-600' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-800'}`}
-              title="Fibonacci Settings"
-            >
-              <Settings2 size={isMobile ? 13 : 15} />
-            </button>
-
-            <AnimatePresence>
-              {showAdvancedSettings && (
-                <motion.div
-                  ref={advancedMenuRef}
-                  initial={{ opacity: 0, scale: 0.95, y: isMobile ? -10 : 10 }}
-                  animate={{ opacity: 1, scale: 1, y: 0 }}
-                  exit={{ opacity: 0, scale: 0.95, y: isMobile ? -10 : 10 }}
-                  className={`absolute ${isMobile ? 'bottom-full' : 'top-full'} right-0 ${isMobile ? 'mb-4' : 'mt-4'} bg-white p-3 md:p-4 rounded-2xl border border-slate-200 shadow-2xl min-w-[280px] md:min-w-[300px] z-[300]`}
-                >
-                  <h3 className="text-xs font-bold text-slate-800 mb-4 flex items-center gap-2">
-                    <Settings2 size={12} /> Fibonacci Levels
-                  </h3>
-
-                  <div className="space-y-1.5 max-h-[180px] md:max-h-[220px] overflow-y-auto pr-2 custom-scrollbar">
-                    {currentFibLevels.map((lvl: any, idx: number) => (
-                      <div key={idx} className="flex items-center gap-2 py-1">
-                        <input 
-                          type="checkbox" 
-                          checked={lvl.visible !== false}
-                          onChange={(e) => updateFibLevel(idx, { visible: e.target.checked })}
-                          className="w-3.5 h-3.5 rounded border-slate-300 transition-colors cursor-pointer accent-indigo-600"
-                        />
-                        <input
-                          type="number"
-                          step="0.001"
-                          value={lvl.value}
-                          onChange={(e) => {
-                            const val = parseFloat(e.target.value);
-                            updateFibLevel(idx, { value: isNaN(val) ? 0 : val });
-                          }}
-                          className="text-[10px] font-mono font-bold w-14 text-slate-700 bg-slate-50 px-1 py-0.5 rounded border border-slate-200 outline-none focus:border-indigo-500 text-center"
-                        />
-                        <div className="flex-1 h-px bg-slate-100" />
-                        <ColorPicker 
-                          color={lvl.color || '#787b86'}
-                          onChange={(color) => updateFibLevel(idx, { color })}
-                        />
-                        <button
-                          onClick={() => handleDeleteFibLevel(idx)}
-                          className="p-1 text-slate-300 hover:text-red-500 transition-colors"
-                          title="Delete Level"
-                        >
-                          <Trash2 size={11} />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="mt-2.5 flex items-center justify-between gap-2 border-t border-slate-100 pt-2.5">
-                    <button
-                      onClick={handleAddFibLevel}
-                      className="flex-1 flex items-center justify-center gap-1 py-1 px-2 border border-dashed border-indigo-200 hover:border-indigo-500 text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50/30 rounded-lg text-[10px] font-bold transition-all"
-                    >
-                      <Plus size={10} /> Add Level
-                    </button>
-                    <button
-                      onClick={handleResetFibLevels}
-                      className="py-1 px-2 bg-slate-50 hover:bg-slate-100 text-slate-500 hover:text-slate-700 rounded-lg text-[10px] font-bold transition-all border border-slate-200/60"
-                    >
-                      Reset Defaults
-                    </button>
-                  </div>
-
-                  <div className="mt-4 pt-4 border-t border-slate-100 space-y-4">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[9px] md:text-[10px] font-bold text-slate-500">Label Alignment</span>
-                      <div className="flex bg-slate-50 p-0.5 rounded-lg border border-slate-100">
-                        {['left', 'center', 'right'].map(align => (
-                          <button
-                            key={align}
-                            onClick={() => onUpdate({ labelAlign: align })}
-                            className={`px-1.5 md:px-2 py-1 text-[8px] md:text-[9px] font-bold rounded-md transition-all capitalize ${drawing.settings.labelAlign === align || (!drawing.settings.labelAlign && align === 'right') ? 'bg-white shadow-sm text-slate-900 border border-slate-200' : 'text-slate-400 hover:text-slate-600'}`}
-                          >
-                            {align}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="flex items-center justify-between">
-                      <span className="text-[9px] md:text-[10px] font-bold text-slate-500">Label Position</span>
-                      <div className="flex bg-slate-50 p-0.5 rounded-lg border border-slate-100">
-                        {['top', 'middle', 'bottom'].map(pos => (
-                          <button
-                            key={pos}
-                            onClick={() => onUpdate({ labelPos: pos })}
-                            className={`px-1.5 md:px-2 py-1 text-[8px] md:text-[9px] font-bold rounded-md transition-all capitalize ${drawing.settings.labelPos === pos || (!drawing.settings.labelPos && pos === 'top') ? 'bg-white shadow-sm text-slate-900 border border-slate-200' : 'text-slate-400 hover:text-slate-600'}`}
-                          >
-                            {pos}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="flex items-center justify-between">
-                      <span className="text-[9px] md:text-[10px] font-bold text-slate-500">Background Fill</span>
-                      <button 
-                        onClick={() => onUpdate({ showBackground: drawing.settings.showBackground === false ? true : false })}
-                        className={`w-7 md:w-8 h-3.5 md:h-4 rounded-full p-0.5 transition-colors ${drawing.settings.showBackground !== false ? 'bg-black' : 'bg-slate-200'}`}
-                      >
-                        <motion.div 
-                          animate={{ x: drawing.settings.showBackground !== false ? (isMobile ? 14 : 16) : 0 }}
-                          className="w-2.5 md:w-3 h-2.5 md:h-3 bg-white rounded-full shadow-sm"
-                        />
-                      </button>
-                    </div>
-
-                    {drawing.settings.showBackground !== false && (
-                      <div className="space-y-1.5 pt-1">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[9px] md:text-[10px] font-bold text-slate-500">Background Opacity</span>
-                          <span className="text-[10px] font-mono font-bold text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded">
-                            {Math.round((drawing.settings.backgroundOpacity !== undefined ? drawing.settings.backgroundOpacity : 0.1) * 100)}%
-                          </span>
-                        </div>
-                        <input
-                          type="range"
-                          min="0"
-                          max="1"
-                          step="0.05"
-                          value={drawing.settings.backgroundOpacity !== undefined ? drawing.settings.backgroundOpacity : 0.1}
-                          onChange={(e) => onUpdate({ backgroundOpacity: parseFloat(e.target.value) })}
-                          className="w-full h-1 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-indigo-600"
-                        />
-                      </div>
-                    )}
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
+          <FibonacciSettingsPopover 
+            drawing={drawing} 
+            onUpdate={onUpdate} 
+            isMobile={isMobile} 
+          />
         )}
 
         <div className="w-px h-5 bg-slate-100 self-center" />

@@ -33,6 +33,7 @@ interface ChartProps {
   timeframe?: string;
   isReplay?: boolean;
   isSimulating?: boolean;
+  isPlaying?: boolean;
   prefix?: string;
   pinnedText?: string | null;
   onNewsClick?: (news: any[], isFuture: boolean, x: number, y: number) => void;
@@ -67,6 +68,7 @@ export const ChartComponent = forwardRef<ChartEngine | null, ChartProps>(({
   timeframe,
   isReplay = false,
   isSimulating = false,
+  isPlaying = false,
   prefix,
   pinnedText,
   onNewsClick,
@@ -258,6 +260,12 @@ export const ChartComponent = forwardRef<ChartEngine | null, ChartProps>(({
       engineRef.current.setIsSimulating(!!isSimulating);
     }
   }, [isSimulating]);
+
+  useEffect(() => {
+    if (engineRef.current) {
+      engineRef.current.setIsPlaying(!!isPlaying);
+    }
+  }, [isPlaying]);
 
   useEffect(() => {
     if (engineRef.current) {

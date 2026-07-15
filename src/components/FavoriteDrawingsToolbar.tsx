@@ -26,12 +26,14 @@ import {
   Pause,
   ChevronUp,
   Info,
-  Circle
+  Circle,
+  Disc
 } from 'lucide-react';
 import { DrawingType, Drawing } from '../types/drawing';
 import { useState, useRef, useEffect, memo, RefObject } from 'react';
 import { ColorPicker } from './ColorPicker';
 import { GeneralDrawingSettingsPopover } from './GeneralDrawingSettingsPopover';
+import { FibonacciSettingsPopover } from './FibonacciSettingsPopover';
 
 const TOOL_ICONS: Record<DrawingType, any> = {
   [DrawingType.TREND_LINE]: TrendingUp,
@@ -155,6 +157,7 @@ export const FavoriteDrawingsToolbar = memo(function FavoriteDrawingsToolbar({
   const [isSpeedOpen, setIsSpeedOpen] = useState(false);
   const [showWidthPicker, setShowWidthPicker] = useState(false);
   const [showStylePicker, setShowStylePicker] = useState(false);
+  const [showSizePicker, setShowSizePicker] = useState(false);
   const [showLabelSettings, setShowLabelSettings] = useState(false);
   const [pendingTradeType, setPendingTradeType] = useState<'buy' | 'sell' | null>(null);
 
@@ -184,6 +187,7 @@ export const FavoriteDrawingsToolbar = memo(function FavoriteDrawingsToolbar({
     }
     setShowWidthPicker(false);
     setShowStylePicker(false);
+    setShowSizePicker(false);
     setShowLabelSettings(false);
   }, [selectedDrawing?.id]);
 
@@ -198,6 +202,7 @@ export const FavoriteDrawingsToolbar = memo(function FavoriteDrawingsToolbar({
         } else {
           setShowWidthPicker(false);
           setShowStylePicker(false);
+          setShowSizePicker(false);
           setShowLabelSettings(false);
         }
         setPendingTradeType(null);
@@ -217,7 +222,9 @@ export const FavoriteDrawingsToolbar = memo(function FavoriteDrawingsToolbar({
 
   // Check state categories for the active selected drawing
   const isForecasting = selectedDrawing && (selectedDrawing.type === DrawingType.LONG_POSITION || selectedDrawing.type === DrawingType.SHORT_POSITION);
-  const isRectangle = selectedDrawing && (selectedDrawing.type === DrawingType.RECTANGLE || selectedDrawing.type === DrawingType.CIRCLE);
+  const isRectangle = selectedDrawing && (selectedDrawing.type === DrawingType.RECTANGLE);
+  const isCircle = selectedDrawing && (selectedDrawing.type === DrawingType.CIRCLE);
+  const isFib = selectedDrawing && (selectedDrawing.type === DrawingType.FIB_RETRACEMENT);
   const isClosedTrade = selectedDrawing && (selectedDrawing.status === 'won' || selectedDrawing.status === 'lost');
 
   // Let's decide if we are in morph mode (settings)
@@ -375,8 +382,61 @@ export const FavoriteDrawingsToolbar = memo(function FavoriteDrawingsToolbar({
 
               <div className="w-px h-5 bg-slate-100 self-center" />
 
+              {/* Circle Size (only for circle, instead of line weight and style) */}
+              {isCircle && (
+                <div className="relative">
+                  <button 
+                    onClick={() => {
+                      setShowSizePicker(!showSizePicker);
+                      setShowWidthPicker(false);
+                      setShowStylePicker(false);
+                    }}
+                    className={`h-7 px-1.5 md:px-2 rounded-lg transition-all flex items-center gap-1 outline-none ${showSizePicker ? 'bg-indigo-50 text-indigo-600' : 'text-slate-600 hover:bg-slate-50'}`}
+                    title="Circle Size (px)"
+                  >
+                    <Disc size={isMobile ? 13 : 15} />
+                    <span className="text-[10px] md:text-[11px] font-black tracking-tight min-w-[14px] leading-none">
+                      {selectedDrawing?.settings?.circleSize ?? 6}px
+                    </span>
+                  </button>
+                  
+                  <AnimatePresence>
+                    {showSizePicker && (
+                      <motion.div
+                        initial={{ opacity: 0, y: isMobile ? -6 : 6, scale: 0.95 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        exit={{ opacity: 0, y: isMobile ? -6 : 6, scale: 0.95 }}
+                        className={`absolute ${isMobile ? 'bottom-full' : 'top-full'} left-1/2 -translate-x-1/2 ${isMobile ? 'mb-2.5' : 'mt-2.5'} p-1.5 bg-white/95 backdrop-blur-md rounded-xl border border-slate-200/80 shadow-2xl flex flex-col gap-0.5 z-[210] min-w-[100px]`}
+                      >
+                        <div className="max-h-[160px] overflow-y-auto pr-1 flex flex-col gap-0.5 custom-scrollbar">
+                          {[0.5, 1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10, 12, 14, 16].map(size => {
+                            const currentVal = selectedDrawing?.settings?.circleSize ?? 6;
+                            const isSelected = currentVal === size;
+                            return (
+                              <button
+                                key={size}
+                                onClick={() => {
+                                  onUpdateDrawing?.({ circleSize: size });
+                                  setShowSizePicker(false);
+                                }}
+                                className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold text-left transition-all flex items-center justify-between gap-3 ${isSelected ? 'bg-indigo-50 text-indigo-600' : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900'}`}
+                              >
+                                <span className="font-mono">{size}px</span>
+                                <div className="w-5 flex items-center justify-center h-5">
+                                  <div className="bg-current rounded-full animate-pulse" style={{ width: `${Math.max(2, Math.min(12, size))}px`, height: `${Math.max(2, Math.min(12, size))}px` }} />
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+              )}
+
               {/* Line Thickness Dropup Popup List (0.5px steps) */}
-              {!isForecasting && (
+              {!isForecasting && !isCircle && (
                 <div className="relative">
                   <button 
                     onClick={() => {
@@ -428,7 +488,7 @@ export const FavoriteDrawingsToolbar = memo(function FavoriteDrawingsToolbar({
               )}
 
               {/* Line Style Dropup Popup List */}
-              {!isForecasting && (
+              {!isForecasting && !isCircle && (
                 <div className="relative">
                   <button 
                     onClick={() => {
@@ -489,6 +549,14 @@ export const FavoriteDrawingsToolbar = memo(function FavoriteDrawingsToolbar({
 
               {selectedDrawing && onUpdateDrawing && (
                 <GeneralDrawingSettingsPopover 
+                  drawing={selectedDrawing} 
+                  onUpdate={onUpdateDrawing} 
+                  isMobile={isMobile} 
+                />
+              )}
+
+              {isFib && selectedDrawing && onUpdateDrawing && (
+                <FibonacciSettingsPopover 
                   drawing={selectedDrawing} 
                   onUpdate={onUpdateDrawing} 
                   isMobile={isMobile} 

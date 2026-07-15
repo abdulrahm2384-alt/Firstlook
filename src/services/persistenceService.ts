@@ -132,6 +132,7 @@ export function compressDrawing(d: Drawing): any {
     ta: d.triggeredAt ? rTime(d.triggeredAt) : undefined,
     pa: d.placedAt ? rTime(d.placedAt) : undefined,
     msp: d.managedStopPrice ? rPrice(d.managedStopPrice) : undefined,
+    mspa: d.managedStopPriceAt ? rTime(d.managedStopPriceAt) : undefined,
     isp: d.initialStopPrice ? rPrice(d.initialStopPrice) : undefined,
     stt: statusCompact,
     sta: d.statusAt ? rTime(d.statusAt) : undefined
@@ -172,6 +173,7 @@ export function decompressDrawing(c: any): Drawing {
     triggeredAt: c.ta || undefined,
     placedAt: c.pa || undefined,
     managedStopPrice: c.msp || undefined,
+    managedStopPriceAt: c.mspa || undefined,
     initialStopPrice: c.isp || undefined,
     status: statusFull,
     statusAt: c.sta || undefined
