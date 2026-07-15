@@ -2717,7 +2717,7 @@ export default function App() {
 
     if (subscriptionPlan === 'premium') return true;
 
-    const limit = subscriptionPlan === 'plus' ? 5000 : 300;
+    const limit = subscriptionPlan === 'plus' ? 7000 : 1000;
     if (tracker.consumed >= limit) {
       return false;
     }
@@ -2858,7 +2858,7 @@ export default function App() {
       if (!checkAndTrackPlayLimit(0)) {
         setUpgradeModalFeature('candles');
         setIsUpgradeModalOpen(true);
-        addNotification(`Daily candle play limit reached (Max ${subscriptionPlan === 'plus' ? '5000' : '300'} candles). Upgrade your plan to play more candles!`, 'warning');
+        addNotification(`Daily candle play limit reached (Max ${subscriptionPlan === 'plus' ? '7000' : '1000'} candles). Upgrade your plan to play more candles!`, 'warning');
         return;
       }
 
@@ -5109,11 +5109,21 @@ export default function App() {
           const firstCandleTime = syncCachedState.candles[0].time;
           const lastCandleTime = syncCachedState.candles[syncCachedState.candles.length - 1].time;
           if (snappedSimToSet < firstCandleTime) {
-            // Keep original target to prevent snapping forward to a separate date when data covers a different period
+            snappedSimToSet = firstCandleTime;
           } else if (snappedSimToSet > lastCandleTime) {
-            // Target is beyond currently available candles. Keep original target to prevent snapping backward.
+            snappedSimToSet = lastCandleTime;
           } else {
-            // Keep exact unsnapped continuous playhead time to ensure sub-candle precision across all timeframes and prevent snapping after refresh
+            // For a new session or forced snap, snap to the nearest candle boundary to prevent playhead jumping on higher timeframes
+            if (finalForceSnap || lastLoadedSessionKeyRef.current !== currentSessionKey) {
+              let closestCandleTime = firstCandleTime;
+              for (let i = syncCachedState.candles.length - 1; i >= 0; i--) {
+                if (syncCachedState.candles[i].time <= snappedSimToSet) {
+                  closestCandleTime = syncCachedState.candles[i].time;
+                  break;
+                }
+              }
+              snappedSimToSet = closestCandleTime;
+            }
           }
         }
         simCurrentTimeRef.current = snappedSimToSet;
@@ -5270,11 +5280,21 @@ export default function App() {
                 const firstCandleTime = combinedCandles[0].time;
                 const lastCandleTime = combinedCandles[combinedCandles.length - 1].time;
                 if (snappedSimToSet < firstCandleTime) {
-                  // Keep original target to prevent snapping forward to a separate date when data covers a different period
+                  snappedSimToSet = firstCandleTime;
                 } else if (snappedSimToSet > lastCandleTime) {
-                  // Target is beyond currently available candles. Keep original target to prevent snapping backward.
+                  snappedSimToSet = lastCandleTime;
                 } else {
-                  // Keep exact unsnapped continuous playhead time to ensure sub-candle precision across all timeframes and prevent snapping after refresh
+                  // For a new session or forced snap, snap to the nearest candle boundary to prevent playhead jumping on higher timeframes
+                  if (finalForceSnap || lastLoadedSessionKeyRef.current !== currentSessionKey) {
+                    let closestCandleTime = firstCandleTime;
+                    for (let i = combinedCandles.length - 1; i >= 0; i--) {
+                      if (combinedCandles[i].time <= snappedSimToSet) {
+                        closestCandleTime = combinedCandles[i].time;
+                        break;
+                      }
+                    }
+                    snappedSimToSet = closestCandleTime;
+                  }
                 }
               }
               simCurrentTimeRef.current = snappedSimToSet;
@@ -5347,11 +5367,21 @@ export default function App() {
                   const firstCandleTime = combined[0].time;
                   const lastCandleTime = combined[combined.length - 1].time;
                   if (targetTime < firstCandleTime) {
-                    // Keep original target to prevent snapping forward to a separate date when data covers a different period
+                    snappedTimeToSet = firstCandleTime;
                   } else if (targetTime > lastCandleTime) {
-                    // Keep original target to prevent snapping backward
+                    snappedTimeToSet = lastCandleTime;
                   } else {
-                    // Keep exact unsnapped continuous playhead time to ensure sub-candle precision across all timeframes and prevent snapping after refresh
+                    // For a new session or forced snap, snap to the nearest candle boundary to prevent playhead jumping on higher timeframes
+                    if (finalForceSnap || lastLoadedSessionKeyRef.current !== currentSessionKey) {
+                      let closestCandleTime = firstCandleTime;
+                      for (let i = combined.length - 1; i >= 0; i--) {
+                        if (combined[i].time <= targetTime) {
+                          closestCandleTime = combined[i].time;
+                          break;
+                        }
+                      }
+                      snappedTimeToSet = closestCandleTime;
+                    }
                   }
                 }
                 const timeToSet = snappedTimeToSet;
@@ -6143,7 +6173,7 @@ export default function App() {
               setReplayIsPlaying(false);
               setUpgradeModalFeature('candles');
               setIsUpgradeModalOpen(true);
-              addNotification(`Daily candle play limit reached (Max ${subscriptionPlan === 'plus' ? '5000' : '300'} candles). Upgrade your plan to play more candles!`, 'warning');
+              addNotification(`Daily candle play limit reached (Max ${subscriptionPlan === 'plus' ? '7000' : '1000'} candles). Upgrade your plan to play more candles!`, 'warning');
               return;
             }
           }
@@ -6181,7 +6211,7 @@ export default function App() {
               setReplayIsPlaying(false);
               setUpgradeModalFeature('candles');
               setIsUpgradeModalOpen(true);
-              addNotification(`Daily candle play limit reached (Max ${subscriptionPlan === 'plus' ? '5000' : '300'} candles). Upgrade to play more candles!`, 'warning');
+              addNotification(`Daily candle play limit reached (Max ${subscriptionPlan === 'plus' ? '7000' : '1000'} candles). Upgrade to play more candles!`, 'warning');
               return;
             }
           }
@@ -6292,7 +6322,7 @@ export default function App() {
               setSimIsPlaying(false);
               setUpgradeModalFeature('candles');
               setIsUpgradeModalOpen(true);
-              addNotification(`Daily candle play limit reached (Max ${subscriptionPlan === 'plus' ? '5000' : '300'} candles). Upgrade your plan to play more candles!`, 'warning');
+              addNotification(`Daily candle play limit reached (Max ${subscriptionPlan === 'plus' ? '7000' : '1000'} candles). Upgrade your plan to play more candles!`, 'warning');
               return;
             }
           }
@@ -8269,7 +8299,7 @@ export default function App() {
                         return null;
                       }
 
-                      const limit = subscriptionPlan === 'plus' ? 5000 : 300;
+                      const limit = subscriptionPlan === 'plus' ? 7000 : 1000;
                       const remaining = Math.max(0, limit - dailyPlayConsumed);
 
                       return (
@@ -10383,7 +10413,7 @@ export default function App() {
                   <>
                     <h4 className="text-[11px] font-black uppercase tracking-wide text-slate-905">Daily Candle Playback Limit Reached</h4>
                     <p className="text-[11px] text-slate-500 font-semibold leading-relaxed">
-                      You have reached your daily candle-by-candle play limit. Under the Basic free tier, visual playback is capped at 500 candles/day. Plus accounts get 5,000 candles/day, and Premium accounts enjoy completely unlimited candle play!
+                      You have reached your daily candle-by-candle play limit. Under the Basic free tier, visual playback is capped at 1,000 candles/day. Plus accounts get 7,000 candles/day, and Premium accounts enjoy completely unlimited candle play!
                     </p>
                   </>
                 )}
